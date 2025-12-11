@@ -1,0 +1,569 @@
+---
+title: 'ALB - Application Load Balancer'
+description: 'Distribua tráfego HTTP/HTTPS entre múltiplos targets'
+icon: 'network-wired'
+---
+
+Distribua tráfego HTTP/HTTPS de forma inteligente entre múltiplos targets com roteamento baseado em conteúdo.
+
+## Pré-requisito: Configuração do AWSProvider
+
+Antes de criar qualquer recurso AWS, você precisa configurar um **AWSProvider** que gerencia as credenciais e autenticação com a AWS.
+
+<CodeGroup>
+```yaml IRSA
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: AWSProvider
+metadata:
+  name: production-aws
+  namespace: default
+spec:
+  region: us-east-1
+  roleARN: arn:aws:iam::123456789012:role/infra-operator-role
+  defaultTags:
+    managed-by: infra-operator
+    environment: production
+```
+
+```yaml Credenciais Estáticas
+apiVersion: v1
+kind: Secret
+metadata:
+  name: aws-credentials
+  namespace: default
+type: Opaque
+stringData:
+  access-key-id: test
+  secret-access-key: test
+---
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: AWSProvider
+metadata:
+  name: localstack
+  namespace: default
+spec:
+  region: us-east-1
+  accessKeyIDRef:
+    name: aws-credentials
+    key: access-key-id
+  secretAccessKeyRef:
+    name: aws-credentials
+    key: secret-access-key
+  defaultTags:
+    managed-by: infra-operator
+    environment: test
+```
+
+```bash Verificar Status
+kubectl get awsprovider
+kubectl describe awsprovider production-aws
+```
+</CodeGroup>
+
+<Warning>
+  Para produção, sempre use **IRSA** (IAM Roles for Service Accounts) ao invés de credenciais estáticas.
+</Warning>
+
+### Criar IAM Role para IRSA
+
+Para usar IRSA em produção, você precisa criar uma IAM Role com as permissões necessárias:
+
+<CodeGroup>
+```json Trust Policy (trust-policy.json)
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::123456789012:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B71EXAMPLE"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "oidc.eks.us-east-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B71EXAMPLE:sub": "system:serviceaccount:infra-operator-system:infra-operator-controller-manager",
+          "oidc.eks.us-east-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B71EXAMPLE:aud": "sts.amazonaws.com"
+        }
+      }
+    }
+  ]
+}
+```
+
+```json IAM Policy - ALB (alb-policy.json)
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "elasticloadbalancing:CreateLoadBalancer",
+        "elasticloadbalancing:DeleteLoadBalancer",
+        "elasticloadbalancing:DescribeLoadBalancers",
+        "elasticloadbalancing:DescribeLoadBalancerAttributes",
+        "elasticloadbalancing:ModifyLoadBalancerAttributes",
+        "elasticloadbalancing:DescribeTags",
+        "elasticloadbalancing:AddTags",
+        "elasticloadbalancing:RemoveTags"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+```bash Criar Role
+# Criar IAM Role
+aws iam create-role \
+  --role-name infra-operator-alb-role \
+  --assume-role-policy-document file://trust-policy.json
+
+# Anexar policy
+aws iam put-role-policy \
+  --role-name infra-operator-alb-role \
+  --policy-name alb-policy \
+  --policy-document file://alb-policy.json
+
+# Anotar Service Account no K8s
+kubectl annotate serviceaccount infra-operator-controller-manager \
+  -n infra-operator-system \
+  eks.amazonaws.com/role-arn=arn:aws:iam::123456789012:role/infra-operator-alb-role
+```
+</CodeGroup>
+
+## Criando Application Load Balancer
+
+<CodeGroup>
+```yaml Internet-Facing ALB
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: ALB
+metadata:
+  name: public-alb
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  loadBalancerName: my-public-alb
+  scheme: internet-facing  # Acessível pela internet
+
+  subnets:
+    - subnet-abc123  # Subnet pública AZ 1
+    - subnet-def456  # Subnet pública AZ 2
+
+  securityGroups:
+    - sg-web123  # Security group permitindo 80/443
+
+  ipAddressType: ipv4
+  enableHttp2: true
+  idleTimeout: 60
+
+  enableDeletionProtection: false
+
+  tags:
+    Name: public-alb
+    Environment: production
+    Team: platform
+```
+
+```yaml Internal ALB
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: ALB
+metadata:
+  name: internal-alb
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  loadBalancerName: my-internal-alb
+  scheme: internal  # Acessível apenas dentro da VPC
+
+  subnets:
+    - subnet-private1  # Subnet privada AZ 1
+    - subnet-private2  # Subnet privada AZ 2
+
+  securityGroups:
+    - sg-internal123
+
+  ipAddressType: ipv4
+  enableHttp2: true
+  idleTimeout: 120
+
+  enableDeletionProtection: false
+
+  tags:
+    Name: internal-alb
+    Environment: production
+    Purpose: microservices
+```
+
+```yaml ALB com Proteção WAF
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: ALB
+metadata:
+  name: waf-protected-alb
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  loadBalancerName: waf-alb
+  scheme: internet-facing
+
+  subnets:
+    - subnet-abc123
+    - subnet-def456
+
+  securityGroups:
+    - sg-waf123
+
+  enableHttp2: true
+  enableWafFailOpen: true  # Permite tráfego se WAF estiver indisponível
+
+  enableDeletionProtection: true  # Proteção contra exclusão acidental
+
+  deletionPolicy: Retain  # Não deletar o ALB ao remover o CR
+
+  tags:
+    Name: waf-protected-alb
+    Environment: production
+    Protected: "true"
+```
+
+```bash Verificar Status
+# Listar ALBs
+kubectl get alb
+
+# Ver detalhes
+kubectl describe alb public-alb
+
+# Ver DNS do ALB (use esse DNS para acessar)
+kubectl get alb public-alb -o jsonpath='{.status.dnsName}'
+
+# Ver ARN do ALB
+kubectl get alb public-alb -o jsonpath='{.status.loadBalancerARN}'
+```
+</CodeGroup>
+
+## Campos da Especificação
+
+| Campo | Tipo | Obrigatório | Descrição |
+|-------|------|-------------|-----------|
+| `loadBalancerName` | string | ✅ | Nome do Application Load Balancer (1-32 caracteres alfanuméricos) |
+| `scheme` | string | ❌ | Esquema do ALB: `internet-facing` (padrão) ou `internal` |
+| `subnets` | []string | ✅ | Lista de subnet IDs (mínimo 2 em AZs diferentes) |
+| `securityGroups` | []string | ❌ | Lista de security group IDs |
+| `ipAddressType` | string | ❌ | Tipo de endereço IP: `ipv4` (padrão) ou `dualstack` (IPv4 + IPv6) |
+| `enableDeletionProtection` | bool | ❌ | Proteção contra exclusão acidental (padrão: false) |
+| `enableHttp2` | bool | ❌ | Habilitar HTTP/2 (padrão: true) |
+| `enableWafFailOpen` | bool | ❌ | Permitir tráfego se WAF estiver indisponível (padrão: false) |
+| `idleTimeout` | int32 | ❌ | Timeout de conexões ociosas em segundos (1-4000, padrão: 60) |
+| `tags` | map[string]string | ❌ | Tags customizadas para o ALB |
+| `deletionPolicy` | string | ❌ | Política de deleção: `Delete` (padrão) ou `Retain` |
+
+## Campos de Status
+
+| Campo | Tipo | Descrição |
+|-------|------|-----------|
+| `ready` | bool | Se o ALB está ativo (`state` = "active") |
+| `loadBalancerARN` | string | ARN do ALB criado |
+| `dnsName` | string | DNS público do ALB (use para acessar) |
+| `state` | string | Estado: `provisioning`, `active`, `failed` |
+| `vpcID` | string | VPC onde o ALB foi criado |
+| `canonicalHostedZoneID` | string | Hosted Zone ID para Route53 |
+| `lastSyncTime` | time | Última sincronização com AWS |
+
+## Casos de Uso
+
+### ALB Público para Aplicação Web
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: ALB
+metadata:
+  name: web-app-alb
+  namespace: production
+spec:
+  providerRef:
+    name: production-aws
+
+  loadBalancerName: webapp-alb
+  scheme: internet-facing
+
+  subnets:
+    - subnet-public-1a
+    - subnet-public-1b
+    - subnet-public-1c
+
+  securityGroups:
+    - sg-web-https
+
+  enableHttp2: true
+  idleTimeout: 60
+
+  tags:
+    Application: web-app
+    Environment: production
+    CostCenter: engineering
+```
+
+### ALB Interno para Microserviços
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: ALB
+metadata:
+  name: microservices-alb
+  namespace: backend
+spec:
+  providerRef:
+    name: production-aws
+
+  loadBalancerName: internal-services
+  scheme: internal
+
+  subnets:
+    - subnet-private-1a
+    - subnet-private-1b
+
+  securityGroups:
+    - sg-internal-services
+
+  enableHttp2: true
+  idleTimeout: 300  # 5 minutos para long-polling
+
+  tags:
+    Purpose: microservices-mesh
+    Environment: production
+```
+
+## Troubleshooting
+
+### ALB não fica Ready
+
+<AccordionGroup>
+<Accordion title="Verificar estado do ALB">
+```bash
+kubectl describe alb my-alb
+```
+
+Procure por:
+- `State: provisioning` - ALB ainda está sendo provisionado (pode levar 2-3 minutos)
+- `State: failed` - Falha no provisionamento (verifique logs do operator)
+</Accordion>
+
+<Accordion title="Verificar subnets">
+```bash
+# Verificar se as subnets existem e estão em AZs diferentes
+aws ec2 describe-subnets --subnet-ids subnet-abc123 subnet-def456
+
+# ALB requer no mínimo 2 subnets em AZs diferentes
+```
+
+**Erro comum**: Subnets na mesma AZ
+**Solução**: Use subnets em AZs diferentes
+</Accordion>
+
+<Accordion title="Verificar security groups">
+```bash
+# Verificar se os security groups existem
+aws ec2 describe-security-groups --group-ids sg-web123
+
+# Verificar regras de entrada
+aws ec2 describe-security-groups --group-ids sg-web123 \
+  --query 'SecurityGroups[0].IpPermissions'
+```
+
+**Erro comum**: Security group sem regras de entrada
+**Solução**: Adicione regras permitindo porta 80/443
+</Accordion>
+
+<Accordion title="Verificar permissões IAM">
+```bash
+# Ver logs do operator
+kubectl logs -n infra-operator-system -l control-plane=controller-manager
+
+# Procure por erros tipo "AccessDenied"
+```
+
+**Erro comum**: IAM role sem permissões ELBv2
+**Solução**: Adicione policy `elasticloadbalancing:*` na role IRSA
+</Accordion>
+</AccordionGroup>
+
+### ALB Stuck em "provisioning"
+
+<AccordionGroup>
+<Accordion title="Tempo de provisionamento normal">
+ALB normalmente leva 2-5 minutos para ficar ativo.
+
+```bash
+# Verificar estado na AWS
+aws elbv2 describe-load-balancers \
+  --names my-public-alb \
+  --query 'LoadBalancers[0].State'
+```
+
+Se estiver stuck por mais de 10 minutos, verifique:
+- Subnets têm conectividade com AWS API
+- Não há limite de ALBs na conta AWS
+</Accordion>
+
+<Accordion title="Verificar limites da conta">
+```bash
+# Verificar quota de ALBs
+aws service-quotas get-service-quota \
+  --service-code elasticloadbalancing \
+  --quota-code L-53DA6B97
+
+# Listar ALBs existentes
+aws elbv2 describe-load-balancers --query 'length(LoadBalancers)'
+```
+
+Se atingiu o limite (padrão: 50 ALBs por região):
+- Solicite aumento de quota via AWS Console
+- Delete ALBs não utilizados
+</Accordion>
+</AccordionGroup>
+
+### Erro ao deletar ALB
+
+<AccordionGroup>
+<Accordion title="Deletion protection ativada">
+```bash
+kubectl get alb my-alb -o yaml | grep deletionProtection
+```
+
+Se `enableDeletionProtection: true`:
+1. Desabilite a proteção:
+```bash
+kubectl patch alb my-alb --type=merge -p '{"spec":{"enableDeletionProtection":false}}'
+```
+
+2. Aguarde reconciliação (1-2 minutos)
+
+3. Delete novamente:
+```bash
+kubectl delete alb my-alb
+```
+</Accordion>
+
+<Accordion title="ALB com listeners/target groups">
+O ALB não pode ser deletado se tiver listeners ou target groups associados.
+
+```bash
+# Listar listeners
+aws elbv2 describe-listeners --load-balancer-arn <ALB-ARN>
+
+# Listar target groups
+aws elbv2 describe-target-groups --load-balancer-arn <ALB-ARN>
+```
+
+**Solução**: Delete listeners e target groups manualmente primeiro:
+```bash
+# Delete listeners
+aws elbv2 delete-listener --listener-arn <LISTENER-ARN>
+
+# Delete target groups
+aws elbv2 delete-target-group --target-group-arn <TG-ARN>
+
+# Agora delete o ALB
+kubectl delete alb my-alb
+```
+</Accordion>
+</AccordionGroup>
+
+## Políticas de Deleção
+
+### Delete (Padrão)
+
+Quando o CR é deletado, o ALB na AWS é deletado automaticamente:
+
+```yaml
+spec:
+  deletionPolicy: Delete  # Padrão
+```
+
+### Retain
+
+O ALB na AWS é mantido mesmo após deletar o CR:
+
+```yaml
+spec:
+  deletionPolicy: Retain
+```
+
+**Caso de uso**: ALBs com configurações complexas (listeners, rules, certificates) que você quer manter.
+
+<Warning>
+  Com `deletionPolicy: Retain`, o ALB continua sendo cobrado mesmo após deletar o CR.
+</Warning>
+
+## Exemplos Avançados
+
+### ALB com IPv6 (Dual Stack)
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: ALB
+metadata:
+  name: ipv6-alb
+spec:
+  providerRef:
+    name: production-aws
+
+  loadBalancerName: dual-stack-alb
+  scheme: internet-facing
+
+  subnets:
+    - subnet-abc123
+    - subnet-def456
+
+  ipAddressType: dualstack  # IPv4 + IPv6
+
+  enableHttp2: true
+```
+
+### ALB com Timeout Customizado
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: ALB
+metadata:
+  name: long-polling-alb
+spec:
+  providerRef:
+    name: production-aws
+
+  loadBalancerName: websocket-alb
+
+  subnets:
+    - subnet-abc123
+    - subnet-def456
+
+  idleTimeout: 3600  # 1 hora para WebSockets
+
+  tags:
+    Purpose: websocket-connections
+```
+
+## Próximos Passos
+
+Depois de criar o ALB:
+
+1. **Configure Listeners** (HTTP/HTTPS) via AWS Console ou Terraform
+2. **Crie Target Groups** apontando para seus pods Kubernetes
+3. **Configure Rules** para roteamento baseado em path/host
+4. **Adicione Certificados SSL** via ACM
+5. **Configure WAF** para proteção contra ataques
+
+<Info>
+O operator gerencia apenas o ALB. Listeners, target groups, e rules devem ser configurados separadamente.
+</Info>
+
+## Referências
+
+- [AWS ALB Documentation](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/)
+- [ALB Best Practices](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/best-practices.html)
+- [Pricing Calculator](https://calculator.aws/)

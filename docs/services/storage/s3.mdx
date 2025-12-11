@@ -1,0 +1,1202 @@
+---
+title: 'S3 Bucket - Armazenamento de Objetos'
+description: 'Armazenamento escalável, durável e seguro para objetos na nuvem'
+icon: 'box'
+---
+
+Armazenamento escalável, durável e seguro para objetos na nuvem com versionamento, criptografia e controle de acesso.
+
+## Pré-requisito: Configuração do AWSProvider
+
+Antes de criar qualquer recurso AWS, você precisa configurar um **AWSProvider** que gerencia as credenciais e autenticação com a AWS.
+
+<CodeGroup>
+```yaml IRSA
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: AWSProvider
+metadata:
+  name: production-aws
+  namespace: default
+spec:
+  region: us-east-1
+  roleARN: arn:aws:iam::123456789012:role/infra-operator-role
+  defaultTags:
+    managed-by: infra-operator
+    environment: production
+```
+
+```yaml Credenciais Estáticas
+apiVersion: v1
+kind: Secret
+metadata:
+  name: aws-credentials
+  namespace: default
+type: Opaque
+stringData:
+  access-key-id: test
+  secret-access-key: test
+---
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: AWSProvider
+metadata:
+  name: localstack
+  namespace: default
+spec:
+  region: us-east-1
+  accessKeyIDRef:
+    name: aws-credentials
+    key: access-key-id
+  secretAccessKeyRef:
+    name: aws-credentials
+    key: secret-access-key
+  defaultTags:
+    managed-by: infra-operator
+    environment: test
+```
+
+```bash Verificar Status
+kubectl get awsprovider
+kubectl describe awsprovider production-aws
+```
+</CodeGroup>
+
+<Warning>
+  Para produção, sempre use **IRSA** (IAM Roles for Service Accounts) ao invés de credenciais estáticas.
+</Warning>
+
+### Criar IAM Role para IRSA
+
+Para usar IRSA em produção, você precisa criar uma IAM Role com as permissões necessárias:
+
+<CodeGroup>
+```json Trust Policy (trust-policy.json)
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::123456789012:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B71EXAMPLE"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "oidc.eks.us-east-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B71EXAMPLE:sub": "system:serviceaccount:infra-operator-system:infra-operator-controller-manager",
+          "oidc.eks.us-east-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B71EXAMPLE:aud": "sts.amazonaws.com"
+        }
+      }
+    }
+  ]
+}
+```
+
+```json IAM Policy - S3 Bucket (s3-policy.json)
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:CreateBucket",
+        "s3:DeleteBucket",
+        "s3:ListBucket",
+        "s3:GetBucketVersioning",
+        "s3:PutBucketVersioning",
+        "s3:GetBucketEncryption",
+        "s3:PutBucketEncryption",
+        "s3:GetBucketPublicAccessBlock",
+        "s3:PutBucketPublicAccessBlock",
+        "s3:GetBucketTagging",
+        "s3:PutBucketTagging",
+        "s3:GetBucketLifecycleConfiguration",
+        "s3:PutBucketLifecycleConfiguration",
+        "s3:GetBucketCors",
+        "s3:PutBucketCors"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+```bash Criar Role com AWS CLI
+# 1. Obter OIDC Provider do cluster EKS
+export CLUSTER_NAME=my-cluster
+export AWS_REGION=us-east-1
+export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+
+OIDC_PROVIDER=$(aws eks describe-cluster \
+  --name $CLUSTER_NAME \
+  --region $AWS_REGION \
+  --query "cluster.identity.oidc.issuer" \
+  --output text | sed -e "s/^https:\/\///")
+
+# 2. Atualizar trust-policy.json com valores corretos
+cat > trust-policy.json <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::${AWS_ACCOUNT_ID}:oidc-provider/${OIDC_PROVIDER}"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "${OIDC_PROVIDER}:sub": "system:serviceaccount:infra-operator-system:infra-operator-controller-manager",
+          "${OIDC_PROVIDER}:aud": "sts.amazonaws.com"
+        }
+      }
+    }
+  ]
+}
+EOF
+
+# 3. Criar IAM Role
+aws iam create-role \
+  --role-name infra-operator-s3-role \
+  --assume-role-policy-document file://trust-policy.json \
+  --description "Role for Infra Operator S3 management"
+
+# 4. Criar e anexar policy
+aws iam put-role-policy \
+  --role-name infra-operator-s3-role \
+  --policy-name S3Management \
+  --policy-document file://s3-policy.json
+
+# 5. Obter ARN da Role
+aws iam get-role \
+  --role-name infra-operator-s3-role \
+  --query 'Role.Arn' \
+  --output text
+```
+
+```bash Anotar ServiceAccount do Operator
+# Adicionar annotation ao ServiceAccount do operator
+kubectl annotate serviceaccount infra-operator-controller-manager \
+  -n infra-operator-system \
+  eks.amazonaws.com/role-arn=arn:aws:iam::123456789012:role/infra-operator-s3-role
+```
+</CodeGroup>
+
+<Note>
+  Substitua `123456789012` pelo seu AWS Account ID e `EXAMPLED539D4633E53DE1B71EXAMPLE` pelo ID do seu OIDC provider.
+</Note>
+
+## Visão Geral
+
+Amazon S3 (Simple Storage Service) é um serviço de armazenamento de objetos massivamente escalável que oferece durabilidade, disponibilidade e segurança de classe empresarial. Os buckets S3 podem ser usados para diversos casos de uso: backup, arquivos estáticos de websites, data lakes, repositórios de logs e muito mais.
+
+**Características:**
+- Armazenamento ilimitado de objetos (cada um até 5 TB)
+- 99.999999999% (11 noves) durabilidade anual
+- 99.99% disponibilidade em multi-AZ
+- Replicação automática entre zonas de disponibilidade
+- Versioning para controle de histórico de objetos
+- Criptografia em repouso (AES256 ou KMS)
+- Criptografia em trânsito (HTTPS)
+- Public Access Block para segurança
+- Lifecycle rules para otimização de custos
+- CORS para aplicações web
+- Hospedagem de websites estáticos
+- Integração com CloudFront para CDN
+- Controle granular via bucket policies e IAM
+- Logging de acessos
+- Sem custo de criação, paga-se apenas pelos dados armazenados
+
+## Início Rápido
+
+<CodeGroup>
+```yaml S3 Bucket Full-Featured
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: S3Bucket
+metadata:
+  name: e2e-test-bucket
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  bucketName: e2e-test-bucket-infra-operator
+
+  # Enable versioning
+  versioning:
+    enabled: true
+
+  # Encryption
+  encryption:
+    algorithm: AES256
+
+  # Block public access
+  publicAccessBlock:
+    blockPublicAcls: true
+    ignorePublicAcls: true
+    blockPublicPolicy: true
+    restrictPublicBuckets: true
+
+  # Tags
+  tags:
+    test-type: e2e
+    component: s3-controller
+
+  # Retain bucket after test (for debugging)
+  deletionPolicy: Delete
+```
+
+```yaml S3 Bucket Simples
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: S3Bucket
+metadata:
+  name: e2e-simple-bucket
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  bucketName: e2e-simple-bucket
+
+  tags:
+    test-type: e2e
+    variant: simple
+
+  deletionPolicy: Delete
+```
+
+```bash Aplicar
+kubectl apply -f s3-bucket.yaml
+```
+
+```bash Verificar Status
+kubectl get s3bucket e2e-test-bucket
+kubectl describe s3bucket e2e-test-bucket
+kubectl get s3bucket e2e-test-bucket -o yaml
+```
+</CodeGroup>
+
+## Referência de Configuração
+
+### Campos Obrigatórios
+
+<ParamField path="spec.providerRef" type="object" required>
+  Referência ao recurso AWSProvider
+
+  <Expandable title="properties">
+    <ParamField path="name" type="string" required>
+      Nome do recurso AWSProvider
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="spec.bucketName" type="string" required>
+  Nome único do bucket S3. Deve ser único globalmente em toda a AWS.
+
+  **Regras:**
+  - Mínimo 3 caracteres, máximo 63
+  - Apenas letras minúsculas, números, hífens e pontos
+  - Não pode começar ou terminar com hífen ou ponto
+  - Não pode conter endereço IP (ex: 192.168.1.1)
+  - Não pode conter sublinhado (_)
+
+  ```yaml
+  bucketName: my-company-app-data-prod-2025
+  ```
+</ParamField>
+
+### Campos Opcionais
+
+<ParamField path="spec.versioning" type="object">
+  Configuração de versionamento para manter histórico de objetos
+
+  ```yaml
+  versioning:
+    enabled: true
+  ```
+
+  **Detalhes:**
+  - `enabled: true`: Mantém todas as versões de cada objeto
+  - `enabled: false`: Sem versionamento (padrão)
+  - Permite recuperação de objetos deletados ou sobrescritos
+  - Requer mais armazenamento
+  - Adiciona custo de armazenamento por versão
+</ParamField>
+
+<ParamField path="spec.encryption" type="object">
+  Criptografia em repouso para o bucket
+
+  ```yaml
+  encryption:
+    algorithm: AES256  # ou KMS
+    kmsKeyID: "arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012"
+  ```
+
+  **Opções:**
+  - `AES256`: Criptografia de servidor gerenciada pela AWS (padrão, sem custo adicional)
+  - `KMS`: Criptografia com AWS KMS (requer CMK, custo adicional)
+  - Se usar KMS, `kmsKeyID` é obrigatório
+</ParamField>
+
+<ParamField path="spec.publicAccessBlock" type="object">
+  Bloqueia acesso público ao bucket (altamente recomendado)
+
+  ```yaml
+  publicAccessBlock:
+    blockPublicAcls: true
+    ignorePublicAcls: true
+    blockPublicPolicy: true
+    restrictPublicBuckets: true
+  ```
+
+  **Campos:**
+  - `blockPublicAcls`: Bloqueia novos ACLs públicos (recomendado: true)
+  - `ignorePublicAcls`: Ignora ACLs públicos existentes (recomendado: true)
+  - `blockPublicPolicy`: Bloqueia policies públicas (recomendado: true)
+  - `restrictPublicBuckets`: Restringe acesso público via policies (recomendado: true)
+</ParamField>
+
+<ParamField path="spec.lifecycleRules" type="array">
+  Regras para transição automática ou deleção de objetos baseado em idade
+
+  ```yaml
+  lifecycleRules:
+  - id: archive-old-logs
+    enabled: true
+    prefix: logs/
+    filter:
+      tags:
+        archived: "true"
+    transitions:
+    - days: 30
+      storageClass: STANDARD_IA
+    - days: 90
+      storageClass: GLACIER
+    - days: 180
+      storageClass: DEEP_ARCHIVE
+    expiration:
+      days: 365
+    noncurrentVersionTransitions:
+    - days: 30
+      storageClass: STANDARD_IA
+    noncurrentVersionExpiration:
+      days: 90
+  ```
+
+  **Casos de Uso:**
+  - Economizar custos movendo objetos antigos para classes mais baratas
+  - Deletar logs após período de retenção
+  - Arquivar dados para conformidade
+</ParamField>
+
+<ParamField path="spec.cors" type="object">
+  Configurar CORS (Cross-Origin Resource Sharing) para acesso de websites
+
+  ```yaml
+  cors:
+    corsRules:
+    - allowedMethods:
+      - GET
+      - PUT
+      - POST
+      allowedOrigins:
+      - "https://example.com"
+      - "https://app.example.com"
+      allowedHeaders:
+      - "Authorization"
+      - "Content-Type"
+      exposeHeaders:
+      - "x-amz-meta-*"
+      maxAgeSeconds: 3000
+  ```
+
+  **Uso:** Permitir requisições AJAX de navegadores para o S3
+</ParamField>
+
+<ParamField path="spec.website" type="object">
+  Configurar bucket para hospedagem de website estático
+
+  ```yaml
+  website:
+    indexDocument: index.html
+    errorDocument: 404.html
+  ```
+
+  **Detalhes:**
+  - `indexDocument`: Arquivo padrão quando acessa o bucket
+  - `errorDocument`: Arquivo exibido em erros 4xx
+  - Bucket DEVE ter `publicAccessBlock: false` para funcionar
+  - Requer bucket policy permitindo `GetObject`
+</ParamField>
+
+<ParamField path="spec.tags" type="object">
+  Pares chave-valor para marcar o bucket
+
+  ```yaml
+  tags:
+    Environment: production
+    Application: my-app
+    Team: platform
+    CostCenter: engineering
+    ManagedBy: infra-operator
+  ```
+</ParamField>
+
+<ParamField path="spec.deletionPolicy" type="string" default="Delete">
+  O que acontece com o bucket quando o CR é deletado
+
+  **Opções:**
+  - `Delete`: Bucket é deletado da AWS (CUIDADO: objetos serão perdidos)
+  - `Retain`: Bucket permanece na AWS mas não gerenciado
+  - `Orphan`: Remover apenas gerenciamento mas manter bucket
+
+  ```yaml
+  deletionPolicy: Retain
+  ```
+</ParamField>
+
+## Campos de Status
+
+Após o S3 Bucket ser criado, os seguintes campos de status são populados:
+
+<ResponseField name="status.bucketName" type="string">
+  Nome do bucket criado
+</ResponseField>
+
+<ResponseField name="status.bucketArn" type="string">
+  ARN (Amazon Resource Name) do bucket (ex: `arn:aws:s3:::my-bucket`)
+</ResponseField>
+
+<ResponseField name="status.region" type="string">
+  Região AWS onde o bucket foi criado
+</ResponseField>
+
+<ResponseField name="status.versioningEnabled" type="boolean">
+  Se versionamento está habilitado no bucket
+</ResponseField>
+
+<ResponseField name="status.encryptionEnabled" type="boolean">
+  Se criptografia está habilitada no bucket
+</ResponseField>
+
+<ResponseField name="status.encryptionAlgorithm" type="string">
+  Algoritmo de criptografia usado (AES256 ou KMS)
+</ResponseField>
+
+<ResponseField name="status.bucketURL" type="string">
+  URL de acesso ao bucket (ex: `https://my-bucket.s3.amazonaws.com`)
+</ResponseField>
+
+<ResponseField name="status.ready" type="boolean">
+  `true` quando o bucket está criado e pronto para uso
+</ResponseField>
+
+<ResponseField name="status.lastSyncTime" type="string">
+  Timestamp da última sincronização com a AWS
+</ResponseField>
+
+## Exemplos
+
+### S3 Bucket de Produção com Versionamento e Criptografia
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: S3Bucket
+metadata:
+  name: production-bucket
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  bucketName: mycompany-app-data-prod
+
+  # Habilitar versionamento para recuperação
+  versioning:
+    enabled: true
+
+  # Criptografia AES256 (sem custo adicional)
+  encryption:
+    algorithm: AES256
+
+  # Máxima segurança contra acesso público
+  publicAccessBlock:
+    blockPublicAcls: true
+    ignorePublicAcls: true
+    blockPublicPolicy: true
+    restrictPublicBuckets: true
+
+  tags:
+    Environment: production
+    Application: data-storage
+    Team: platform
+    ManagedBy: infra-operator
+    CostCenter: infrastructure
+
+  # Reter bucket ao deletar CR (segurança)
+  deletionPolicy: Retain
+```
+
+### S3 Bucket para Static Website Hosting
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: S3Bucket
+metadata:
+  name: website-bucket
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  bucketName: mycompany-website-prod
+
+  # Configurar para hospedagem de website
+  website:
+    indexDocument: index.html
+    errorDocument: 404.html
+
+  # Permitir requisições CORS de navegadores
+  cors:
+    corsRules:
+    - allowedMethods:
+      - GET
+      - HEAD
+      allowedOrigins:
+      - "https://mycompany.com"
+      - "https://www.mycompany.com"
+      maxAgeSeconds: 3000
+
+  # Criptografia básica
+  encryption:
+    algorithm: AES256
+
+  # Bloquear acesso público (acesso via CloudFront/policies)
+  publicAccessBlock:
+    blockPublicAcls: true
+    ignorePublicAcls: true
+    blockPublicPolicy: true
+    restrictPublicBuckets: true
+
+  tags:
+    Environment: production
+    Type: static-website
+    Application: corporate-website
+
+  deletionPolicy: Retain
+```
+
+### S3 Bucket com Lifecycle Rules para Otimização de Custos
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: S3Bucket
+metadata:
+  name: logs-bucket
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  bucketName: mycompany-logs-archive-prod
+
+  # Versioning para compliance
+  versioning:
+    enabled: true
+
+  encryption:
+    algorithm: AES256
+
+  # Regras de ciclo de vida para economia
+  lifecycleRules:
+  # Transição para classes mais baratas
+  - id: transition-to-cheaper-storage
+    enabled: true
+    prefix: logs/
+    transitions:
+    - days: 30        # Após 30 dias: Standard-IA
+      storageClass: STANDARD_IA
+    - days: 90        # Após 90 dias: Glacier
+      storageClass: GLACIER
+    - days: 365       # Após 1 ano: Deep Archive
+      storageClass: DEEP_ARCHIVE
+
+  # Deletar versões antigas
+  - id: cleanup-old-versions
+    enabled: true
+    noncurrentVersionTransitions:
+    - days: 30
+      storageClass: STANDARD_IA
+    noncurrentVersionExpiration:
+      days: 90
+
+  # Deletar objetos incompletos de multipart upload
+  - id: cleanup-incomplete-multipart
+    enabled: true
+
+  publicAccessBlock:
+    blockPublicAcls: true
+    ignorePublicAcls: true
+    blockPublicPolicy: true
+    restrictPublicBuckets: true
+
+  tags:
+    Environment: production
+    Type: logs-archive
+    Purpose: compliance
+
+  deletionPolicy: Retain
+```
+
+### S3 Bucket com CORS para Aplicação Web
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: S3Bucket
+metadata:
+  name: api-assets-bucket
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  bucketName: mycompany-api-assets-prod
+
+  # Configurar CORS para aplicação web
+  cors:
+    corsRules:
+    - id: allow-frontend-app
+      allowedMethods:
+      - GET
+      - HEAD
+      - PUT
+      - POST
+      - DELETE
+      allowedOrigins:
+      - "https://app.mycompany.com"
+      - "https://dashboard.mycompany.com"
+      allowedHeaders:
+      - "*"
+      exposeHeaders:
+      - "x-amz-meta-*"
+      - "ETag"
+      maxAgeSeconds: 3600
+
+  encryption:
+    algorithm: AES256
+
+  versioning:
+    enabled: true
+
+  publicAccessBlock:
+    blockPublicAcls: true
+    ignorePublicAcls: true
+    blockPublicPolicy: true
+    restrictPublicBuckets: true
+
+  tags:
+    Environment: production
+    Type: application-assets
+    Application: web-api
+
+  deletionPolicy: Retain
+```
+
+## Verificação
+
+### Verificar Status do Bucket
+
+```bash
+# Listar todos os S3 Buckets criados
+kubectl get s3buckets
+
+# Obter informações detalhadas
+kubectl get s3bucket production-bucket -o yaml
+
+# Descrever bucket (mostra eventos e status)
+kubectl describe s3bucket production-bucket
+
+# Acompanhar criação em tempo real
+kubectl get s3bucket production-bucket -w
+```
+
+### Verificar na AWS
+
+<Tabs>
+  <Tab title="AWS CLI">
+    ```bash
+    # Listar buckets
+    aws s3 ls
+
+    # Obter configuração de versionamento
+    aws s3api get-bucket-versioning --bucket my-company-app-data
+
+    # Obter configuração de criptografia
+    aws s3api get-bucket-encryption --bucket my-company-app-data
+
+    # Obter configuração de acesso público
+    aws s3api get-public-access-block --bucket my-company-app-data
+
+    # Obter configuração de lifecycle
+    aws s3api get-bucket-lifecycle-configuration --bucket my-company-app-data
+
+    # Obter configuração de CORS
+    aws s3api get-bucket-cors --bucket my-company-app-data
+
+    # Obter todas as tags
+    aws s3api get-bucket-tagging --bucket my-company-app-data
+
+    # Verificar tamanho do bucket
+    aws s3 ls s3://my-company-app-data --summarize --human-readable --recursive
+
+    # Listar objetos
+    aws s3 ls s3://my-company-app-data --recursive
+    ```
+  </Tab>
+
+  <Tab title="LocalStack">
+    ```bash
+    # Para testes com LocalStack
+    export AWS_ENDPOINT_URL=http://localhost:4566
+
+    aws s3 ls
+    aws s3api get-bucket-versioning --bucket my-company-app-data
+    aws s3api get-bucket-encryption --bucket my-company-app-data
+    ```
+  </Tab>
+</Tabs>
+
+### Saída Esperada
+
+```yaml
+status:
+  bucketName: my-company-app-data
+  bucketArn: arn:aws:s3:::my-company-app-data
+  region: us-east-1
+  bucketURL: https://my-company-app-data.s3.amazonaws.com
+  versioningEnabled: true
+  encryptionEnabled: true
+  encryptionAlgorithm: AES256
+  ready: true
+  lastSyncTime: "2025-11-22T20:30:15Z"
+```
+
+## Resolução de Problemas
+
+<AccordionGroup>
+  <Accordion title="Erro: Bucket name already exists">
+    **Sintomas:** Falha na criação com erro "BucketAlreadyExists" ou "BucketAlreadyOwnedByYou"
+
+    **Causa:** Nome do bucket já existe e é usado por outra conta AWS ou você mesmo
+
+    **Soluções:**
+    ```bash
+    # Bucket names são globalmente únicos na AWS
+    # Verifique se bucket existe
+    aws s3 ls | grep my-bucket-name
+
+    # Use um nome mais único (adicione timestamp, região, etc)
+    bucketName: my-company-app-data-prod-us-east-1-20250122
+
+    # Ou verifique se é seu bucket e reutilize-o
+    kubectl patch s3bucket my-bucket \
+      --type merge \
+      -p '{"metadata":{"finalizers":[]}}'
+    ```
+  </Accordion>
+
+  <Accordion title="Bucket travado em NotReady">
+    **Sintomas:** Bucket permanece em estado NotReady após criação
+
+    **Causas comuns:**
+    1. Permissões IAM insuficientes
+    2. Quota de buckets atingida (padrão: 100 buckets por conta)
+    3. Problema de conectividade com AWS
+
+    **Soluções:**
+    ```bash
+    # Verificar logs do operator
+    kubectl logs -n infra-operator-system \
+      deploy/infra-operator-controller-manager \
+      --tail=100
+
+    # Verificar status detalhado
+    kubectl describe s3bucket production-bucket
+
+    # Verificar se AWSProvider está ready
+    kubectl get awsprovider
+    kubectl describe awsprovider production-aws
+
+    # Tentar força sincronização anotando
+    kubectl annotate s3bucket production-bucket \
+      force-sync="$(date +%s)" --overwrite
+    ```
+  </Accordion>
+
+  <Accordion title="Acesso negado ao bucket">
+    **Sintomas:** Erro "AccessDenied" ou "403 Forbidden"
+
+    **Causa:** Permissões IAM insuficientes ou bucket policy bloqueando acesso
+
+    **Soluções:**
+    ```bash
+    # Verificar permissões IAM do role/usuário
+    # IAM policy DEVE incluir s3:* ou ações específicas
+
+    # Verificar bucket policy
+    aws s3api get-bucket-policy --bucket my-company-app-data
+
+    # Testar acesso
+    aws s3 ls s3://my-company-app-data
+
+    # Verificar credentials usando
+    aws sts get-caller-identity
+
+    # Se usando IRSA, verificar service account
+    kubectl describe sa infra-operator-controller-manager \
+      -n infra-operator-system
+    ```
+  </Accordion>
+
+  <Accordion title="Não consegue deletar bucket (contém objetos)">
+    **Sintomas:** Erro ao deletar: "The bucket you tried to delete is not empty"
+
+    **Causa:** Bucket contém objetos que precisam ser deletados primeiro
+
+    **Soluções:**
+    ```bash
+    # Opção 1: Deletar objetos manualmente
+    aws s3 rm s3://my-company-app-data --recursive
+
+    # Opção 2: Usar deletionPolicy: Delete
+    # Isso deleta objetos automaticamente ao deletar CR
+    kubectl patch s3bucket production-bucket \
+      --type merge \
+      -p '{"spec":{"deletionPolicy":"Delete"}}'
+
+    # Opção 3: Se tiver versionamento, deletar versões
+    aws s3api list-object-versions \
+      --bucket my-company-app-data \
+      --output json > versions.json
+
+    # Então deletar cada versão
+    aws s3api delete-object --bucket my-company-app-data \
+      --key <key> --version-id <version-id>
+
+    # Só depois deletar CR
+    kubectl delete s3bucket production-bucket
+    ```
+  </Accordion>
+
+  <Accordion title="Custos elevados de armazenamento S3">
+    **Sintomas:** Faturas de AWS com custos inesperados
+
+    **Causa:** Dados não são transicionados para classes mais baratas
+
+    **Soluções:**
+    ```bash
+    # 1. Implementar Lifecycle Rules
+    # Transição para STANDARD_IA após 30 dias (~50% do custo)
+    # Transição para GLACIER após 90 dias (~20% do custo)
+
+    # 2. Limpar dados antigos
+    aws s3api delete-objects --bucket my-bucket \
+      --delete 'Objects=[{Key=old-file.txt}]'
+
+    # 3. Verificar uso atual
+    aws s3 ls s3://my-bucket --summarize --human-readable --recursive
+
+    # 4. Usar S3 Intelligent-Tiering (automático)
+    # Transiciona automaticamente baseado em acesso
+
+    # 5. Considerar S3 Select para queries eficientes
+    # Ler apenas dados necessários ao invés de todo objeto
+    ```
+  </Accordion>
+
+  <Accordion title="Versionamento não funciona">
+    **Sintomas:** Versioning enabled: false mesmo após configurar
+
+    **Causas:**
+    1. Versioning foi desabilitado após habilitação
+    2. MFA Delete está ativado (requer confirmação)
+
+    **Soluções:**
+    ```bash
+    # Verificar status
+    aws s3api get-bucket-versioning --bucket my-company-app-data
+
+    # Re-aplicar configuração
+    kubectl patch s3bucket production-bucket \
+      --type merge \
+      -p '{"spec":{"versioning":{"enabled":true}}}'
+
+    # Se MFA Delete está ativado, desabilitar
+    aws s3api put-bucket-versioning \
+      --bucket my-company-app-data \
+      --versioning-configuration Status=Enabled,MFADelete=Disabled
+    ```
+  </Accordion>
+
+  <Accordion title="Deleção do bucket travada">
+    **Sintomas:** Deleção do CR fica pendente indefinidamente
+
+    **Causa:** Finalizer não consegue deletar bucket (objetos, permissões, etc)
+
+    **Soluções:**
+    ```bash
+    # Verificar finalizers
+    kubectl get s3bucket production-bucket -o yaml | grep finalizers
+
+    # Ver eventos detalhados
+    kubectl describe s3bucket production-bucket
+
+    # Forçar remover finalizer (CUIDADO: bucket permanecerá na AWS)
+    kubectl patch s3bucket production-bucket \
+      -p '{"metadata":{"finalizers":[]}}' --type=merge
+
+    # Ou alterar política de deleção antes
+    kubectl patch s3bucket production-bucket \
+      --type merge \
+      -p '{"spec":{"deletionPolicy":"Retain"}}'
+
+    # Depois deletar CR
+    kubectl delete s3bucket production-bucket
+    ```
+  </Accordion>
+
+  <Accordion title="CORS não funciona em aplicação web">
+    **Sintomas:** Erro CORS em navegador: "No 'Access-Control-Allow-Origin' header"
+
+    **Causa:** CORS não configurado ou origem não permitida
+
+    **Soluções:**
+    ```bash
+    # Verificar CORS configurado
+    aws s3api get-bucket-cors --bucket my-company-app-data
+
+    # Testar requisição CORS
+    curl -i -X OPTIONS https://my-company-app-data.s3.amazonaws.com/ \
+      -H "Origin: https://app.mycompany.com" \
+      -H "Access-Control-Request-Method: GET"
+
+    # Atualizar CORS para permitir sua origem
+    kubectl patch s3bucket api-assets-bucket \
+      --type merge \
+      -p '{
+        "spec": {
+          "cors": {
+            "corsRules": [{
+              "allowedMethods": ["GET", "HEAD", "PUT", "POST", "DELETE"],
+              "allowedOrigins": ["https://app.mycompany.com"],
+              "allowedHeaders": ["*"],
+              "maxAgeSeconds": 3600
+            }]
+          }
+        }
+      }'
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Melhores Práticas
+
+<CardGroup cols={2}>
+  <Card title="Sempre Usar Public Access Block" icon="shield-halved">
+    - Bloqueia acesso público acidental
+    - Reduz riscos de security breaches
+    - Padrão recomendado para todos os buckets
+    - Exceção apenas para static websites (com bucket policy)
+  </Card>
+
+  <Card title="Versionamento em Produção" icon="history">
+    - Habilitado por padrão em ambientes de produção
+    - Permite recuperação de objetos deletados
+    - Suporta compliance e audits
+    - Considere lifecycle rules para versões antigas
+    - Aumenta custo de armazenamento (estratégia de retenção)
+  </Card>
+
+  <Card title="Criptografia Sempre Habilitada" icon="lock">
+    - Usar AES256 por padrão (sem custo)
+    - KMS para requisitos de compliance específicos
+    - Criptografia em repouso é obrigatória
+    - Usar HTTPS (TLS) para dados em trânsito
+    - Considerar client-side encryption para dados sensíveis
+  </Card>
+
+  <Card title="Lifecycle Rules para Otimizar Custos" icon="dollar-sign">
+    - Transição para STANDARD_IA após 30 dias
+    - Transição para GLACIER após 90 dias
+    - DEEP_ARCHIVE para arquivamento de longo prazo
+    - Economiza até 80% de custos de armazenamento
+    - Aplicar a dados com padrões de acesso conhecidos
+  </Card>
+
+  <Card title="Tagging Consistente" icon="tags">
+    - Marque com `Environment` (prod/dev/staging)
+    - Inclua `Application` ou `Owner`
+    - Adicione `ManagedBy: infra-operator`
+    - Use `CostCenter` para alocação de custos
+    - Facilita rastreamento e governança
+  </Card>
+
+  <Card title="Naming Conventions" icon="heading">
+    - Use padrão: `company-app-type-environment-region`
+    - Exemplo: `mycompany-analytics-data-prod-us-east-1`
+    - Inclua timestamp para unicidade: `-20250122`
+    - Evite nomes genéricos (data, logs, backup)
+    - Documente convenção de nomes
+  </Card>
+
+  <Card title="Monitorar Custos" icon="chart-line">
+    - S3 cobra por: armazenamento, requisições, transferência
+    - ~$0.023/GB/mês para STANDARD
+    - ~$0.0125/GB/mês para STANDARD_IA
+    - Alertas para custos anormais
+  </Card>
+
+  <Card title="Backup Strategy" icon="database">
+    - S3 oferece 11 noves durabilidade
+    - Versioning é melhor para recuperação de acidentes
+    - Replicação cross-region (S3 CRR) para DR
+    - Não substitui backup completo de BD
+    - Compliance pode exigir backups em recurso separado
+  </Card>
+
+  <Card title="Access Logging" icon="list">
+    - Ativar S3 Access Logging para auditoria
+    - Logs salvos em bucket separado
+    - Usar para detectar acessos não autorizados
+    - Manter logs por período de compliance
+  </Card>
+
+  <Card title="Política de Deleção" icon="trash">
+    - Use `Retain` para produção (segurança)
+    - Use `Delete` para dev/testing (limpeza automática)
+    - `Orphan` para manter bucket mas remover gerenciamento
+    - Documente dependências (aplicações, pipelines)
+    - Teste deleção em dev antes de produção
+  </Card>
+</CardGroup>
+
+## Casos de Uso
+
+### 1. Hospedagem de Static Website
+
+```yaml
+# Frontend React/Vue/Angular servido via S3 + CloudFront
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: S3Bucket
+metadata:
+  name: website-bucket
+spec:
+  providerRef:
+    name: production-aws
+  bucketName: mycompany-website
+  website:
+    indexDocument: index.html
+    errorDocument: 404.html
+  cors:
+    corsRules:
+    - allowedMethods: [GET, HEAD]
+      allowedOrigins: ["https://mycompany.com"]
+```
+
+### 2. Data Lake para Analytics
+
+```yaml
+# Armazenar dados brutos para análise com Athena/Redshift
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: S3Bucket
+metadata:
+  name: data-lake
+spec:
+  providerRef:
+    name: production-aws
+  bucketName: mycompany-datalake
+  versioning:
+    enabled: true
+  encryption:
+    algorithm: AES256
+  lifecycleRules:
+  - prefix: raw-data/
+    transitions:
+    - days: 90
+      storageClass: GLACIER
+```
+
+### 3. Backup e Arquivamento
+
+```yaml
+# Armazenar backups de longo prazo
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: S3Bucket
+metadata:
+  name: backup-bucket
+spec:
+  providerRef:
+    name: production-aws
+  bucketName: mycompany-backups
+  versioning:
+    enabled: true
+  lifecycleRules:
+  - transitions:
+    - days: 7
+      storageClass: STANDARD_IA
+    - days: 30
+      storageClass: GLACIER
+    - days: 180
+      storageClass: DEEP_ARCHIVE
+    expiration:
+      days: 2555  # 7 anos
+```
+
+### 4. Application Assets e Media
+
+```yaml
+# Armazenar imagens, vídeos, documentos da aplicação
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: S3Bucket
+metadata:
+  name: assets-bucket
+spec:
+  providerRef:
+    name: production-aws
+  bucketName: mycompany-app-assets
+  versioning:
+    enabled: true
+  cors:
+    corsRules:
+    - allowedMethods: [GET, HEAD, PUT, POST]
+      allowedOrigins: ["https://app.mycompany.com"]
+  tags:
+    Type: application-assets
+```
+
+## Recursos Relacionados
+
+<CardGroup cols={2}>
+  <Card
+    title="IAM Roles"
+    icon="key"
+    href="/services/security/iam"
+  >
+    Controle granular de acesso a buckets S3
+  </Card>
+
+  <Card
+    title="Lambda"
+    icon="function"
+    href="/services/compute/lambda"
+  >
+    Processar eventos S3 com funções serverless
+  </Card>
+
+  <Card
+    title="CloudFront"
+    icon="globe"
+    href="/services/networking/cloudfront"
+  >
+    CDN para servir conteúdo S3 com baixa latência
+  </Card>
+
+</CardGroup>
+
+---

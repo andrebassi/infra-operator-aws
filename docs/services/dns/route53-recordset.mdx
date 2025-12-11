@@ -1,0 +1,643 @@
+---
+title: "Route53 Record Set"
+description: "Gerenciar registros DNS no AWS Route53"
+---
+
+# Route53 Record Set
+
+O recurso `Route53RecordSet` permite criar e gerenciar registros DNS (resource record sets) no AWS Route53 usando recursos nativos do Kubernetes.
+
+## Visão Geral
+
+Route53 Record Sets definem como o tráfego é roteado para recursos (servidores, load balancers, etc.). Suporta todos os tipos de registros DNS padrão e políticas avançadas de roteamento.
+
+**Casos de Uso:**
+- Registros DNS simples (A, AAAA, CNAME, TXT, MX)
+- Alias records para recursos AWS (ELB, CloudFront, S3)
+- Roteamento baseado em peso, latência ou geolocalização
+- Failover automático com health checks
+- Gerenciamento declarativo de DNS via GitOps
+
+## Tipos de Registros Suportados
+
+- **A** - IPv4 address
+- **AAAA** - IPv6 address
+- **CNAME** - Canonical name
+- **MX** - Mail exchange
+- **TXT** - Text record
+- **PTR** - Pointer record
+- **SRV** - Service locator
+- **SPF** - Sender Policy Framework
+- **NS** - Name server
+- **SOA** - Start of authority
+- **CAA** - Certification Authority Authorization
+- **NAPTR** - Name Authority Pointer
+
+## Exemplos Básicos
+
+### Registro A Simples
+
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Route53RecordSet
+metadata:
+  name: www-record
+spec:
+  providerRef:
+    name: aws-provider
+  hostedZoneID: Z1234567890ABC
+  name: www.example.com
+  type: A
+  ttl: 300
+  resourceRecords:
+    - 192.0.2.1
+    - 192.0.2.2
+```
+
+### Registro CNAME
+
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Route53RecordSet
+metadata:
+  name: blog-cname
+spec:
+  providerRef:
+    name: aws-provider
+  hostedZoneID: Z1234567890ABC
+  name: blog.example.com
+  type: CNAME
+  ttl: 300
+  resourceRecords:
+    - www.example.com
+```
+
+### Alias Record (Load Balancer)
+
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Route53RecordSet
+metadata:
+  name: api-alias
+spec:
+  providerRef:
+    name: aws-provider
+  hostedZoneID: Z1234567890ABC
+  name: api.example.com
+  type: A
+  aliasTarget:
+    hostedZoneID: Z215JYRZR1TBD5  # ELB hosted zone
+    dnsName: my-lb-123.us-east-1.elb.amazonaws.com
+    evaluateTargetHealth: true
+```
+
+## Campos do Spec
+
+| Campo | Tipo | Obrigatório | Descrição |
+|-------|------|-------------|-----------|
+| `providerRef` | `ProviderReference` | Sim | Referência ao AWSProvider |
+| `hostedZoneID` | `string` | Sim | ID da hosted zone |
+| `name` | `string` | Sim | Nome DNS completo (FQDN) |
+| `type` | `string` | Sim | Tipo do registro (A, AAAA, CNAME, etc.) |
+| `ttl` | `*int64` | Condicional | TTL em segundos (obrigatório para não-alias) |
+| `resourceRecords` | `[]string` | Condicional | Valores do registro (obrigatório para não-alias) |
+| `aliasTarget` | `*AliasTarget` | Condicional | Target para alias records |
+| `setIdentifier` | `string` | Condicional | Identificador para routing policies |
+| `weight` | `*int64` | Não | Peso (0-255) para weighted routing |
+| `region` | `string` | Não | Região para latency-based routing |
+| `geoLocation` | `*GeoLocation` | Não | Localização para geolocation routing |
+| `failover` | `string` | Não | PRIMARY ou SECONDARY |
+| `multiValueAnswer` | `bool` | Não | Habilita multivalue answer |
+| `healthCheckID` | `string` | Não | ID do health check |
+| `deletionPolicy` | `string` | Não | Delete ou Retain (default: Delete) |
+
+## Políticas de Roteamento
+
+### 1. Simple Routing (Padrão)
+
+Um único registro com um ou mais valores:
+
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Route53RecordSet
+metadata:
+  name: simple-a-record
+spec:
+  providerRef:
+    name: aws-provider
+  hostedZoneID: Z1234567890ABC
+  name: app.example.com
+  type: A
+  ttl: 300
+  resourceRecords:
+    - 192.0.2.1
+    - 192.0.2.2
+    - 192.0.2.3
+```
+
+### 2. Weighted Routing
+
+Distribui tráfego baseado em pesos:
+
+```yaml
+---
+# 70% do tráfego
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Route53RecordSet
+metadata:
+  name: app-server-1
+spec:
+  providerRef:
+    name: aws-provider
+  hostedZoneID: Z1234567890ABC
+  name: app.example.com
+  type: A
+  ttl: 60
+  resourceRecords:
+    - 192.0.2.10
+  setIdentifier: "server-1"
+  weight: 70
+
+---
+# 30% do tráfego
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Route53RecordSet
+metadata:
+  name: app-server-2
+spec:
+  providerRef:
+    name: aws-provider
+  hostedZoneID: Z1234567890ABC
+  name: app.example.com
+  type: A
+  ttl: 60
+  resourceRecords:
+    - 192.0.2.20
+  setIdentifier: "server-2"
+  weight: 30
+```
+
+### 3. Latency-Based Routing
+
+Roteia para região com menor latência:
+
+```yaml
+---
+# US East
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Route53RecordSet
+metadata:
+  name: global-us-east
+spec:
+  providerRef:
+    name: aws-provider
+  hostedZoneID: Z1234567890ABC
+  name: global.example.com
+  type: A
+  ttl: 60
+  resourceRecords:
+    - 192.0.2.10
+  setIdentifier: "us-east-1"
+  region: us-east-1
+
+---
+# EU West
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Route53RecordSet
+metadata:
+  name: global-eu-west
+spec:
+  providerRef:
+    name: aws-provider
+  hostedZoneID: Z1234567890ABC
+  name: global.example.com
+  type: A
+  ttl: 60
+  resourceRecords:
+    - 192.0.2.20
+  setIdentifier: "eu-west-1"
+  region: eu-west-1
+```
+
+### 4. Geolocation Routing
+
+Roteia baseado na localização do usuário:
+
+```yaml
+---
+# Usuários dos EUA
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Route53RecordSet
+metadata:
+  name: geo-us
+spec:
+  providerRef:
+    name: aws-provider
+  hostedZoneID: Z1234567890ABC
+  name: geo.example.com
+  type: A
+  ttl: 300
+  resourceRecords:
+    - 192.0.2.10
+  setIdentifier: "us-users"
+  geoLocation:
+    countryCode: US
+
+---
+# Usuários da Europa
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Route53RecordSet
+metadata:
+  name: geo-eu
+spec:
+  providerRef:
+    name: aws-provider
+  hostedZoneID: Z1234567890ABC
+  name: geo.example.com
+  type: A
+  ttl: 300
+  resourceRecords:
+    - 192.0.2.20
+  setIdentifier: "eu-users"
+  geoLocation:
+    continentCode: EU
+
+---
+# Default (resto do mundo)
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Route53RecordSet
+metadata:
+  name: geo-default
+spec:
+  providerRef:
+    name: aws-provider
+  hostedZoneID: Z1234567890ABC
+  name: geo.example.com
+  type: A
+  ttl: 300
+  resourceRecords:
+    - 192.0.2.30
+  setIdentifier: "default-location"
+  geoLocation:
+    continentCode: "*"
+```
+
+### 5. Failover Routing
+
+Configuração ativo/passivo:
+
+```yaml
+---
+# Primary
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Route53RecordSet
+metadata:
+  name: failover-primary
+spec:
+  providerRef:
+    name: aws-provider
+  hostedZoneID: Z1234567890ABC
+  name: app.example.com
+  type: A
+  ttl: 60
+  resourceRecords:
+    - 192.0.2.10
+  setIdentifier: "primary"
+  failover: PRIMARY
+  healthCheckID: abc123-health-check
+
+---
+# Secondary (backup)
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Route53RecordSet
+metadata:
+  name: failover-secondary
+spec:
+  providerRef:
+    name: aws-provider
+  hostedZoneID: Z1234567890ABC
+  name: app.example.com
+  type: A
+  ttl: 60
+  resourceRecords:
+    - 192.0.2.20
+  setIdentifier: "secondary"
+  failover: SECONDARY
+```
+
+### 6. Multivalue Answer Routing
+
+Retorna múltiplos valores com health checks:
+
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Route53RecordSet
+metadata:
+  name: multivalue-1
+spec:
+  providerRef:
+    name: aws-provider
+  hostedZoneID: Z1234567890ABC
+  name: multi.example.com
+  type: A
+  ttl: 60
+  resourceRecords:
+    - 192.0.2.10
+  setIdentifier: "server-1"
+  multiValueAnswer: true
+  healthCheckID: health-check-1
+```
+
+## Registros Especiais
+
+### MX (Mail Exchange)
+
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Route53RecordSet
+metadata:
+  name: mx-record
+spec:
+  providerRef:
+    name: aws-provider
+  hostedZoneID: Z1234567890ABC
+  name: example.com
+  type: MX
+  ttl: 3600
+  resourceRecords:
+    - 10 mail1.example.com
+    - 20 mail2.example.com
+    - 30 mail3.example.com
+```
+
+### TXT (SPF, DKIM, DMARC)
+
+```yaml
+---
+# SPF Record
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Route53RecordSet
+metadata:
+  name: spf-record
+spec:
+  providerRef:
+    name: aws-provider
+  hostedZoneID: Z1234567890ABC
+  name: example.com
+  type: TXT
+  ttl: 300
+  resourceRecords:
+    - '"v=spf1 include:_spf.google.com ~all"'
+
+---
+# DMARC Record
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Route53RecordSet
+metadata:
+  name: dmarc-record
+spec:
+  providerRef:
+    name: aws-provider
+  hostedZoneID: Z1234567890ABC
+  name: _dmarc.example.com
+  type: TXT
+  ttl: 300
+  resourceRecords:
+    - '"v=DMARC1; p=quarantine; rua=mailto:dmarc@example.com"'
+```
+
+### SRV (Service Records)
+
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Route53RecordSet
+metadata:
+  name: srv-record
+spec:
+  providerRef:
+    name: aws-provider
+  hostedZoneID: Z1234567890ABC
+  name: _service._tcp.example.com
+  type: SRV
+  ttl: 300
+  resourceRecords:
+    - 10 60 5060 sipserver.example.com
+```
+
+## Alias Records para Recursos AWS
+
+### Application Load Balancer (ALB)
+
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Route53RecordSet
+metadata:
+  name: alb-alias
+spec:
+  providerRef:
+    name: aws-provider
+  hostedZoneID: Z1234567890ABC
+  name: app.example.com
+  type: A
+  aliasTarget:
+    hostedZoneID: Z35SXDOTRQ7X7K  # ALB hosted zone (us-east-1)
+    dnsName: my-alb-123.us-east-1.elb.amazonaws.com
+    evaluateTargetHealth: true
+```
+
+### CloudFront Distribution
+
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Route53RecordSet
+metadata:
+  name: cloudfront-alias
+spec:
+  providerRef:
+    name: aws-provider
+  hostedZoneID: Z1234567890ABC
+  name: cdn.example.com
+  type: A
+  aliasTarget:
+    hostedZoneID: Z2FDTNDATAQYW2  # CloudFront hosted zone
+    dnsName: d123abc.cloudfront.net
+    evaluateTargetHealth: false
+```
+
+### S3 Website Endpoint
+
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Route53RecordSet
+metadata:
+  name: s3-website-alias
+spec:
+  providerRef:
+    name: aws-provider
+  hostedZoneID: Z1234567890ABC
+  name: static.example.com
+  type: A
+  aliasTarget:
+    hostedZoneID: Z3AQBSTGFYJSTF  # S3 website hosted zone (us-east-1)
+    dnsName: mybucket.s3-website-us-east-1.amazonaws.com
+    evaluateTargetHealth: false
+```
+
+## Operações
+
+### Criar Record
+
+```bash
+kubectl apply -f recordset.yaml
+```
+
+### Verificar Status
+
+```bash
+# Listar records
+kubectl get route53recordset
+kubectl get r53rs  # shortname
+
+# Detalhes
+kubectl describe route53recordset www-record
+
+# Ver change status
+kubectl get route53recordset www-record -o jsonpath='{.status.changeStatus}'
+```
+
+### Atualizar Record
+
+```yaml
+spec:
+  ttl: 600  # Atualizar TTL
+  resourceRecords:
+    - 192.0.2.100  # Novo IP
+```
+
+```bash
+kubectl apply -f recordset.yaml
+```
+
+### Deletar Record
+
+```bash
+kubectl delete route53recordset www-record
+```
+
+## Troubleshooting
+
+### Record não fica Ready
+
+**Soluções:**
+1. Verificar hosted zone existe
+2. Verificar permissões IAM
+3. Validar tipo de registro e valores
+4. Checar logs do controller
+
+### Erro de validação
+
+**Problema:** Alias target e resource records não podem coexistir
+
+**Solução:** Use apenas um:
+```yaml
+# Ou aliasTarget
+spec:
+  aliasTarget:
+    hostedZoneID: Z123
+    dnsName: lb.example.com
+
+# OU resourceRecords + ttl
+spec:
+  ttl: 300
+  resourceRecords:
+    - 192.0.2.1
+```
+
+### Change Status PENDING
+
+**Normal:** Mudanças de DNS podem levar até 60 segundos para propagar
+
+**Verificar:**
+```bash
+kubectl get route53recordset my-record -w
+```
+
+## Permissões IAM
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "route53:ChangeResourceRecordSets",
+        "route53:GetChange",
+        "route53:ListResourceRecordSets"
+      ],
+      "Resource": [
+        "arn:aws:route53:::hostedzone/*",
+        "arn:aws:route53:::change/*"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "route53:GetHostedZone",
+        "route53:ListHostedZones"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+## Melhores Práticas
+
+1. **Use TTL adequado:**
+   - Desenvolvimento: 60-300s
+   - Produção: 300-3600s
+   - Antes de mudanças: Reduza TTL com antecedência
+
+2. **Alias vs CNAME:**
+   - Prefira alias para recursos AWS (gratuito, melhor performance)
+   - Use CNAME para recursos externos
+
+3. **Health Checks:**
+   - Sempre use com failover routing
+   - Considere para multivalue answer
+
+4. **Naming Convention:**
+   ```
+   api.example.com
+   www.example.com
+   staging.api.example.com
+   ```
+
+5. **Deletion Policy para Produção:**
+   ```yaml
+   spec:
+     deletionPolicy: Retain
+   ```
+
+## Hosted Zone IDs de Recursos AWS
+
+### ELB/ALB por Região
+- us-east-1: Z35SXDOTRQ7X7K
+- us-west-2: Z1H1FL5HABSF5
+- eu-west-1: Z32O12XQLNTSW2
+
+### CloudFront
+- Global: Z2FDTNDATAQYW2
+
+### S3 Website por Região
+- us-east-1: Z3AQBSTGFYJSTF
+- us-west-2: Z3BJ6K6RIION7M
+
+[Lista completa na documentação AWS](https://docs.aws.amazon.com/general/latest/gr/elb.html)
+
+## Referências
+
+- [Route53 Record Types](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/ResourceRecordTypes.html)
+- [Routing Policies](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/routing-policy.html)
+- [Alias Records](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/resource-record-sets-choosing-alias-non-alias.html)

@@ -1,0 +1,136 @@
+{
+  "name": "Infra Operator",
+  "logo": {
+    "dark": "/logo/dark.svg",
+    "light": "/logo/light.svg"
+  },
+  "favicon": "/favicon.svg",
+  "theme": "prism",
+  "modeToggle": {
+    "default": "dark",
+    "isHidden": false
+  },
+  "colors": {
+    "primary": "#FF6B35",
+    "light": "#FF8C61",
+    "dark": "#FF4500",
+    "anchors": {
+      "from": "#FF6B35",
+      "to": "#FF8C61"
+    }
+  },
+  "topbarLinks": [
+    {
+      "name": "GitHub",
+      "url": "https://github.com/andrebassi/infra-operator-aws"
+    }
+  ],
+  "topbarCtaButton": {
+    "name": "Começar",
+    "url": "/introduction"
+  },
+  "navigation": [
+    {
+      "group": "Getting Started",
+      "pages": [
+        "introduction",
+        "installation"
+      ]
+    },
+    {
+      "group": "Networking",
+      "pages": [
+        "services/networking/vpc",
+        "services/networking/subnet",
+        "services/networking/route-table",
+        "services/networking/internet-gateway",
+        "services/networking/nat-gateway",
+        "services/networking/security-group",
+        "services/networking/elastic-ip",
+        "services/networking/alb",
+        "services/networking/nlb"
+      ]
+    },
+    {
+      "group": "Storage",
+      "pages": [
+        "services/storage/s3"
+      ]
+    },
+    {
+      "group": "Database",
+      "pages": [
+        "services/database/dynamodb",
+        "services/database/rds"
+      ]
+    },
+    {
+      "group": "Compute",
+      "pages": [
+        "services/compute/eks",
+        "services/compute/ec2",
+        "services/compute/lambda"
+      ]
+    },
+    {
+      "group": "Messaging",
+      "pages": [
+        "services/messaging/sqs",
+        "services/messaging/sns"
+      ]
+    },
+    {
+      "group": "Security",
+      "pages": [
+        "services/security/iam",
+        "services/security/secrets-manager",
+        "services/security/kms",
+        "services/security/acm"
+      ]
+    },
+    {
+      "group": "Container",
+      "pages": [
+        "services/container/ecr",
+        "services/container/ecs"
+      ]
+    },
+    {
+      "group": "Caching",
+      "pages": [
+        "services/caching/elasticache"
+      ]
+    },
+    {
+      "group": "API Management",
+      "pages": [
+        "services/api/api-gateway"
+      ]
+    },
+    {
+      "group": "CDN & Content Delivery",
+      "pages": [
+        "services/cdn/cloudfront"
+      ]
+    },
+    {
+      "group": "DNS",
+      "pages": [
+        "services/dns/route53-hostedzone",
+        "services/dns/route53-recordset"
+      ]
+    },
+    {
+      "group": "Features",
+      "pages": [
+        "features/cli",
+        "features/api",
+        "features/drift-detection",
+        "features/prometheus-metrics"
+      ]
+    }
+  ],
+  "footerSocials": {
+    "github": "https://github.com/andrebassi/infra-operator-aws"
+  }
+}

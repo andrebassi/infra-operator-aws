@@ -1,0 +1,442 @@
+---
+title: 'API Gateway'
+description: 'Manage AWS API Gateway (REST/HTTP/WebSocket) with Kubernetes'
+icon: 'globe'
+---
+
+## Overview
+
+The **APIGateway** resource manages AWS API Gateway v2 APIs, supporting REST, HTTP, and WebSocket protocols.
+
+## Use Cases
+
+- **REST APIs**: Traditional RESTful APIs
+- **HTTP APIs**: Modern, low-latency HTTP APIs
+- **WebSocket APIs**: Real-time bidirectional communication
+- **Microservices**: API management and routing
+
+## Basic Example
+
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: APIGateway
+metadata:
+  name: my-api
+  namespace: default
+spec:
+  providerRef:
+    name: aws-provider
+
+  # API name
+  name: my-rest-api
+
+  # Description
+  description: Production REST API
+
+  # Protocol: REST, HTTP, or WEBSOCKET
+  protocolType: REST
+
+  # Endpoint: REGIONAL, EDGE, or PRIVATE
+  endpointType: REGIONAL
+
+  # Tags
+  tags:
+    Environment: production
+
+  # Deletion policy
+  deletionPolicy: Delete
+```
+
+## Spec Fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `providerRef` | Object | Yes | Reference to AWSProvider |
+| `name` | String | Yes | API name |
+| `description` | String | No | API description |
+| `protocolType` | String | No | `REST` (default), `HTTP`, or `WEBSOCKET` |
+| `endpointType` | String | No | `REGIONAL` (default), `EDGE`, or `PRIVATE` |
+| `disableExecuteApiEndpoint` | Boolean | No | Disable default endpoint |
+| `corsConfiguration` | Object | No | CORS settings (HTTP APIs only) |
+| `tags` | Map | No | Key-value tags |
+| `deletionPolicy` | String | No | `Delete`, `Retain`, or `Orphan` |
+
+## Status Fields
+
+| Field | Description |
+|-------|-------------|
+| `ready` | Boolean indicating if API is ready |
+| `apiId` | AWS API Gateway ID |
+| `apiEndpoint` | Invoke URL |
+| `protocolType` | Configured protocol type |
+
+## Protocol Types
+
+### REST API
+
+Traditional REST APIs with full features:
+
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: APIGateway
+metadata:
+  name: rest-api
+spec:
+  providerRef:
+    name: aws-provider
+  name: my-rest-api
+  protocolType: REST
+  endpointType: REGIONAL
+```
+
+**Features:**
+- API keys and usage plans
+- Request/response transformations
+- Caching
+- Authorizers (Lambda, Cognito, IAM)
+
+### HTTP API
+
+Low-cost, low-latency HTTP APIs:
+
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: APIGateway
+metadata:
+  name: http-api
+spec:
+  providerRef:
+    name: aws-provider
+  name: my-http-api
+  protocolType: HTTP
+  endpointType: REGIONAL
+  corsConfiguration:
+    allowOrigins:
+      - "*"
+    allowMethods:
+      - GET
+      - POST
+      - PUT
+      - DELETE
+    allowHeaders:
+      - Content-Type
+      - Authorization
+    maxAge: 300
+```
+
+**Benefits:**
+- 71% cheaper than REST
+- Lower latency
+- Native CORS support
+- JWT authorizers
+
+### WebSocket API
+
+Real-time bidirectional communication:
+
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: APIGateway
+metadata:
+  name: websocket-api
+spec:
+  providerRef:
+    name: aws-provider
+  name: my-websocket-api
+  protocolType: WEBSOCKET
+```
+
+**Use Cases:**
+- Chat applications
+- Real-time dashboards
+- Gaming
+- Live updates
+
+## Endpoint Types
+
+### Regional (Default)
+
+Deployed in specific region:
+
+```yaml
+endpointType: REGIONAL
+```
+
+**Best for:**
+- Same-region clients
+- VPC access
+- Private APIs
+
+### Edge-Optimized
+
+Uses CloudFront for global distribution:
+
+```yaml
+endpointType: EDGE
+```
+
+**Best for:**
+- Global clients
+- Static content
+- Reduced latency
+
+### Private
+
+VPC-only access:
+
+```yaml
+endpointType: PRIVATE
+```
+
+**Best for:**
+- Internal APIs
+- VPC peering
+- No internet exposure
+
+## CORS Configuration (HTTP APIs)
+
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: APIGateway
+metadata:
+  name: cors-enabled-api
+spec:
+  providerRef:
+    name: aws-provider
+  name: api-with-cors
+  protocolType: HTTP
+  corsConfiguration:
+    # Allow all origins
+    allowOrigins:
+      - "*"
+
+    # Allowed methods
+    allowMethods:
+      - GET
+      - POST
+      - PUT
+      - PATCH
+      - DELETE
+      - OPTIONS
+
+    # Allowed headers
+    allowHeaders:
+      - Content-Type
+      - Authorization
+      - X-Api-Key
+
+    # Exposed headers
+    exposeHeaders:
+      - X-Request-Id
+
+    # Max age in seconds
+    maxAge: 86400
+
+    # Allow credentials
+    allowCredentials: true
+```
+
+## Advanced Examples
+
+### Private API with VPC Endpoint
+
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: APIGateway
+metadata:
+  name: private-api
+spec:
+  providerRef:
+    name: aws-provider
+  name: internal-api
+  protocolType: HTTP
+  endpointType: PRIVATE
+  # VPC endpoint integration configured separately
+  tags:
+    Access: private
+```
+
+### Disable Default Execute-API Endpoint
+
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: APIGateway
+metadata:
+  name: custom-domain-only
+spec:
+  providerRef:
+    name: aws-provider
+  name: my-api
+  protocolType: HTTP
+  disableExecuteApiEndpoint: true  # Force custom domain usage
+  tags:
+    CustomDomain: required
+```
+
+### Multi-Region API
+
+```yaml
+---
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: APIGateway
+metadata:
+  name: api-us-east-1
+  namespace: production
+spec:
+  providerRef:
+    name: aws-provider-us-east-1
+  name: global-api-us-east-1
+  protocolType: HTTP
+  endpointType: REGIONAL
+---
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: APIGateway
+metadata:
+  name: api-eu-west-1
+  namespace: production
+spec:
+  providerRef:
+    name: aws-provider-eu-west-1
+  name: global-api-eu-west-1
+  protocolType: HTTP
+  endpointType: REGIONAL
+```
+
+## Monitoring
+
+Check API Gateway status:
+
+```bash
+kubectl get apigateway my-api -o yaml
+```
+
+Example output:
+```yaml
+status:
+  ready: true
+  apiId: abc123xyz
+  apiEndpoint: https://abc123xyz.execute-api.us-east-1.amazonaws.com
+  protocolType: HTTP
+```
+
+Access the API:
+```bash
+curl https://abc123xyz.execute-api.us-east-1.amazonaws.com
+```
+
+## Integration Examples
+
+### With Lambda Function
+
+After creating the API, configure integration (done separately):
+
+```yaml
+# Route configuration (example)
+Route: GET /users
+Integration: Lambda function ARN
+```
+
+### With ALB
+
+```yaml
+# Route configuration (example)
+Route: ANY /{proxy+}
+Integration: ALB ARN or VPC Link
+```
+
+### With HTTP Endpoint
+
+```yaml
+# Route configuration (example)
+Route: GET /api/{proxy+}
+Integration: https://backend.example.com/{proxy}
+```
+
+## Best Practices
+
+1. **Protocol Choice**: Use HTTP APIs for new projects (cheaper, faster)
+2. **CORS**: Configure properly for web applications
+3. **Private APIs**: Use for internal services
+4. **Monitoring**: Enable CloudWatch logs and metrics
+5. **Throttling**: Configure usage plans and API keys
+
+## Troubleshooting
+
+### API Not Accessible
+
+Check:
+- Endpoint type matches access pattern
+- VPC endpoint configured for PRIVATE
+- Routes and integrations deployed
+
+### CORS Errors
+
+Verify:
+- `corsConfiguration` is set (HTTP APIs only)
+- `allowOrigins` includes request origin
+- `allowMethods` includes request method
+
+### High Latency
+
+Consider:
+- Use HTTP API instead of REST
+- Enable caching (REST APIs)
+- Use REGIONAL endpoint for same-region clients
+
+## Complete Example
+
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: APIGateway
+metadata:
+  name: production-api
+  namespace: production
+spec:
+  providerRef:
+    name: aws-provider
+
+  # API configuration
+  name: prod-http-api
+  description: Production HTTP API for microservices
+  protocolType: HTTP
+  endpointType: REGIONAL
+
+  # CORS for web apps
+  corsConfiguration:
+    allowOrigins:
+      - https://app.example.com
+      - https://admin.example.com
+    allowMethods:
+      - GET
+      - POST
+      - PUT
+      - DELETE
+    allowHeaders:
+      - Content-Type
+      - Authorization
+    exposeHeaders:
+      - X-Request-Id
+    maxAge: 3600
+    allowCredentials: true
+
+  # Tags
+  tags:
+    Environment: production
+    Team: platform
+    CostCenter: engineering
+
+  # Retention
+  deletionPolicy: Retain
+```
+
+## Related Resources
+
+- [Lambda Functions](/services/compute/lambda)
+- [ALB](/services/networking/alb)
+- [VPC](/services/networking/vpc)
+
+## AWS Documentation
+
+- [API Gateway v2](https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api.html)
+- [Choosing API Type](https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-vs-rest.html)
+- [CORS Configuration](https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-cors.html)

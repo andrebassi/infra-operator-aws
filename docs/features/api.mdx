@@ -1,0 +1,451 @@
+---
+title: 'API REST'
+description: 'Gerencie infraestrutura AWS via API HTTP'
+icon: 'server'
+---
+
+# API REST
+
+O Infra Operator AWS pode ser executado como um servidor API REST, permitindo gerenciar infraestrutura AWS via requisicoes HTTP.
+
+## Iniciando o Servidor
+
+```bash
+# Inicia na porta padrao (8080)
+./infra-operator serve
+
+# Porta customizada
+./infra-operator serve --port 3000
+
+# Com autenticacao via API key
+./infra-operator serve --api-keys "minha-chave-secreta"
+
+# Com endpoint LocalStack
+./infra-operator serve --endpoint http://localhost:4566
+```
+
+## Flags Disponiveis
+
+| Flag | Descricao | Padrao |
+|------|-----------|--------|
+| `--port`, `-p` | Porta do servidor | 8080 |
+| `--host` | Host do servidor | 0.0.0.0 |
+| `--state-dir` | Diretorio de estado | ~/.infra-operator/state |
+| `--region` | Regiao AWS | us-east-1 |
+| `--endpoint` | Endpoint AWS (LocalStack) | - |
+| `--api-keys` | API keys (separadas por virgula) | - |
+| `--cors-origins` | Origins CORS permitidas | * |
+
+## Autenticacao
+
+Quando `--api-keys` e fornecido, todas as requisicoes devem incluir autenticacao:
+
+```bash
+# Via header X-API-Key
+curl -H "X-API-Key: minha-chave" http://localhost:8080/api/v1/resources
+
+# Via Bearer token
+curl -H "Authorization: Bearer minha-chave" http://localhost:8080/api/v1/resources
+```
+
+## Endpoints
+
+### Health Check
+
+```bash
+GET /health
+```
+
+**Resposta:**
+```json
+{
+  "success": true,
+  "data": {
+    "status": "healthy",
+    "version": "1.0.1",
+    "timestamp": "2025-11-26T12:00:00Z"
+  }
+}
+```
+
+### Plan (Plano de Execucao)
+
+Gera um plano mostrando o que seria criado, atualizado ou deletado.
+
+```bash
+POST /api/v1/plan
+Content-Type: application/yaml
+```
+
+**Request (YAML):**
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: VPC
+metadata:
+  name: minha-vpc
+spec:
+  cidrBlock: "10.0.0.0/16"
+```
+
+**Request (JSON):**
+```json
+{
+  "resources": [
+    {
+      "apiVersion": "aws-infra-operator.runner.codes/v1alpha1",
+      "kind": "VPC",
+      "metadata": { "name": "minha-vpc" },
+      "spec": { "cidrBlock": "10.0.0.0/16" }
+    }
+  ]
+}
+```
+
+**Resposta:**
+```json
+{
+  "success": true,
+  "data": {
+    "toCreate": [
+      { "kind": "VPC", "name": "minha-vpc", "action": "create" }
+    ],
+    "toUpdate": [],
+    "toDelete": [],
+    "noChange": [],
+    "summary": {
+      "create": 1,
+      "update": 0,
+      "delete": 0,
+      "noChange": 0
+    }
+  }
+}
+```
+
+### Apply (Aplicar Recursos)
+
+Cria ou atualiza recursos na AWS.
+
+```bash
+POST /api/v1/apply
+Content-Type: application/yaml
+```
+
+**Request:**
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: ComputeStack
+metadata:
+  name: meu-ambiente
+spec:
+  vpcCIDR: "10.100.0.0/16"
+  bastionInstance:
+    enabled: true
+    instanceType: t3.micro
+```
+
+**Resposta:**
+```json
+{
+  "success": true,
+  "data": {
+    "created": [
+      {
+        "kind": "ComputeStack",
+        "name": "meu-ambiente",
+        "awsResources": {
+          "vpcId": "vpc-0abc123",
+          "publicSubnetId": "subnet-0def456",
+          "internetGatewayId": "igw-0ghi789"
+        }
+      }
+    ],
+    "updated": [],
+    "failed": [],
+    "skipped": [],
+    "summary": {
+      "created": 1,
+      "updated": 0,
+      "failed": 0,
+      "skipped": 0
+    }
+  }
+}
+```
+
+### Delete (Deletar Recursos)
+
+Remove recursos da AWS.
+
+```bash
+DELETE /api/v1/resources
+Content-Type: application/yaml
+```
+
+ou
+
+```bash
+POST /api/v1/delete
+Content-Type: application/yaml
+```
+
+**Request:**
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: ComputeStack
+metadata:
+  name: meu-ambiente
+spec:
+  vpcCIDR: "10.100.0.0/16"
+```
+
+**Resposta:**
+```json
+{
+  "success": true,
+  "data": {
+    "deleted": [
+      { "kind": "ComputeStack", "name": "meu-ambiente" }
+    ],
+    "failed": [],
+    "skipped": [],
+    "summary": {
+      "deleted": 1,
+      "failed": 0,
+      "skipped": 0
+    }
+  }
+}
+```
+
+### Get (Listar Recursos)
+
+Lista recursos do estado local.
+
+```bash
+# Todos os recursos
+GET /api/v1/resources
+
+# Por tipo
+GET /api/v1/resources/VPC
+GET /api/v1/resources/ComputeStack
+
+# Atalhos
+GET /api/v1/vpcs
+GET /api/v1/compute-stacks
+GET /api/v1/ec2-instances
+```
+
+**Resposta:**
+```json
+{
+  "success": true,
+  "data": {
+    "resources": [
+      {
+        "apiVersion": "aws-infra-operator.runner.codes/v1alpha1",
+        "kind": "VPC",
+        "name": "minha-vpc",
+        "awsResources": {
+          "vpcId": "vpc-0abc123"
+        },
+        "status": {
+          "ready": true,
+          "state": "available"
+        },
+        "createdAt": "2025-11-26T12:00:00Z",
+        "updatedAt": "2025-11-26T12:00:00Z"
+      }
+    ],
+    "count": 1
+  }
+}
+```
+
+## Exemplos Praticos
+
+### 1. Criar Infraestrutura Completa via API
+
+```bash
+# Criar ComputeStack
+curl -X POST http://localhost:8080/api/v1/apply \
+  -H "Content-Type: application/yaml" \
+  --data-binary @- << 'EOF'
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: ComputeStack
+metadata:
+  name: producao
+  namespace: infra
+spec:
+  vpcCIDR: "10.50.0.0/16"
+  bastionInstance:
+    enabled: true
+    instanceType: t3.micro
+    userData: |
+      #!/bin/bash
+      yum update -y
+      yum install -y docker
+EOF
+```
+
+### 2. Integrar com CI/CD (GitLab/GitHub Actions)
+
+```yaml
+# .gitlab-ci.yml
+deploy:
+  script:
+    - |
+      curl -X POST $INFRA_API_URL/api/v1/apply \
+        -H "X-API-Key: $INFRA_API_KEY" \
+        -H "Content-Type: application/yaml" \
+        --data-binary @infrastructure.yaml
+```
+
+### 3. Script de Automacao
+
+```bash
+#!/bin/bash
+API_URL="http://localhost:8080"
+
+# Plan
+echo "Gerando plano..."
+curl -s -X POST "$API_URL/api/v1/plan" \
+  -H "Content-Type: application/yaml" \
+  --data-binary @infra.yaml | jq .
+
+# Confirmar e aplicar
+read -p "Aplicar? (y/n) " confirm
+if [ "$confirm" = "y" ]; then
+  curl -s -X POST "$API_URL/api/v1/apply" \
+    -H "Content-Type: application/yaml" \
+    --data-binary @infra.yaml | jq .
+fi
+```
+
+### 4. SDK Python
+
+```python
+import requests
+import yaml
+
+API_URL = "http://localhost:8080"
+API_KEY = "minha-chave"
+
+def plan(resources):
+    resp = requests.post(
+        f"{API_URL}/api/v1/plan",
+        headers={
+            "X-API-Key": API_KEY,
+            "Content-Type": "application/yaml"
+        },
+        data=yaml.dump_all(resources)
+    )
+    return resp.json()
+
+def apply(resources):
+    resp = requests.post(
+        f"{API_URL}/api/v1/apply",
+        headers={
+            "X-API-Key": API_KEY,
+            "Content-Type": "application/yaml"
+        },
+        data=yaml.dump_all(resources)
+    )
+    return resp.json()
+
+# Uso
+vpc = {
+    "apiVersion": "aws-infra-operator.runner.codes/v1alpha1",
+    "kind": "VPC",
+    "metadata": {"name": "my-vpc"},
+    "spec": {"cidrBlock": "10.0.0.0/16"}
+}
+
+result = plan([vpc])
+print(f"Recursos a criar: {result['data']['summary']['create']}")
+```
+
+## Estrutura de Respostas
+
+### Resposta de Sucesso
+
+```json
+{
+  "success": true,
+  "data": { ... }
+}
+```
+
+### Resposta de Erro
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "INVALID_REQUEST",
+    "message": "Descricao do erro",
+    "details": "Detalhes adicionais"
+  }
+}
+```
+
+### Codigos de Erro
+
+| Codigo | Descricao |
+|--------|-----------|
+| `INVALID_REQUEST` | Request malformada |
+| `NO_RESOURCES` | Nenhum recurso fornecido |
+| `UNAUTHORIZED` | API key nao fornecida |
+| `INVALID_API_KEY` | API key invalida |
+| `PLAN_FAILED` | Erro ao gerar plano |
+| `APPLY_FAILED` | Erro ao aplicar recursos |
+| `DELETE_FAILED` | Erro ao deletar recursos |
+| `GET_FAILED` | Erro ao listar recursos |
+| `RATE_LIMITED` | Muitas requisicoes |
+| `INTERNAL_ERROR` | Erro interno do servidor |
+
+## Comparacao: K8s vs CLI vs API
+
+| Recurso | Kubernetes | CLI | API |
+|---------|------------|-----|-----|
+| Dependencia | Cluster K8s | Nenhuma | Nenhuma |
+| Autenticacao | RBAC | AWS Credentials | API Key + AWS |
+| Estado | etcd (CRDs) | Arquivo local | Arquivo local |
+| Integracao | kubectl, ArgoCD | Shell scripts | HTTP clients |
+| Multi-tenant | Namespaces | Diretorios | API Keys |
+| Caso de Uso | GitOps, IaC nativo K8s | Automacao local | CI/CD, SDKs |
+
+## Troubleshooting
+
+### Servidor nao inicia
+
+```bash
+# Verificar se porta esta em uso
+lsof -i :8080
+
+# Verificar logs
+./infra-operator serve 2>&1 | tee server.log
+```
+
+### Erro de autenticacao AWS
+
+```bash
+# Verificar credenciais
+aws sts get-caller-identity
+
+# Usar LocalStack para testes
+./infra-operator serve --endpoint http://localhost:4566
+```
+
+### CORS bloqueado
+
+```bash
+# Permitir origens especificas
+./infra-operator serve --cors-origins "http://localhost:3000,https://meuapp.com"
+```
+
+## Proximos Passos
+
+- [CLI Mode](/features/cli) - Gerenciamento via linha de comando
+- [Drift Detection](/features/drift-detection) - Deteccao de mudancas
+- [ComputeStack](/resources/computestack) - Infraestrutura completa em um recurso

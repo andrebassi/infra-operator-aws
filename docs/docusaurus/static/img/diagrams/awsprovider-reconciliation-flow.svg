@@ -1,0 +1,122 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 500">
+  <defs>
+    <style>
+      .bg { fill: #0f172a; }
+      .start-box { fill: #326ce5; stroke: #4a8df8; stroke-width: 2; }
+      .process-box { fill: #1e293b; stroke: #475569; stroke-width: 2; }
+      .decision-box { fill: #7c3aed; stroke: #a78bfa; stroke-width: 2; }
+      .success-box { fill: #22c55e; stroke: #4ade80; stroke-width: 2; }
+      .error-box { fill: #ef4444; stroke: #f87171; stroke-width: 2; }
+      .requeue-box { fill: #f59e0b; stroke: #fbbf24; stroke-width: 2; }
+      .text-title { font-family: 'Segoe UI', Arial, sans-serif; font-size: 12px; font-weight: 600; fill: #fff; }
+      .text-label { font-family: 'Segoe UI', Arial, sans-serif; font-size: 11px; fill: #fff; }
+      .text-small { font-family: 'Segoe UI', Arial, sans-serif; font-size: 10px; fill: #94a3b8; }
+      .arrow { stroke: #60a5fa; stroke-width: 2; fill: none; marker-end: url(#arrow-blue); }
+      .arrow-yes { stroke: #4ade80; stroke-width: 2; fill: none; marker-end: url(#arrow-green); }
+      .arrow-no { stroke: #f87171; stroke-width: 2; fill: none; marker-end: url(#arrow-red); }
+      .step-circle { fill: #3b82f6; stroke: #60a5fa; stroke-width: 2; }
+      .step-num { font-family: 'Segoe UI', Arial, sans-serif; font-size: 10px; font-weight: 700; fill: #fff; }
+      .label-yes { font-family: 'Segoe UI', Arial, sans-serif; font-size: 9px; fill: #4ade80; }
+      .label-no { font-family: 'Segoe UI', Arial, sans-serif; font-size: 9px; fill: #f87171; }
+    </style>
+    <marker id="arrow-blue" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#60a5fa"/>
+    </marker>
+    <marker id="arrow-green" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#4ade80"/>
+    </marker>
+    <marker id="arrow-red" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#f87171"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect class="bg" width="900" height="500" rx="12"/>
+
+  <!-- Title -->
+  <text x="450" y="30" text-anchor="middle" style="font-family: 'Segoe UI', Arial; font-size: 16px; font-weight: 700; fill: #f1f5f9;">AWSProvider Reconciliation Flow</text>
+
+  <!-- Step 1: Fetch AWSProvider CR -->
+  <rect class="start-box" x="350" y="50" width="200" height="45" rx="8"/>
+  <circle class="step-circle" cx="365" cy="72" r="12"/>
+  <text class="step-num" x="365" y="76" text-anchor="middle">1</text>
+  <text class="text-title" x="450" y="70" text-anchor="middle">Fetch AWSProvider CR</text>
+  <text class="text-small" x="450" y="85" text-anchor="middle">Get resource from K8s API</text>
+
+  <!-- Step 2: Build aws.Config -->
+  <rect class="process-box" x="350" y="120" width="200" height="60" rx="8"/>
+  <circle class="step-circle" cx="365" cy="150" r="12"/>
+  <text class="step-num" x="365" y="154" text-anchor="middle">2</text>
+  <text class="text-title" x="450" y="145" text-anchor="middle">Build aws.Config</text>
+  <text class="text-small" x="450" y="162" text-anchor="middle">roleARN → IRSA/AssumeRole</text>
+  <text class="text-small" x="450" y="174" text-anchor="middle">accessKeyIDRef → Static creds</text>
+
+  <!-- Step 3: Call STS GetCallerIdentity -->
+  <rect class="process-box" x="350" y="205" width="200" height="45" rx="8"/>
+  <circle class="step-circle" cx="365" cy="227" r="12"/>
+  <text class="step-num" x="365" y="231" text-anchor="middle">3</text>
+  <text class="text-title" x="450" y="223" text-anchor="middle">STS GetCallerIdentity</text>
+  <text class="text-small" x="450" y="240" text-anchor="middle">Validate credentials</text>
+
+  <!-- Step 4: Decision - Success? -->
+  <polygon class="decision-box" points="450,275 530,320 450,365 370,320"/>
+  <circle class="step-circle" cx="410" cy="290" r="12"/>
+  <text class="step-num" x="410" y="294" text-anchor="middle">4</text>
+  <text class="text-title" x="450" y="318" text-anchor="middle">Success?</text>
+
+  <!-- Step 5: Success - Update status -->
+  <rect class="success-box" x="580" y="285" width="180" height="70" rx="8"/>
+  <circle class="step-circle" cx="595" cy="310" r="12"/>
+  <text class="step-num" x="595" y="314" text-anchor="middle">5</text>
+  <text class="text-title" x="670" y="310" text-anchor="middle">Update Status</text>
+  <text class="text-small" x="670" y="325" text-anchor="middle">ready = true</text>
+  <text class="text-small" x="670" y="337" text-anchor="middle">accountID = ...</text>
+  <text class="text-small" x="670" y="349" text-anchor="middle">callerIdentity = ...</text>
+
+  <!-- Step 6: Error - Update status -->
+  <rect class="error-box" x="140" y="285" width="180" height="70" rx="8"/>
+  <circle class="step-circle" cx="155" cy="310" r="12"/>
+  <text class="step-num" x="155" y="314" text-anchor="middle">5</text>
+  <text class="text-title" x="230" y="310" text-anchor="middle">Update Status</text>
+  <text class="text-small" x="230" y="325" text-anchor="middle">ready = false</text>
+  <text class="text-small" x="230" y="337" text-anchor="middle">Add error condition</text>
+  <text class="text-small" x="230" y="349" text-anchor="middle">Log error details</text>
+
+  <!-- Step 6: Requeue 5min -->
+  <rect class="requeue-box" x="580" y="400" width="180" height="45" rx="8"/>
+  <circle class="step-circle" cx="595" cy="422" r="12"/>
+  <text class="step-num" x="595" y="426" text-anchor="middle">6</text>
+  <text class="text-title" x="670" y="418" text-anchor="middle">Requeue</text>
+  <text class="text-small" x="670" y="435" text-anchor="middle">After 5 minutes</text>
+
+  <!-- Step 6: Requeue 1min -->
+  <rect class="requeue-box" x="140" y="400" width="180" height="45" rx="8"/>
+  <circle class="step-circle" cx="155" cy="422" r="12"/>
+  <text class="step-num" x="155" y="426" text-anchor="middle">6</text>
+  <text class="text-title" x="230" y="418" text-anchor="middle">Requeue</text>
+  <text class="text-small" x="230" y="435" text-anchor="middle">After 1 minute</text>
+
+  <!-- Return arrow back to start -->
+  <rect class="start-box" x="350" y="460" width="200" height="30" rx="6"/>
+  <text class="text-label" x="450" y="480" text-anchor="middle">↺ Next reconciliation</text>
+
+  <!-- Arrows -->
+  <path class="arrow" d="M 450 95 L 450 120"/>
+  <path class="arrow" d="M 450 180 L 450 205"/>
+  <path class="arrow" d="M 450 250 L 450 275"/>
+
+  <!-- Decision arrows -->
+  <path class="arrow-yes" d="M 530 320 L 580 320"/>
+  <text class="label-yes" x="545" y="312">YES</text>
+
+  <path class="arrow-no" d="M 370 320 L 320 320"/>
+  <text class="label-no" x="330" y="312">NO</text>
+
+  <!-- To requeue arrows -->
+  <path class="arrow" d="M 670 355 L 670 400"/>
+  <path class="arrow" d="M 230 355 L 230 400"/>
+
+  <!-- Back to start arrows -->
+  <path class="arrow" d="M 670 445 L 670 470 L 550 470"/>
+  <path class="arrow" d="M 230 445 L 230 470 L 350 470"/>
+</svg>

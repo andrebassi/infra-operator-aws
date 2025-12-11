@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 750 250">
+  <defs>
+    <style>
+      .publisher-box { fill: #c8e6c9; stroke: #4caf50; stroke-width: 2; }
+      .sns-box { fill: #ffccbc; stroke: #ff5722; stroke-width: 2; }
+      .subscriber-box { fill: #bbdefb; stroke: #2196f3; stroke-width: 2; }
+      .filter-text { font-family: Arial, sans-serif; font-size: 8px; fill: #666; font-style: italic; }
+      .text-label { font-family: Arial, sans-serif; font-size: 11px; fill: #333; }
+      .text-small { font-family: Arial, sans-serif; font-size: 9px; fill: #666; }
+      .arrow { stroke: #60a5fa; stroke-width: 2; fill: none; marker-end: url(#arrowhead); }
+    </style>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#60a5fa"/>
+    </marker>
+  </defs>
+
+  <!-- Publisher -->
+  <rect class="publisher-box" x="30" y="90" width="100" height="60" rx="8"/>
+  <text class="text-label" x="45" y="120">Publisher</text>
+  <text class="text-small" x="50" y="138">Events</text>
+
+  <!-- SNS Topic -->
+  <rect class="sns-box" x="200" y="70" width="140" height="100" rx="8"/>
+  <text class="text-label" x="230" y="105">SNS Topic</text>
+  <text class="text-small" x="220" y="125">events-topic</text>
+  <text class="text-small" x="210" y="155">Message Filtering</text>
+
+  <!-- Subscribers with filters -->
+  <rect class="subscriber-box" x="430" y="10" width="140" height="55" rx="8"/>
+  <text class="text-label" x="455" y="32">Order Service</text>
+  <text class="filter-text" x="445" y="50">filter: type=order</text>
+
+  <rect class="subscriber-box" x="430" y="80" width="140" height="55" rx="8"/>
+  <text class="text-label" x="450" y="102">Payment Service</text>
+  <text class="filter-text" x="445" y="120">filter: type=payment</text>
+
+  <rect class="subscriber-box" x="430" y="150" width="140" height="55" rx="8"/>
+  <text class="text-label" x="455" y="172">Audit Service</text>
+  <text class="filter-text" x="455" y="190">filter: all</text>
+
+  <!-- Result icons -->
+  <text class="text-small" x="600" y="42">Only orders</text>
+  <text class="text-small" x="600" y="112">Only payments</text>
+  <text class="text-small" x="600" y="182">All events</text>
+
+  <!-- Arrows -->
+  <line class="arrow" x1="130" y1="120" x2="198" y2="120"/>
+  <line class="arrow" x1="340" y1="100" x2="428" y2="37"/>
+  <line class="arrow" x1="340" y1="120" x2="428" y2="107"/>
+  <line class="arrow" x1="340" y1="140" x2="428" y2="177"/>
+</svg>

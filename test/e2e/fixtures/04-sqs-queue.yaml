@@ -1,0 +1,64 @@
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: SQSQueue
+metadata:
+  name: e2e-test-queue
+  namespace: default
+spec:
+  queueName: e2e-test-messages-queue
+  providerRef:
+    name: localstack
+  delaySeconds: 0
+  maximumMessageSize: 262144
+  messageRetentionPeriod: 345600
+  visibilityTimeout: 30
+  receiveMessageWaitTimeSeconds: 10
+  tags:
+    Environment: test
+    ManagedBy: infra-operator
+  deletionPolicy: Delete
+---
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: SQSQueue
+metadata:
+  name: e2e-dlq-queue
+  namespace: default
+spec:
+  queueName: e2e-test-dlq
+  providerRef:
+    name: localstack
+  messageRetentionPeriod: 1209600
+  deletionPolicy: Delete
+---
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: SQSQueue
+metadata:
+  name: e2e-queue-with-dlq
+  namespace: default
+spec:
+  queueName: e2e-test-main-queue
+  providerRef:
+    name: localstack
+  visibilityTimeout: 60
+  deadLetterQueue:
+    targetArn: arn:aws:sqs:us-east-1:000000000000:e2e-test-dlq
+    maxReceiveCount: 3
+  tags:
+    Application: test-app
+    Team: platform
+  deletionPolicy: Delete
+---
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: SQSQueue
+metadata:
+  name: e2e-fifo-queue
+  namespace: default
+spec:
+  queueName: e2e-test-fifo.fifo
+  providerRef:
+    name: localstack
+  fifoQueue: true
+  contentBasedDeduplication: true
+  tags:
+    Type: FIFO
+    Environment: test
+  deletionPolicy: Delete

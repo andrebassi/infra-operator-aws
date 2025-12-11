@@ -1,0 +1,161 @@
+// Add this section after all controller registrations in main.go
+// Before the "Start Manager" section
+
+	// Setup Webhooks
+	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
+		setupLog.Info("setting up webhooks")
+
+		// Networking webhooks
+		if err = (&infrav1alpha1.VPC{}).SetupWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "VPC")
+			os.Exit(1)
+		}
+
+		if err = (&infrav1alpha1.Subnet{}).SetupWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "Subnet")
+			os.Exit(1)
+		}
+
+		if err = (&infrav1alpha1.InternetGateway{}).SetupWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "InternetGateway")
+			os.Exit(1)
+		}
+
+		if err = (&infrav1alpha1.NATGateway{}).SetupWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "NATGateway")
+			os.Exit(1)
+		}
+
+		if err = (&infrav1alpha1.SecurityGroup{}).SetupWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "SecurityGroup")
+			os.Exit(1)
+		}
+
+		if err = (&infrav1alpha1.RouteTable{}).SetupWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "RouteTable")
+			os.Exit(1)
+		}
+
+		if err = (&infrav1alpha1.ALB{}).SetupWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "ALB")
+			os.Exit(1)
+		}
+
+		if err = (&infrav1alpha1.NLB{}).SetupWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "NLB")
+			os.Exit(1)
+		}
+
+		if err = (&infrav1alpha1.ElasticIP{}).SetupWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "ElasticIP")
+			os.Exit(1)
+		}
+
+		// Compute webhooks
+		if err = (&infrav1alpha1.EC2Instance{}).SetupWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "EC2Instance")
+			os.Exit(1)
+		}
+
+		if err = (&infrav1alpha1.LambdaFunction{}).SetupWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "LambdaFunction")
+			os.Exit(1)
+		}
+
+		if err = (&infrav1alpha1.EKSCluster{}).SetupWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "EKSCluster")
+			os.Exit(1)
+		}
+
+		// Storage webhook
+		if err = (&infrav1alpha1.S3Bucket{}).SetupWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "S3Bucket")
+			os.Exit(1)
+		}
+
+		// Database webhooks
+		if err = (&infrav1alpha1.RDSInstance{}).SetupWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "RDSInstance")
+			os.Exit(1)
+		}
+
+		if err = (&infrav1alpha1.DynamoDBTable{}).SetupWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "DynamoDBTable")
+			os.Exit(1)
+		}
+
+		// Messaging webhooks
+		if err = (&infrav1alpha1.SQSQueue{}).SetupWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "SQSQueue")
+			os.Exit(1)
+		}
+
+		if err = (&infrav1alpha1.SNSTopic{}).SetupWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "SNSTopic")
+			os.Exit(1)
+		}
+
+		// API & CDN webhooks
+		if err = (&infrav1alpha1.APIGateway{}).SetupWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "APIGateway")
+			os.Exit(1)
+		}
+
+		if err = (&infrav1alpha1.CloudFront{}).SetupWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "CloudFront")
+			os.Exit(1)
+		}
+
+		// Security webhooks
+		if err = (&infrav1alpha1.IAMRole{}).SetupWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "IAMRole")
+			os.Exit(1)
+		}
+
+		if err = (&infrav1alpha1.SecretsManagerSecret{}).SetupWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "SecretsManagerSecret")
+			os.Exit(1)
+		}
+
+		if err = (&infrav1alpha1.KMSKey{}).SetupWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "KMSKey")
+			os.Exit(1)
+		}
+
+		if err = (&infrav1alpha1.Certificate{}).SetupWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "Certificate")
+			os.Exit(1)
+		}
+
+		// Container webhooks
+		if err = (&infrav1alpha1.ECRRepository{}).SetupWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "ECRRepository")
+			os.Exit(1)
+		}
+
+		if err = (&infrav1alpha1.ECSCluster{}).SetupWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "ECSCluster")
+			os.Exit(1)
+		}
+
+		// Caching webhook
+		if err = (&infrav1alpha1.ElastiCacheCluster{}).SetupWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "ElastiCacheCluster")
+			os.Exit(1)
+		}
+
+		// Route53 webhooks
+		if err = (&infrav1alpha1.Route53HostedZone{}).SetupWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "Route53HostedZone")
+			os.Exit(1)
+		}
+
+		if err = (&infrav1alpha1.Route53RecordSet{}).SetupWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "Route53RecordSet")
+			os.Exit(1)
+		}
+
+		setupLog.Info("webhooks setup completed", "count", 27)
+	} else {
+		setupLog.Info("webhooks disabled via ENABLE_WEBHOOKS=false")
+	}

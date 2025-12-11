@@ -1,0 +1,1718 @@
+---
+title: 'ElastiCache - Cache em Memória Gerenciado'
+description: 'Cache em memória gerenciado com Redis e Memcached para aplicações de alto desempenho'
+icon: 'gauge-high'
+---
+
+Crie e gerencie clusters Redis ou Memcached totalmente gerenciados na AWS para aplicações de alto desempenho e escalabilidade.
+
+## Pré-requisito: Configuração do AWSProvider
+
+Antes de criar qualquer recurso AWS, você precisa configurar um **AWSProvider** que gerencia as credenciais e autenticação com a AWS.
+
+<CodeGroup>
+```yaml IRSA
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: AWSProvider
+metadata:
+  name: production-aws
+  namespace: default
+spec:
+  region: us-east-1
+  roleARN: arn:aws:iam::123456789012:role/infra-operator-role
+  defaultTags:
+    managed-by: infra-operator
+    environment: production
+```
+
+```yaml Credenciais Estáticas
+apiVersion: v1
+kind: Secret
+metadata:
+  name: aws-credentials
+  namespace: default
+type: Opaque
+stringData:
+  access-key-id: test
+  secret-access-key: test
+---
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: AWSProvider
+metadata:
+  name: localstack
+  namespace: default
+spec:
+  region: us-east-1
+  accessKeyIDRef:
+    name: aws-credentials
+    key: access-key-id
+  secretAccessKeyRef:
+    name: aws-credentials
+    key: secret-access-key
+  defaultTags:
+    managed-by: infra-operator
+    environment: test
+```
+
+```bash Verificar Status
+kubectl get awsprovider
+kubectl describe awsprovider production-aws
+```
+</CodeGroup>
+
+<Warning>
+  Para produção, sempre use **IRSA** (IAM Roles for Service Accounts) ao invés de credenciais estáticas.
+</Warning>
+
+### Criar IAM Role para IRSA
+
+Para usar IRSA em produção, você precisa criar uma IAM Role com as permissões necessárias:
+
+<CodeGroup>
+```json Trust Policy (trust-policy.json)
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::123456789012:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B71EXAMPLE"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "oidc.eks.us-east-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B71EXAMPLE:sub": "system:serviceaccount:infra-operator-system:infra-operator-controller-manager",
+          "oidc.eks.us-east-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B71EXAMPLE:aud": "sts.amazonaws.com"
+        }
+      }
+    }
+  ]
+}
+```
+
+```json IAM Policy - ElastiCache (elasticache-policy.json)
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "elasticache:CreateCacheCluster",
+        "elasticache:DeleteCacheCluster",
+        "elasticache:DescribeCacheClusters",
+        "elasticache:ModifyCacheCluster",
+        "elasticache:CreateReplicationGroup",
+        "elasticache:DeleteReplicationGroup",
+        "elasticache:DescribeReplicationGroups",
+        "elasticache:ModifyReplicationGroup",
+        "elasticache:AddTagsToResource",
+        "elasticache:RemoveTagsFromResource",
+        "elasticache:ListTagsForResource",
+        "elasticache:CreateCacheSubnetGroup",
+        "elasticache:ModifyCacheSubnetGroup"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+```bash Criar Role com AWS CLI
+# 1. Obter OIDC Provider do cluster EKS
+export CLUSTER_NAME=my-cluster
+export AWS_REGION=us-east-1
+export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+
+OIDC_PROVIDER=$(aws eks describe-cluster \
+  --name $CLUSTER_NAME \
+  --region $AWS_REGION \
+  --query "cluster.identity.oidc.issuer" \
+  --output text | sed -e "s/^https:\/\///")
+
+# 2. Atualizar trust-policy.json com valores corretos
+cat > trust-policy.json <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::${AWS_ACCOUNT_ID}:oidc-provider/${OIDC_PROVIDER}"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "${OIDC_PROVIDER}:sub": "system:serviceaccount:infra-operator-system:infra-operator-controller-manager",
+          "${OIDC_PROVIDER}:aud": "sts.amazonaws.com"
+        }
+      }
+    }
+  ]
+}
+EOF
+
+# 3. Criar IAM Role
+aws iam create-role \
+  --role-name infra-operator-elasticache-role \
+  --assume-role-policy-document file://trust-policy.json \
+  --description "Role for Infra Operator ElastiCache management"
+
+# 4. Criar e anexar policy
+aws iam put-role-policy \
+  --role-name infra-operator-elasticache-role \
+  --policy-name ElastiCacheManagement \
+  --policy-document file://elasticache-policy.json
+
+# 5. Obter ARN da Role
+aws iam get-role \
+  --role-name infra-operator-elasticache-role \
+  --query 'Role.Arn' \
+  --output text
+```
+
+```bash Anotar ServiceAccount do Operator
+# Adicionar annotation ao ServiceAccount do operator
+kubectl annotate serviceaccount infra-operator-controller-manager \
+  -n infra-operator-system \
+  eks.amazonaws.com/role-arn=arn:aws:iam::123456789012:role/infra-operator-elasticache-role
+```
+</CodeGroup>
+
+<Note>
+  Substitua `123456789012` pelo seu AWS Account ID e `EXAMPLED539D4633E53DE1B71EXAMPLE` pelo ID do seu OIDC provider.
+</Note>
+
+## Visão Geral
+
+Amazon ElastiCache é um serviço de cache em memória completamente gerenciado que fornece performance e escalabilidade para aplicações modernas. Suporta Redis e Memcached como engines de cache com alta disponibilidade, segurança e monitoramento integrados.
+
+**Características:**
+
+- **Cache em Memória**: Sub-milissegundo de latência para leituras/escritas
+- **Dois Engines Suportados**: Redis (mais recursos) e Memcached (mais simples)
+- **Cluster Mode**: Redis Cluster para escalabilidade horizontal
+- **Multi-AZ**: Alta disponibilidade automática com failover
+- **Replicação**: Automatic failover com replicas sincronizadas
+- **Encryption**: Criptografia em trânsito (TLS) e em repouso
+- **Authentication**: Redis AUTH com tokens seguros
+- **Backups Automáticos**: Snapshots para recuperação de dados (Redis)
+- **Escala Automática**: Aumento/diminuição de nós conforme demanda
+- **VPC Support**: Isolamento de rede em subnets privadas
+- **Parameter Groups**: Configuração customizada do cache
+- **Security Groups**: Controle granular de acesso de rede
+- **ElastiCache Cluster Mode**: Distribuição de dados entre múltiplos nós
+- **Pub/Sub (Redis)**: Messaging entre aplicações
+- **Transações (Redis)**: ACID transactions com MULTI/EXEC
+
+**Status**: ⚠️ Requer LocalStack Pro ou AWS Real
+
+## Início Rápido
+
+<CodeGroup>
+```yaml Redis Single Node
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: ElastiCacheCluster
+metadata:
+  name: e2e-redis-simple
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+
+  # Identificador do cluster (2-63 caracteres)
+  clusterID: e2e-redis-simple
+
+  # Motor e versão
+  engine: redis
+  engineVersion: "7.0"
+
+  # Tamanho do nó
+  nodeType: cache.t3.micro
+
+  # Quantidade de nós (single mode)
+  numCacheNodes: 1
+
+  # Tagging
+  tags:
+    environment: test
+    managed-by: infra-operator
+    purpose: e2e-testing
+
+  deletionPolicy: Delete
+```
+
+```yaml Memcached Cluster
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: ElastiCacheCluster
+metadata:
+  name: e2e-memcached
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+
+  # Identificador
+  clusterID: e2e-memcached-test
+
+  # Engine
+  engine: memcached
+  engineVersion: "1.6.17"
+
+  # Tamanho e quantidade de nós
+  nodeType: cache.t3.micro
+  numCacheNodes: 2
+
+  # Tagging
+  tags:
+    environment: test
+    managed-by: infra-operator
+    engine: memcached
+    purpose: e2e-testing
+
+  deletionPolicy: Delete
+```
+
+```yaml Redis Cluster Mode com Replicação
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: ElastiCacheCluster
+metadata:
+  name: e2e-redis-cluster
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+
+  # Identificador
+  clusterID: e2e-redis-cluster
+
+  # Engine
+  engine: redis
+  engineVersion: "7.0"
+
+  # Tamanho do nó
+  nodeType: cache.t3.small
+
+  # Descrição do replication group
+  replicationGroupDescription: "E2E Test Redis Cluster"
+
+  # Cluster Mode
+  numNodeGroups: 2
+  replicasPerNodeGroup: 1
+  automaticFailoverEnabled: true
+  multiAZEnabled: false
+
+  # Tagging
+  tags:
+    environment: test
+    managed-by: infra-operator
+    cluster-mode: enabled
+    purpose: e2e-testing
+
+  deletionPolicy: Delete
+```
+
+```yaml Produção com HA Completa
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: ElastiCacheCluster
+metadata:
+  name: app-cache-prod
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  # Identificador
+  clusterID: app-redis-prod
+
+  # Engine
+  engine: redis
+  engineVersion: "7.0"
+
+  # Cluster Mode
+  replicationGroupDescription: "Production Redis Cluster"
+  automaticFailoverEnabled: true
+  multiAZEnabled: true
+
+  # Shard configuration
+  numNodeGroups: 2
+  replicasPerNodeGroup: 2
+  nodeType: cache.r6g.xlarge
+
+  # Rede
+  subnetGroupName: private-cache-subnet
+  securityGroupIds:
+  - sg-0123456789abcdef0
+
+  # Backup
+  snapshotRetentionLimit: 7
+  snapshotWindow: "03:00-05:00"
+
+  # Segurança
+  transitEncryptionEnabled: true
+  atRestEncryptionEnabled: true
+  authTokenRef:
+    name: redis-auth
+    key: token
+
+  tags:
+    Environment: production
+    Critical: "true"
+
+  deletionPolicy: Retain
+```
+
+```bash Aplicar
+kubectl apply -f elasticache.yaml
+```
+
+```bash Verificar Status
+kubectl get elasticachecluster
+kubectl describe elasticachecluster e2e-redis-simple
+kubectl get elasticachecluster e2e-redis-simple -o yaml
+```
+</CodeGroup>
+
+## Referência de Configuração
+
+### Campos Obrigatórios
+
+<ParamField path="spec.providerRef" type="object" required>
+  Referência ao recurso AWSProvider para autenticação
+
+  <Expandable title="properties">
+    <ParamField path="name" type="string" required>
+      Nome do recurso AWSProvider
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="spec.clusterID" type="string" required>
+  Identificador único do cluster (2 a 63 caracteres)
+
+  **Regras:**
+  - Alfanuméricos e hífens apenas
+  - Não pode começar ou terminar com hífen
+  - Deve ser único por região
+  - Não pode ser modificado após criação
+
+  ```yaml
+  clusterID: app-redis-cache-prod
+  ```
+</ParamField>
+
+<ParamField path="spec.engine" type="string" required>
+  Motor de cache
+
+  **Opções:**
+  - `redis` - Redis (recomendado para produção)
+  - `memcached` - Memcached (simples, sem persistência)
+
+  ```yaml
+  engine: redis
+  ```
+</ParamField>
+
+<ParamField path="spec.engineVersion" type="string" required>
+  Versão do motor de cache
+
+  **Exemplos:**
+  - Redis: `7.0`, `6.2`, `5.0`
+  - Memcached: `1.6.22`, `1.5.16`
+
+  ```yaml
+  engineVersion: "7.0"
+  ```
+
+  **Nota:** Sempre especifique versão com precisão
+</ParamField>
+
+<ParamField path="spec.nodeType" type="string" required>
+  Tipo de nó (CPU, RAM, performance)
+
+  **Família cache.t3 (Burstable - Dev/Test):**
+  - `cache.t3.micro` - 1 vCPU, 1 GB RAM (~$0.017/hora)
+  - `cache.t3.small` - 1 vCPU, 2 GB RAM (~$0.034/hora)
+  - `cache.t3.medium` - 1 vCPU, 4 GB RAM (~$0.068/hora)
+
+  **Família cache.r6g (Memory Optimized:**
+  - `cache.r6g.large` - 2 vCPU, 16 GB RAM (~$0.280/hora)
+  - `cache.r6g.xlarge` - 4 vCPU, 32 GB RAM (~$0.560/hora)
+  - `cache.r6g.2xlarge` - 8 vCPU, 64 GB RAM (~$1.120/hora)
+
+  **Família cache.m6g (General Purpose):**
+  - `cache.m6g.large` - 2 vCPU, 8 GB RAM (~$0.140/hora)
+  - `cache.m6g.xlarge` - 4 vCPU, 16 GB RAM (~$0.280/hora)
+
+  ```yaml
+  nodeType: cache.t3.micro
+  ```
+</ParamField>
+
+<ParamField path="spec.numCacheNodes" type="integer" required>
+  Número de nós no cluster (single mode)
+
+  **Intervalo:** 1 - 300 nós
+
+  **Nota:** Usar `numCacheNodes` para single mode. Para cluster mode, usar `numNodeGroups`
+
+  ```yaml
+  numCacheNodes: 1
+  ```
+</ParamField>
+
+### Campos Opcionais - Cluster Mode e HA
+
+<ParamField path="spec.replicationGroupDescription" type="string">
+  Descrição do replication group (para cluster mode)
+
+  **Usa-se com:**
+  - `numNodeGroups`: Número de shards
+  - `replicasPerNodeGroup`: Replicas por shard
+  - `automaticFailoverEnabled`: Failover automático
+  - `multiAZEnabled`: Multi-AZ
+
+  ```yaml
+  replicationGroupDescription: "Production Redis Cluster"
+  ```
+</ParamField>
+
+<ParamField path="spec.automaticFailoverEnabled" type="boolean" default="false">
+  Habilitar failover automático (requer Multi-AZ e replicação)
+
+  **Benefícios:**
+  - Failover automático em caso de falha
+  - Sem intervenção manual
+  - Aplicação continua funcionando
+  - Requer mais replicas
+
+  ```yaml
+  automaticFailoverEnabled: true
+  ```
+
+  **Recomendado:** true em produção
+</ParamField>
+
+<ParamField path="spec.multiAZEnabled" type="boolean" default="false">
+  Distribuir nós em múltiplas zonas de disponibilidade
+
+  **Benefícios:**
+  - Tolerância a falhas de AZ
+  - Failover automático
+  - Aumento de ~50% no custo
+
+  ```yaml
+  multiAZEnabled: true
+  ```
+
+  **Recomendado:** true em produção
+</ParamField>
+
+<ParamField path="spec.numNodeGroups" type="integer">
+  Número de shards em cluster mode
+
+  **Intervalo:** 1 - 500 shards
+
+  **Nota:** Usar com `replicationGroupId` para cluster mode
+
+  ```yaml
+  numNodeGroups: 3
+  ```
+</ParamField>
+
+<ParamField path="spec.replicasPerNodeGroup" type="integer">
+  Número de replicas por shard
+
+  **Intervalo:** 0 - 5 replicas por shard
+
+  ```yaml
+  replicasPerNodeGroup: 2
+  ```
+
+  **Nota:** Recomendado 1-2 replicas em produção
+</ParamField>
+
+### Campos Opcionais - Rede e Segurança
+
+<ParamField path="spec.subnetGroupName" type="string">
+  Nome do cache subnet group (subnets privadas)
+
+  **Importante:** DEVE existir previamente na AWS
+
+  ```yaml
+  subnetGroupName: private-cache-subnet
+  ```
+
+  **Criar subnet group via AWS CLI:**
+  ```bash
+  aws elasticache create-cache-subnet-group \
+    --cache-subnet-group-name private-cache-subnet \
+    --cache-subnet-group-description "Private subnets for ElastiCache" \
+    --subnet-ids subnet-xxx subnet-yyy
+  ```
+</ParamField>
+
+<ParamField path="spec.securityGroupIds" type="array">
+  IDs de Security Groups AWS para controle de acesso
+
+  ```yaml
+  securityGroupIds:
+  - sg-0123456789abcdef0
+  - sg-0987654321fedcba0
+  ```
+</ParamField>
+
+<ParamField path="spec.transitEncryptionEnabled" type="boolean" default="false">
+  Habilitar criptografia em trânsito (TLS)
+
+  **Detalhes:**
+  - Criptografa dados em movimento na rede
+  - Requer authToken se habilitado
+  - Performance: mínimo overhead
+  - Recomendado: sempre habilitado
+
+  ```yaml
+  transitEncryptionEnabled: true
+  ```
+</ParamField>
+
+<ParamField path="spec.atRestEncryptionEnabled" type="boolean" default="false">
+  Habilitar criptografia em repouso
+
+  **Detalhes:**
+  - Criptografa dados armazenados
+  - Válido apenas para Redis (não Memcached)
+  - Performance: impacto negligenciável
+  - Conformidade regulatória
+
+  ```yaml
+  atRestEncryptionEnabled: true
+  ```
+</ParamField>
+
+<ParamField path="spec.authTokenRef" type="object">
+  Referência a Secret contendo token de autenticação Redis (senha)
+
+  **Estrutura:**
+  - `name`: Nome do Secret
+  - `namespace`: Namespace do Secret (opcional)
+  - `key`: Chave dentro do Secret
+
+  ```yaml
+  authTokenRef:
+    name: redis-auth
+    key: token
+  ```
+
+  **Secret correspondente:**
+  ```yaml
+  apiVersion: v1
+  kind: Secret
+  metadata:
+    name: redis-auth
+  stringData:
+    token: MySecureRedisToken123!
+  ```
+
+  **Nota:** Sempre usar em produção
+</ParamField>
+
+### Campos Opcionais - Backup e Recuperação
+
+<ParamField path="spec.snapshotRetentionLimit" type="integer" default="0">
+  Dias de retenção de snapshots (apenas Redis)
+
+  **Intervalo:** 0 - 35 dias
+
+  **Recomendações:**
+  - Desenvolvimento: 0-1 dias
+  - Staging: 1-7 dias
+  - Produção: 7-35 dias
+
+  ```yaml
+  snapshotRetentionLimit: 7
+  ```
+
+  **Nota:** 0 = sem snapshots automáticos
+</ParamField>
+
+<ParamField path="spec.snapshotWindow" type="string">
+  Janela de snapshot diária (UTC, formato HH:MM-HH:MM)
+
+  **Padrão:** Selecionado automaticamente
+
+  ```yaml
+  snapshotWindow: "03:00-05:00"  # 3AM-5AM UTC
+  ```
+
+  **Dica:** Escolha horário de baixo uso
+</ParamField>
+
+<ParamField path="spec.enableAutoMinorVersionUpgrade" type="boolean" default="true">
+  Atualizar automaticamente versões menores
+
+  ```yaml
+  enableAutoMinorVersionUpgrade: true
+  ```
+</ParamField>
+
+### Campos Opcionais - Outros
+
+<ParamField path="spec.tags" type="object">
+  Pares chave-valor para organização e billing
+
+  ```yaml
+  tags:
+    Environment: production
+    Application: web-app
+    Team: backend
+    CostCenter: engineering
+    ManagedBy: infra-operator
+  ```
+</ParamField>
+
+<ParamField path="spec.deletionPolicy" type="string" default="Delete">
+  O que acontece com o cluster quando o CR é deletado
+
+  **Opções:**
+  - `Delete`: Cluster é deletado da AWS
+  - `Retain`: Cluster permanece na AWS mas não gerenciado
+  - `Orphan`: Remover apenas gerenciamento
+
+  ```yaml
+  deletionPolicy: Retain  # Para produção
+  ```
+</ParamField>
+
+## Campos de Status
+
+Após o cluster ser criado, os seguintes campos de status são populados:
+
+<ResponseField name="status.ready" type="boolean">
+  `true` quando o cluster está disponível e pronto para uso
+</ResponseField>
+
+<ResponseField name="status.clusterStatus" type="string">
+  Estado atual do cluster
+
+  **Valores possíveis:**
+  - `creating` - Criando
+  - `available` - Disponível e pronto
+  - `modifying` - Configuração sendo alterada
+  - `snapshotting` - Snapshot em progresso
+  - `deleting` - Sendo deletado
+  - `failed` - Erro na criação
+</ResponseField>
+
+<ResponseField name="status.cacheClusterARN" type="string">
+  ARN completo do cluster ElastiCache
+
+  ```
+  arn:aws:elasticache:us-east-1:123456789012:cluster:app-redis-cache
+  ```
+</ResponseField>
+
+<ResponseField name="status.configurationEndpoint" type="object">
+  Endpoint de configuração do cluster (cluster mode)
+
+  <Expandable title="properties">
+    <ResponseField name="address" type="string">
+      Hostname do cache para conexão
+    </ResponseField>
+    <ResponseField name="port" type="integer">
+      Porta de conexão
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="status.primaryEndpoint" type="object">
+  Endpoint principal do cluster (replication group)
+
+  <Expandable title="properties">
+    <ResponseField name="address" type="string">
+      Hostname do nó primário
+    </ResponseField>
+    <ResponseField name="port" type="integer">
+      Porta de conexão (padrão: 6379 Redis, 11211 Memcached)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="status.readerEndpoint" type="object">
+  Endpoint de leitura (read replicas)
+
+  <Expandable title="properties">
+    <ResponseField name="address" type="string">
+      Hostname para leituras
+    </ResponseField>
+    <ResponseField name="port" type="integer">
+      Porta de conexão
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="status.nodeEndpoints" type="array">
+  Lista de endpoints individuais de cada nó
+
+  <Expandable title="structure">
+    <ResponseField name="address" type="string">
+      Hostname do nó individual
+    </ResponseField>
+    <ResponseField name="port" type="integer">
+      Porta do nó
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="status.cacheNodeType" type="string">
+  Tipo de nó do cluster (ex: cache.t3.micro)
+</ResponseField>
+
+<ResponseField name="status.engineVersion" type="string">
+  Versão do engine em execução
+</ResponseField>
+
+<ResponseField name="status.memberClusters" type="array">
+  Lista de clusters membros (para replication groups)
+</ResponseField>
+
+<ResponseField name="status.clusterCreateTime" type="string">
+  Timestamp de quando o cluster foi criado
+</ResponseField>
+
+<ResponseField name="status.lastSyncTime" type="string">
+  Timestamp da última sincronização com a AWS
+</ResponseField>
+
+<ResponseField name="status.conditions" type="array">
+  Condições do status do cluster
+
+  <Expandable title="structure">
+    <ResponseField name="type" type="string">
+      Tipo da condição (ex: Ready, Available)
+    </ResponseField>
+    <ResponseField name="status" type="string">
+      Status da condição (True, False, Unknown)
+    </ResponseField>
+    <ResponseField name="reason" type="string">
+      Razão para o status atual
+    </ResponseField>
+    <ResponseField name="message" type="string">
+      Mensagem descritiva
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Exemplos
+
+### Redis Single Node para Desenvolvimento
+
+Cluster simples para desenvolvimento e testes:
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: ElastiCacheCluster
+metadata:
+  name: dev-redis
+  namespace: default
+spec:
+  providerRef:
+    name: dev-aws
+
+  clusterID: dev-redis-cache
+  engine: redis
+  engineVersion: "7.0"
+
+  # Instância pequena para dev
+  nodeType: cache.t3.micro
+  numCacheNodes: 1
+
+  # Sem Multi-AZ para economizar
+  multiAZEnabled: false
+
+  # Sem backup
+  snapshotRetentionLimit: 0
+
+  subnetGroupName: dev-cache-subnet
+
+  # Sem encryption para melhor performance em dev
+  transitEncryptionEnabled: false
+
+  tags:
+    Environment: development
+    Application: my-app
+
+  deletionPolicy: Delete
+```
+
+### Redis Cluster Mode com HA Completa
+
+Cluster para produção com alta disponibilidade:
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: ElastiCacheCluster
+metadata:
+  name: production-redis
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  # Replication group para cluster mode
+  clusterID: app-redis-prod
+  replicationGroupDescription: "Production Redis Cluster"
+
+  # Engine
+  engine: redis
+  engineVersion: "7.0"
+
+  # Cluster configuration
+  nodeType: cache.r6g.xlarge
+  numNodeGroups: 3          # 3 shards
+  replicasPerNodeGroup: 2   # 2 replicas por shard
+
+  # Alta Disponibilidade
+  multiAZEnabled: true
+  automaticFailoverEnabled: true
+
+  # Rede
+  subnetGroupName: private-cache-subnet
+  securityGroupIds:
+  - sg-0123456789abcdef0
+
+  # Backup
+  snapshotRetentionLimit: 7
+  snapshotWindow: "03:00-05:00"
+
+  # Segurança
+  transitEncryptionEnabled: true
+  atRestEncryptionEnabled: true
+  authTokenRef:
+    name: redis-auth
+    key: token
+
+  tags:
+    Environment: production
+    Critical: "true"
+    Team: backend
+    CostCenter: infrastructure
+
+  deletionPolicy: Retain
+```
+
+### Redis com Criptografia e Auth Completa
+
+Cluster crítico com máxima segurança:
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: ElastiCacheCluster
+metadata:
+  name: secure-redis
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  clusterID: secure-redis-prod
+  replicationGroupDescription: "Secure Redis Cluster"
+
+  engine: redis
+  engineVersion: "7.0"
+
+  # Performance nodes
+  nodeType: cache.r6g.2xlarge
+  numNodeGroups: 4
+  replicasPerNodeGroup: 2
+
+  # HA
+  multiAZEnabled: true
+  automaticFailoverEnabled: true
+
+  # Rede privada
+  subnetGroupName: critical-cache-subnet
+  securityGroupIds:
+  - sg-critical-redis-001
+
+  # Segurança máxima
+  transitEncryptionEnabled: true
+  atRestEncryptionEnabled: true
+  authTokenRef:
+    name: redis-auth-token
+    key: password
+
+  # Backups completos
+  snapshotRetentionLimit: 35
+  snapshotWindow: "02:00-03:00"
+  preferredMaintenanceWindow: "sun:03:00-sun:04:00"
+
+  tags:
+    Environment: production
+    CriticalData: "true"
+    BackupRequired: "true"
+    Compliance: "required"
+
+  deletionPolicy: Retain
+```
+
+### Memcached para Session Storage
+
+Cluster Memcached para armazenar sessões:
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: ElastiCacheCluster
+metadata:
+  name: session-cache
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  clusterID: session-cache-prod
+
+  engine: memcached
+  engineVersion: "1.6.22"
+
+  nodeType: cache.t3.small
+  numCacheNodes: 3
+
+  subnetGroupName: web-cache-subnet
+  securityGroupIds:
+  - sg-memcached-001
+
+  # Memcached não suporta Multi-AZ
+  multiAZEnabled: false
+
+  # Sem backup (dados não persistem)
+  snapshotRetentionLimit: 0
+
+  tags:
+    Environment: production
+    Type: session-cache
+    Application: web-app
+
+  deletionPolicy: Delete
+```
+
+### Redis para Rate Limiting e Leaderboards
+
+Cluster otimizado para operações rápidas:
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: ElastiCacheCluster
+metadata:
+  name: realtime-redis
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  clusterID: realtime-cache
+  replicationGroupDescription: "Realtime Redis Cluster"
+
+  engine: redis
+  engineVersion: "7.0"
+
+  # Otimizado para latência baixa
+  nodeType: cache.r6g.large
+  numNodeGroups: 2
+  replicasPerNodeGroup: 1
+
+  # Failover rápido
+  automaticFailoverEnabled: true
+  multiAZEnabled: true
+
+  subnetGroupName: realtime-cache-subnet
+  securityGroupIds:
+  - sg-realtime-redis-001
+
+  # Segurança
+  transitEncryptionEnabled: true
+  authTokenRef:
+    name: realtime-redis-auth
+    key: token
+
+  # Backups normais
+  snapshotRetentionLimit: 3
+  snapshotWindow: "02:00-03:00"
+
+  tags:
+    Environment: production
+    Type: realtime-cache
+    UseCase: rate-limiting-leaderboards
+
+  deletionPolicy: Retain
+```
+
+## Verificação
+
+### Verificar Status via kubectl
+
+```bash
+# Listar todos os clusters ElastiCache
+kubectl get elasticachecluster
+
+# Obter informações detalhadas
+kubectl get elasticachecluster app-cache -o yaml
+
+# Acompanhar criação em tempo real
+kubectl get elasticachecluster app-cache -w
+
+# Ver eventos e status
+kubectl describe elasticachecluster app-cache
+```
+
+### Verificar na AWS
+
+<Tabs>
+  <Tab title="AWS CLI">
+    ```bash
+    # Listar clusters
+    aws elasticache describe-cache-clusters \
+      --query 'CacheClusters[].{Id:CacheClusterId,Status:CacheClusterStatus,Engine:Engine,NodeType:CacheNodeType}' \
+      --output table
+
+    # Obter detalhes completos
+    aws elasticache describe-cache-clusters \
+      --cache-cluster-id app-redis-cache \
+      --output json | jq '.CacheClusters[0]'
+
+    # Ver endpoint de conexão
+    aws elasticache describe-cache-clusters \
+      --cache-cluster-id app-redis-cache \
+      --query 'CacheClusters[0].CacheNodes[0].Endpoint'
+
+    # Testar conexão (Redis)
+    redis-cli -h app-redis-cache.xxxxx.cache.amazonaws.com \
+              -p 6379 \
+              -a MyToken123! \
+              PING
+
+    # Ver snapshots
+    aws elasticache describe-snapshots \
+      --cache-cluster-id app-redis-cache
+
+    ```
+  </Tab>
+
+  <Tab title="LocalStack">
+    ```bash
+    # Para testes com LocalStack
+    export AWS_ENDPOINT_URL=http://localhost:4566
+
+    aws elasticache describe-cache-clusters
+
+    aws elasticache describe-cache-clusters \
+      --cache-cluster-id app-redis-cache
+    ```
+  </Tab>
+
+  <Tab title="redis-cli (Redis)">
+    ```bash
+    # Conectar ao cache
+    redis-cli -h <endpoint> -p 6379 -a <password>
+
+    # Testar conexão
+    PING
+    # Resposta: PONG
+
+    # Ver informações do servidor
+    INFO server
+
+    # Ver uso de memória
+    INFO memory
+
+    # Ver todas as chaves
+    KEYS *
+
+    # Desconectar
+    EXIT
+    ```
+  </Tab>
+
+  <Tab title="memcached-tool (Memcached)">
+    ```bash
+    # Conectar e obter stats
+    echo "stats" | nc <endpoint> 11211
+
+    # Ver maior consumidor de memória
+    memcached-tool <endpoint>:11211 display
+
+    # Flush all (limpar dados)
+    echo "flush_all" | nc <endpoint> 11211
+    ```
+  </Tab>
+</Tabs>
+
+### Saída Esperada
+
+```yaml
+status:
+  ready: true
+  clusterStatus: available
+  cacheClusterARN: arn:aws:elasticache:us-east-1:123456789012:cluster:app-redis-cache
+  primaryEndpoint:
+    address: app-redis-cache.xxxxx.cache.amazonaws.com
+    port: 6379
+  cacheNodeType: cache.t3.micro
+  engineVersion: "7.0"
+  clusterCreateTime: "2025-11-22T20:30:15Z"
+  lastSyncTime: "2025-11-22T20:45:22Z"
+  conditions:
+  - type: Ready
+    status: "True"
+    reason: ClusterAvailable
+    message: "ElastiCache cluster is available"
+    lastTransitionTime: "2025-11-22T20:35:10Z"
+```
+
+## Resolução de Problemas
+
+<AccordionGroup>
+  <Accordion title="Cluster travado em creating por mais de 30 minutos">
+    **Sintomas:** `cacheClusterStatus: creating` indefinidamente
+
+    **Causas comuns:**
+    1. Subnet group não existe ou inválido
+    2. Security group não encontrado
+    3. Quota de clusters atingida
+    4. Problema de conectividade com AWS
+
+    **Soluções:**
+    ```bash
+    # Verificar status detalhado
+    kubectl describe elasticachecluster app-cache
+
+    # Ver logs do operator
+    kubectl logs -n infra-operator-system \
+      deploy/infra-operator-controller-manager \
+      --tail=100 | grep -i elasticache
+
+    # Verificar se subnet group existe
+    aws elasticache describe-cache-subnet-groups \
+      --cache-subnet-group-name cache-subnet-group
+
+    # Verificar AWSProvider está ready
+    kubectl get awsprovider
+    kubectl describe awsprovider production-aws
+
+    # Forçar sincronização
+    kubectl annotate elasticachecluster app-cache \
+      force-sync="$(date +%s)" --overwrite
+    ```
+  </Accordion>
+
+  <Accordion title="Connection timeout ao conectar no cache">
+    **Sintomas:** `Connection refused` ou `Cannot connect to host`
+
+    **Causas comuns:**
+    1. Security group não permite conexão
+    2. Cache não está acessível (privado)
+    3. Endpoint/porta incorretos
+    4. Rede não roteada corretamente
+
+    **Soluções:**
+    ```bash
+    # Obter endpoint correto
+    aws elasticache describe-cache-clusters \
+      --cache-cluster-id app-redis-cache \
+      --query 'CacheClusters[0].CacheNodes[0].Endpoint'
+
+    # Verificar security group permite entrada
+    aws ec2 describe-security-groups \
+      --group-ids sg-0123456789abcdef0 \
+      --query 'SecurityGroups[0].IpPermissions'
+
+    # DEVE ter rule como:
+    # IpProtocol: tcp, FromPort: 6379, ToPort: 6379
+    # CidrIp: 10.0.0.0/16 (sua VPC)
+
+    # Se conectando de fora da VPC:
+    # 1. Cache DEVE estar publicamente acessível (não recomendado)
+    # 2. Ou usar bastion/jump host
+    # 3. Ou usar VPN
+
+    # Testar com telnet/nc
+    nc -zv app-redis-cache.xxxxx.cache.amazonaws.com 6379
+
+    # Testar com redis-cli
+    redis-cli -h app-redis-cache.xxxxx.cache.amazonaws.com \
+             -p 6379 \
+             -a password \
+             PING
+    ```
+  </Accordion>
+
+  <Accordion title="Out of Memory (cache cheio)">
+    **Sintomas:** Erro `OOM command not allowed` ao escrever dados
+
+    **Causas:**
+    1. Dados cresceram além do previsto
+    2. TTL não configurado (dados nunca expiram)
+    3. Tamanho de nó insuficiente
+
+    **Soluções:**
+    ```bash
+    # Conectar ao Redis e ver uso
+    redis-cli -h <endpoint> -a password
+    INFO memory
+
+    # Aumentar tamanho do nó (redimensionar)
+    kubectl patch elasticachecluster app-cache \
+      --type merge \
+      -p '{"spec":{"cacheNodeType":"cache.t3.small"}}'
+
+    # Aumentar número de nós (scale up)
+    kubectl patch elasticachecluster app-cache \
+      --type merge \
+      -p '{"spec":{"numCacheNodes":2}}'
+
+    # Limpar dados manualmente (Redis)
+    redis-cli -h <endpoint> -a password
+    FLUSHDB  # Limpar apenas banco atual
+    FLUSHALL # Limpar todos os bancos
+
+    # Implementar TTL no aplicação
+    SET key value EX 3600  # Expira em 1 hora
+    ```
+  </Accordion>
+
+  <Accordion title="Slow Performance/High Latency">
+    **Sintomas:** Leitura/escrita lenta mesmo em cache
+
+    **Causas:**
+    1. CPU ou memória saturada
+    2. Rede congestionada
+    3. Eviction policy agressiva
+    4. Tamanho de nó insuficiente
+
+    **Soluções:**
+    ```bash
+    # Ver slow queries (Redis)
+    redis-cli -h <endpoint> -a password
+    SLOWLOG GET 10
+
+    # Aumentar tamanho do nó
+    kubectl patch elasticachecluster app-cache \
+      --type merge \
+      -p '{"spec":{"cacheNodeType":"cache.r6g.xlarge"}}'
+
+    # Aumentar replicas para distribuir carga
+    kubectl patch elasticachecluster app-cache \
+      --type merge \
+      -p '{"spec":{"replicasPerNodeGroup":2}}'
+
+    # Habilitar cluster mode para distribuição
+    # Requer recriar cluster
+    ```
+  </Accordion>
+
+  <Accordion title="Failover lento ou não funciona">
+    **Sintomas:** Após falha, cache fica offline por muito tempo
+
+    **Causa:** Failover automático pode estar desabilitado ou replicas insuficientes
+
+    **Soluções:**
+    ```bash
+    # Verificar failover automático
+    aws elasticache describe-replication-groups \
+      --replication-group-id app-redis-rg \
+      --query 'ReplicationGroups[0].AutomaticFailoverEnabled'
+
+    # Habilitar se não estiver
+    kubectl patch elasticachecluster app-cache \
+      --type merge \
+      -p '{"spec":{"automaticFailoverEnabled":true}}'
+
+    # Verificar Multi-AZ
+    aws elasticache describe-replication-groups \
+      --replication-group-id app-redis-rg \
+      --query 'ReplicationGroups[0].MultiAZ'
+
+    # Habilitar Multi-AZ
+    kubectl patch elasticachecluster app-cache \
+      --type merge \
+      -p '{"spec":{"multiAZEnabled":true}}'
+
+    # Testar failover manualmente
+    # CUIDADO: Causa downtime!
+    aws elasticache test-failover \
+      --replication-group-id app-redis-rg
+
+    # Ver progresso de failover
+    aws elasticache describe-replication-groups \
+      --replication-group-id app-redis-rg
+    ```
+  </Accordion>
+
+  <Accordion title="Custos elevados de ElastiCache">
+    **Sintomas:** Conta AWS com gastos de cache inesperados
+
+    **Causas comuns:**
+    1. Nós muito grandes
+    2. Multi-AZ em dev/test
+    3. Snapshots retidos muito tempo
+    4. Replicação entre regiões
+
+    **Soluções:**
+    ```bash
+    # Calcular custo atual
+    # Usar AWS Pricing Calculator
+    # cache.t3.micro: ~$0.017/hora * 730 = ~$12/mês
+    # cache.r6g.xlarge: ~$0.560/hora * 730 = ~$409/mês
+
+    # Reduzir classe (se possível)
+    kubectl patch elasticachecluster app-cache \
+      --type merge \
+      -p '{"spec":{"cacheNodeType":"cache.t3.micro"}}'
+
+    # Reduzir replicas em dev
+    kubectl patch elasticachecluster app-cache \
+      --type merge \
+      -p '{"spec":{"replicasPerNodeGroup":0}}'
+
+    # Reduzir retention de snapshots
+    kubectl patch elasticachecluster app-cache \
+      --type merge \
+      -p '{"spec":{"snapshotRetentionLimit":3}}'
+
+    # Para dev, deletar após uso
+    kubectl delete elasticachecluster dev-cache
+    ```
+  </Accordion>
+
+  <Accordion title="Snapshot falha ou toma muito tempo">
+    **Sintomas:** Status fica em `snapshotting` por horas
+
+    **Causas:**
+    1. Cache muito grande
+    2. IO saturado durante snapshot
+    3. Muitas transações durante snapshot
+
+    **Soluções:**
+    ```bash
+    # Ver status de snapshot
+    aws elasticache describe-snapshots \
+      --cache-cluster-id app-redis-cache
+
+    # Ver snapshots completados
+    aws elasticache describe-snapshots \
+      --query 'Snapshots[].{SnapshotName:SnapshotName,Status:SnapshotStatus}'
+
+    # Aumentar janela de snapshot
+    kubectl patch elasticachecluster app-cache \
+      --type merge \
+      -p '{"spec":{"snapshotWindow":"02:00-04:00"}}'
+
+    # Criar snapshot manual (Redis)
+    aws elasticache create-snapshot \
+      --cache-cluster-id app-redis-cache \
+      --snapshot-name manual-backup-$(date +%Y%m%d-%H%M%S)
+
+    # Deletar snapshots antigos
+    aws elasticache delete-snapshot \
+      --snapshot-name snapshot-name
+    ```
+  </Accordion>
+
+  <Accordion title="Erro ao deletar cluster (finalizer stuck)">
+    **Sintomas:** `kubectl delete elasticachecluster` fica pendente indefinidamente
+
+    **Causa:** Finalizer não consegue deletar cluster
+
+    **Soluções:**
+    ```bash
+    # Ver detalhes
+    kubectl describe elasticachecluster app-cache
+
+    # Ver finalizers
+    kubectl get elasticachecluster app-cache -o yaml | grep finalizers
+
+    # Opção 1: Alterar deletionPolicy antes de deletar
+    kubectl patch elasticachecluster app-cache \
+      --type merge \
+      -p '{"spec":{"deletionPolicy":"Retain"}}'
+
+    # Depois deletar
+    kubectl delete elasticachecluster app-cache
+
+    # Opção 2: Forçar delete do CR
+    kubectl patch elasticachecluster app-cache \
+      -p '{"metadata":{"finalizers":[]}}' \
+      --type=merge
+
+    # Depois deletar manualmente na AWS se necessário
+    aws elasticache delete-cache-cluster \
+      --cache-cluster-id app-redis-cache
+    ```
+  </Accordion>
+
+  <Accordion title="Authentication token inválido ou expirado">
+    **Sintomas:** Erro `WRONGPASS invalid username-password pair` ao conectar
+
+    **Causa:** Token de auth incorreto, expirado, ou não configurado
+
+    **Soluções:**
+    ```bash
+    # Verificar se auth token está configurado
+    kubectl get elasticachecluster app-cache -o yaml | grep authToken
+
+    # Testar conectando sem auth
+    redis-cli -h <endpoint> -p 6379 PING
+
+    # Se falhar, verificar no AWS
+    aws elasticache describe-cache-clusters \
+      --cache-cluster-id app-redis-cache
+
+    # Conectar com token correto
+    redis-cli -h <endpoint> -p 6379 -a MeuToken123! PING
+
+    # Atualizar token (requer reiniciar)
+    kubectl patch elasticachecluster app-cache \
+      --type merge \
+      -p '{"spec":{"authToken":"NovoToken456!"}}'
+
+    # Verificar se transitEncryption está habilitado
+    kubectl get elasticachecluster app-cache -o yaml | grep transitEncryption
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Melhores Práticas
+
+<CardGroup cols={2}>
+  <Card title="Multi-AZ em Produção" icon="network-wired">
+    - Habilitar Multi-AZ para HA automática
+    - Failover automático em caso de falha
+    - Custo ~50% maior, vale a pena para produção
+    - Sempre habilitar para dados críticos
+    - Testar failover regularmente
+  </Card>
+
+  <Card title="Encryption Always On" icon="lock">
+    - Transit encryption sempre habilitada
+    - At-rest encryption para dados sensíveis
+    - TLS automático para todas as conexões
+    - Tokens de auth em produção
+    - Conformidade regulatória
+  </Card>
+
+  <Card title="Auth Token Seguro" icon="key">
+    - Usar tokens complexos (32+ caracteres)
+    - Armazenar em Kubernetes Secret
+    - Rotacionar regularmente
+    - Nunca fazer hardcode
+    - Usar diferentes tokens por ambiente
+  </Card>
+
+  <Card title="Cluster Mode para Escala" icon="arrow-up-down">
+    - Cluster Mode para > 100 GB de dados
+    - Distribuição automática entre shards
+    - Escalabilidade horizontal ilimitada
+    - Melhor performance que single mode
+    - Recomendado para produção
+  </Card>
+
+  <Card title="Replica Strategy" icon="copy">
+    - Mínimo 1 replica em produção
+    - 2 replicas para alta concorrência
+    - Replicas diferentes de primary
+    - Read-heavy: aumente replicas
+    - Failover automático com replicas
+  </Card>
+
+  <Card title="Right-Sizing de Nós" icon="scale-balanced">
+    - Começar com t3.micro
+    - Monitorar uso de memória
+    - Aumentar antes de ficar cheio
+    - r6g para memory-intensive
+    - m6g para general purpose
+  </Card>
+
+  <Card title="TTL e Eviction Policies" icon="hourglass-end">
+    - Sempre usar TTL nas chaves
+    - Política de eviction: allkeys-lru
+    - Evitar dados que nunca expiram
+    - Monitorar evictions
+    - Aumentar memória se necessário
+  </Card>
+
+  <Card title="Backup Strategy" icon="database">
+    - Snapshots automáticos (7-35 dias)
+    - Backups manuais antes de upgrades
+    - Testar restore regularmente
+    - Copiar snapshots para outra região
+    - RTO/RPO definido
+  </Card>
+
+  <Card title="Connection Pooling" icon="link">
+    - Usar connection pooling na app
+    - Não criar nova conexão por request
+    - Reutilizar conexões existentes
+    - Configurar timeout apropriado
+    - Melhor performance
+  </Card>
+
+  <Card title="Tagging Consistente" icon="tags">
+    - Environment: dev/staging/prod
+    - Application ou projeto
+    - Cost center para alocação
+    - Owner ou team responsável
+    - Critical: true/false
+  </Card>
+
+  <Card title="Segurança de Rede" icon="shield-halved">
+    - Cache em subnet privada
+    - Security group restritivo
+    - Apenas IPs/SGs necessários
+    - Nunca 0.0.0.0/0
+    - Auditoria de rules regularmente
+  </Card>
+</CardGroup>
+
+## Padrões de Uso
+
+### 1. Session Storage (Memcached)
+
+Armazenar sessões de usuários:
+
+```yaml
+engine: memcached
+nodeType: cache.t3.small
+numCacheNodes: 3
+```
+
+**Benefícios:**
+- Rápido e simples
+- Compartilhar sessões entre instâncias
+- Sem persistência (OK para sessões)
+
+### 2. Database Query Cache (Redis)
+
+Cache de resultados de queries:
+
+```yaml
+engine: redis
+nodeType: cache.r6g.large
+replicationGroupDescription: "Query Cache Redis"
+snapshotRetentionLimit: 7
+```
+
+**Benefícios:**
+- Reduzir carga no banco
+- Sub-milissegundo de latência
+- Backup automático
+
+### 3. Rate Limiting (Redis)
+
+Limitar requisições por usuário/IP:
+
+```yaml
+engine: redis
+nodeType: cache.r6g.large
+numNodeGroups: 2
+replicasPerNodeGroup: 1
+automaticFailoverEnabled: true
+```
+
+**Benefícios:**
+- Muito rápido para incrementos
+- Distribuído entre múltiplos nós
+- Altamente confiável
+
+### 4. Real-time Leaderboards (Redis)
+
+Ranking em tempo real com sorted sets:
+
+```yaml
+engine: redis
+nodeType: cache.r6g.xlarge
+numNodeGroups: 3
+replicasPerNodeGroup: 2
+```
+
+**Benefícios:**
+- Operações O(log N)
+- Score updates rápidos
+- Queries eficientes
+
+### 5. Pub/Sub Messaging (Redis)
+
+Sistema de mensagens entre serviços:
+
+```yaml
+engine: redis
+nodeType: cache.r6g.large
+automaticFailoverEnabled: true
+multiAZEnabled: true
+```
+
+**Benefícios:**
+- Baixa latência
+- Broadcast para múltiplos subscribers
+- Simple pattern matching
+
+### 6. Analytics Data (Redis)
+
+Agregação de dados em tempo real:
+
+```yaml
+engine: redis
+nodeType: cache.r6g.2xlarge
+numNodeGroups: 4
+replicasPerNodeGroup: 2
+snapshotRetentionLimit: 7
+```
+
+**Benefícios:**
+- HyperLogLog para contagem aproximada
+- Bitmaps para operações rápidas
+- Streams para dados temporais
+
+## Recursos Relacionados
+
+<CardGroup cols={2}>
+  <Card
+    title="VPC e Subnets"
+    icon="network-wired"
+    href="/services/networking/vpc"
+  >
+    Rede privada para cache
+  </Card>
+
+  <Card
+    title="Security Groups"
+    icon="shield-halved"
+    href="/services/networking/security-group"
+  >
+    Controle de acesso de rede
+  </Card>
+
+  <Card
+    title="RDS Instance"
+    icon="database"
+    href="/services/database/rds"
+  >
+    Combinar com banco de dados relacional
+  </Card>
+
+  <Card
+    title="Lambda"
+    icon="bolt"
+    href="/services/compute/lambda"
+  >
+    Executar processamento com cache
+  </Card>
+
+  <Card
+    title="DynamoDB"
+    icon="database"
+    href="/services/database/dynamodb"
+  >
+    Alternativa NoSQL com cache integrado
+  </Card>
+</CardGroup>
+
+---

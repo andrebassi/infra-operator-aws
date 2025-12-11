@@ -1,0 +1,91 @@
+---
+# VPC
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: VPC
+metadata:
+  name: e2e-test-vpc
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  cidrBlock: "10.0.0.0/16"
+  enableDnsSupport: true
+  enableDnsHostnames: true
+  tags:
+    Name: e2e-test-vpc
+    Environment: testing
+    ManagedBy: infra-operator
+  deletionPolicy: Delete
+
+---
+# Public Subnet
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Subnet
+metadata:
+  name: e2e-public-subnet
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  vpcID: REPLACE_WITH_VPC_ID
+  cidrBlock: "10.0.1.0/24"
+  availabilityZone: "us-east-1a"
+  mapPublicIpOnLaunch: true
+  tags:
+    Name: e2e-public-subnet
+    Type: public
+    ManagedBy: infra-operator
+  deletionPolicy: Delete
+
+---
+# Private Subnet
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Subnet
+metadata:
+  name: e2e-private-subnet
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  vpcID: REPLACE_WITH_VPC_ID
+  cidrBlock: "10.0.2.0/24"
+  availabilityZone: "us-east-1b"
+  mapPublicIpOnLaunch: false
+  tags:
+    Name: e2e-private-subnet
+    Type: private
+    ManagedBy: infra-operator
+  deletionPolicy: Delete
+
+---
+# Internet Gateway
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: InternetGateway
+metadata:
+  name: e2e-igw
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  vpcID: REPLACE_WITH_VPC_ID
+  tags:
+    Name: e2e-internet-gateway
+    ManagedBy: infra-operator
+  deletionPolicy: Delete
+
+---
+# NAT Gateway (in public subnet)
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: NATGateway
+metadata:
+  name: e2e-nat
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  subnetID: REPLACE_WITH_PUBLIC_SUBNET_ID
+  connectivityType: public
+  tags:
+    Name: e2e-nat-gateway
+    ManagedBy: infra-operator
+  deletionPolicy: Delete

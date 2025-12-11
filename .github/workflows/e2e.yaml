@@ -1,0 +1,210 @@
+name: E2E Tests
+
+on:
+  pull_request:
+    branches:
+      - main
+      - develop
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  GO_VERSION: '1.21'
+  LOCALSTACK_VERSION: 'latest'
+
+jobs:
+  e2e-localstack:
+    name: E2E Tests with LocalStack
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Cache Go modules
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install dependencies
+        run: |
+          go mod download
+          go mod verify
+
+      - name: Start LocalStack
+        run: |
+          docker-compose -f docker-compose.e2e.yaml up -d
+          echo "Waiting for LocalStack to be ready..."
+          timeout 60 bash -c 'until curl -f http://localhost:4566/_localstack/health > /dev/null 2>&1; do sleep 2; done'
+          echo "LocalStack is ready"
+
+      - name: Check LocalStack health
+        run: |
+          curl -s http://localhost:4566/_localstack/health | python3 -m json.tool
+
+      - name: Run E2E tests
+        env:
+          USE_LOCALSTACK: 'true'
+          AWS_ENDPOINT_URL: 'http://localhost:4566'
+          AWS_ACCESS_KEY_ID: 'test'
+          AWS_SECRET_ACCESS_KEY: 'test'
+          AWS_REGION: 'us-east-1'
+        run: |
+          make test-e2e
+
+      - name: Show LocalStack logs on failure
+        if: failure()
+        run: |
+          docker-compose -f docker-compose.e2e.yaml logs localstack
+
+      - name: Stop LocalStack
+        if: always()
+        run: |
+          docker-compose -f docker-compose.e2e.yaml down
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: e2e-test-results
+          path: |
+            *.out
+            *.log
+          retention-days: 7
+
+  e2e-vpc:
+    name: E2E VPC Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Start LocalStack
+        run: |
+          docker-compose -f docker-compose.e2e.yaml up -d
+          timeout 60 bash -c 'until curl -f http://localhost:4566/_localstack/health > /dev/null 2>&1; do sleep 2; done'
+
+      - name: Run VPC E2E tests
+        env:
+          USE_LOCALSTACK: 'true'
+          AWS_ENDPOINT_URL: 'http://localhost:4566'
+          AWS_ACCESS_KEY_ID: 'test'
+          AWS_SECRET_ACCESS_KEY: 'test'
+          AWS_REGION: 'us-east-1'
+        run: make test-e2e-vpc
+
+      - name: Stop LocalStack
+        if: always()
+        run: docker-compose -f docker-compose.e2e.yaml down
+
+  e2e-s3:
+    name: E2E S3 Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Start LocalStack
+        run: |
+          docker-compose -f docker-compose.e2e.yaml up -d
+          timeout 60 bash -c 'until curl -f http://localhost:4566/_localstack/health > /dev/null 2>&1; do sleep 2; done'
+
+      - name: Run S3 E2E tests
+        env:
+          USE_LOCALSTACK: 'true'
+          AWS_ENDPOINT_URL: 'http://localhost:4566'
+          AWS_ACCESS_KEY_ID: 'test'
+          AWS_SECRET_ACCESS_KEY: 'test'
+          AWS_REGION: 'us-east-1'
+        run: make test-e2e-s3
+
+      - name: Stop LocalStack
+        if: always()
+        run: docker-compose -f docker-compose.e2e.yaml down
+
+  e2e-integration:
+    name: E2E Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Start LocalStack
+        run: |
+          docker-compose -f docker-compose.e2e.yaml up -d
+          timeout 60 bash -c 'until curl -f http://localhost:4566/_localstack/health > /dev/null 2>&1; do sleep 2; done'
+
+      - name: Run Integration E2E tests
+        env:
+          USE_LOCALSTACK: 'true'
+          AWS_ENDPOINT_URL: 'http://localhost:4566'
+          AWS_ACCESS_KEY_ID: 'test'
+          AWS_SECRET_ACCESS_KEY: 'test'
+          AWS_REGION: 'us-east-1'
+        run: make test-e2e-integration
+
+      - name: Stop LocalStack
+        if: always()
+        run: docker-compose -f docker-compose.e2e.yaml down
+
+  e2e-summary:
+    name: E2E Tests Summary
+    runs-on: ubuntu-latest
+    needs: [e2e-localstack, e2e-vpc, e2e-s3, e2e-integration]
+    if: always()
+
+    steps:
+      - name: Check test results
+        run: |
+          echo "E2E Test Results Summary"
+          echo "========================"
+          echo "LocalStack: ${{ needs.e2e-localstack.result }}"
+          echo "VPC Tests: ${{ needs.e2e-vpc.result }}"
+          echo "S3 Tests: ${{ needs.e2e-s3.result }}"
+          echo "Integration Tests: ${{ needs.e2e-integration.result }}"
+
+      - name: Fail if any test failed
+        if: |
+          needs.e2e-localstack.result == 'failure' ||
+          needs.e2e-vpc.result == 'failure' ||
+          needs.e2e-s3.result == 'failure' ||
+          needs.e2e-integration.result == 'failure'
+        run: exit 1

@@ -1,0 +1,19 @@
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: IAMRole
+metadata:
+  name: test-role
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  roleName: helm-test-role
+  description: "Helm test IAM role"
+  assumeRolePolicyDocument: |
+    {
+      "Version": "2012-10-17",
+      "Statement": [{
+        "Effect": "Allow",
+        "Principal": {"Service": "lambda.amazonaws.com"},
+        "Action": "sts:AssumeRole"
+      }]
+    }

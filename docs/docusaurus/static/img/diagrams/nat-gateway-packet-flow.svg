@@ -1,0 +1,139 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 950 280">
+  <defs>
+    <style>
+      .bg { fill: #0f172a; }
+      .private-zone { fill: #1e293b; stroke: #334155; stroke-width: 2; stroke-dasharray: 8,4; }
+      .public-zone { fill: #1e293b; stroke: #334155; stroke-width: 2; stroke-dasharray: 8,4; }
+      .ec2-box { fill: #3b82f6; stroke: #60a5fa; stroke-width: 2; }
+      .rt-box { fill: #8b5cf6; stroke: #a78bfa; stroke-width: 2; }
+      .nat-box { fill: #f59e0b; stroke: #fbbf24; stroke-width: 2; }
+      .igw-box { fill: #10b981; stroke: #34d399; stroke-width: 2; }
+      .internet-box { fill: #06b6d4; stroke: #22d3ee; stroke-width: 2; }
+      .text-title { font-family: 'Segoe UI', Arial, sans-serif; font-size: 13px; font-weight: 600; fill: #fff; }
+      .text-label { font-family: 'Segoe UI', Arial, sans-serif; font-size: 11px; fill: #fff; }
+      .text-small { font-family: 'Segoe UI', Arial, sans-serif; font-size: 9px; fill: #94a3b8; }
+      .text-ip { font-family: 'Consolas', monospace; font-size: 9px; fill: #cbd5e1; }
+      .zone-label { font-family: 'Segoe UI', Arial, sans-serif; font-size: 10px; fill: #64748b; font-weight: 600; }
+      .arrow-out { stroke: #4ade80; stroke-width: 3; fill: none; marker-end: url(#arrow-green); }
+      .arrow-in { stroke: #f87171; stroke-width: 3; fill: none; marker-end: url(#arrow-red); }
+      .packet-box { fill: none; stroke-width: 1; rx: 4; }
+      .packet-out { stroke: #4ade80; fill: rgba(74, 222, 128, 0.1); }
+      .packet-in { stroke: #f87171; fill: rgba(248, 113, 113, 0.1); }
+      .step-badge { fill: #1e293b; stroke: #475569; stroke-width: 1; }
+    </style>
+    <marker id="arrow-green" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#4ade80"/>
+    </marker>
+    <marker id="arrow-red" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#f87171"/>
+    </marker>
+    <linearGradient id="ec2-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#60a5fa"/>
+      <stop offset="100%" style="stop-color:#3b82f6"/>
+    </linearGradient>
+    <linearGradient id="nat-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#fbbf24"/>
+      <stop offset="100%" style="stop-color:#f59e0b"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect class="bg" width="950" height="280" rx="12"/>
+
+  <!-- Title -->
+  <text x="475" y="25" text-anchor="middle" style="font-family: 'Segoe UI', Arial; font-size: 16px; font-weight: 700; fill: #f1f5f9;">NAT Gateway Packet Flow</text>
+
+  <!-- Private Subnet Zone -->
+  <rect class="private-zone" x="20" y="45" width="280" height="180" rx="8"/>
+  <text class="zone-label" x="30" y="62">PRIVATE SUBNET</text>
+
+  <!-- Public Subnet Zone -->
+  <rect class="public-zone" x="320" y="45" width="400" height="180" rx="8"/>
+  <text class="zone-label" x="330" y="62">PUBLIC SUBNET</text>
+
+  <!-- Internet Zone -->
+  <rect class="public-zone" x="740" y="45" width="190" height="180" rx="8"/>
+  <text class="zone-label" x="750" y="62">INTERNET</text>
+
+  <!-- EC2 Instance -->
+  <rect fill="url(#ec2-grad)" x="40" y="85" width="120" height="80" rx="8"/>
+  <text class="text-title" x="100" y="115" text-anchor="middle">EC2 Instance</text>
+  <text class="text-ip" x="100" y="135" text-anchor="middle">10.0.2.15</text>
+  <text class="text-small" x="100" y="150" text-anchor="middle">(Private IP)</text>
+
+  <!-- Private Route Table -->
+  <rect class="rt-box" x="190" y="95" width="90" height="60" rx="6"/>
+  <text class="text-label" x="235" y="120" text-anchor="middle">Route Table</text>
+  <text class="text-ip" x="235" y="138" text-anchor="middle">0.0.0.0/0→NAT</text>
+
+  <!-- NAT Gateway -->
+  <rect fill="url(#nat-grad)" x="340" y="80" width="140" height="90" rx="8"/>
+  <text class="text-title" x="410" y="110" text-anchor="middle">NAT Gateway</text>
+  <text class="text-ip" x="410" y="130" text-anchor="middle">54.23.45.67</text>
+  <text class="text-small" x="410" y="148" text-anchor="middle">(Elastic IP)</text>
+
+  <!-- Public Route Table -->
+  <rect class="rt-box" x="510" y="95" width="90" height="60" rx="6"/>
+  <text class="text-label" x="555" y="120" text-anchor="middle">Route Table</text>
+  <text class="text-ip" x="555" y="138" text-anchor="middle">0.0.0.0/0→IGW</text>
+
+  <!-- Internet Gateway -->
+  <rect class="igw-box" x="630" y="95" width="80" height="60" rx="6"/>
+  <text class="text-title" x="670" y="125" text-anchor="middle">IGW</text>
+  <text class="text-small" x="670" y="142" text-anchor="middle">Gateway</text>
+
+  <!-- Internet -->
+  <rect class="internet-box" x="770" y="85" width="130" height="80" rx="8"/>
+  <text class="text-title" x="835" y="115" text-anchor="middle">Internet</text>
+  <text class="text-ip" x="835" y="135" text-anchor="middle">api.example.com</text>
+  <text class="text-small" x="835" y="150" text-anchor="middle">93.184.216.34</text>
+
+  <!-- Outbound Flow (top arrows - green) -->
+  <path class="arrow-out" d="M 160 110 L 188 110"/>
+  <path class="arrow-out" d="M 280 115 L 338 115"/>
+  <path class="arrow-out" d="M 480 115 L 508 115"/>
+  <path class="arrow-out" d="M 600 120 L 628 120"/>
+  <path class="arrow-out" d="M 710 120 L 768 120"/>
+
+  <!-- Inbound Flow (bottom arrows - red) -->
+  <path class="arrow-in" d="M 768 145 L 710 145"/>
+  <path class="arrow-in" d="M 628 140 L 600 140"/>
+  <path class="arrow-in" d="M 508 140 L 480 140"/>
+  <path class="arrow-in" d="M 338 140 L 280 140"/>
+  <path class="arrow-in" d="M 188 135 L 160 135"/>
+
+  <!-- Packet Info Boxes -->
+  <rect class="packet-box packet-out" x="295" y="75" width="35" height="30" rx="4"/>
+  <text class="text-ip" x="312" y="88" text-anchor="middle" fill="#4ade80">SRC</text>
+  <text class="text-ip" x="312" y="100" text-anchor="middle" fill="#4ade80">NAT</text>
+
+  <!-- Legend -->
+  <rect fill="#1e293b" x="30" y="235" width="200" height="35" rx="6"/>
+  <line x1="45" y1="252" x2="75" y2="252" stroke="#4ade80" stroke-width="3"/>
+  <text class="text-small" x="85" y="256" fill="#4ade80">Outbound Request</text>
+  <line x1="145" y1="252" x2="175" y2="252" stroke="#f87171" stroke-width="3"/>
+  <text class="text-small" x="185" y="256" fill="#f87171">Response</text>
+
+  <!-- Step indicators -->
+  <circle class="step-badge" cx="100" cy="78" r="10"/>
+  <text class="text-small" x="100" y="82" text-anchor="middle" fill="#fff">1</text>
+
+  <circle class="step-badge" cx="235" cy="88" r="10"/>
+  <text class="text-small" x="235" y="92" text-anchor="middle" fill="#fff">2</text>
+
+  <circle class="step-badge" cx="410" cy="73" r="10"/>
+  <text class="text-small" x="410" y="77" text-anchor="middle" fill="#fff">3</text>
+
+  <circle class="step-badge" cx="555" cy="88" r="10"/>
+  <text class="text-small" x="555" y="92" text-anchor="middle" fill="#fff">4</text>
+
+  <circle class="step-badge" cx="670" cy="88" r="10"/>
+  <text class="text-small" x="670" y="92" text-anchor="middle" fill="#fff">5</text>
+
+  <circle class="step-badge" cx="835" cy="78" r="10"/>
+  <text class="text-small" x="835" y="82" text-anchor="middle" fill="#fff">6</text>
+
+  <!-- NAT Translation Note -->
+  <text class="text-small" x="410" y="185" text-anchor="middle" fill="#fbbf24">Source IP translated:</text>
+  <text class="text-ip" x="410" y="198" text-anchor="middle" fill="#fbbf24">10.0.2.15 → 54.23.45.67</text>
+</svg>

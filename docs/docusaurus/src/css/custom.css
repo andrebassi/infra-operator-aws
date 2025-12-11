@@ -1,0 +1,161 @@
+/**
+ * Infra Operator - Custom CSS
+ * Based on AWS Orange theme
+ */
+
+:root {
+  --ifm-color-primary: #ff6b35;
+  --ifm-color-primary-dark: #ff5219;
+  --ifm-color-primary-darker: #fc4400;
+  --ifm-color-primary-darkest: #d03900;
+  --ifm-color-primary-light: #ff8451;
+  --ifm-color-primary-lighter: #ff936a;
+  --ifm-color-primary-lightest: #ffb79c;
+  --ifm-code-font-size: 95%;
+  --docusaurus-highlighted-code-line-bg: rgba(255, 107, 53, 0.1);
+}
+
+[data-theme='dark'] {
+  --ifm-color-primary: #ff8451;
+  --ifm-color-primary-dark: #ff6b35;
+  --ifm-color-primary-darker: #ff5219;
+  --ifm-color-primary-darkest: #fc4400;
+  --ifm-color-primary-light: #ff936a;
+  --ifm-color-primary-lighter: #ffb79c;
+  --ifm-color-primary-lightest: #ffd4c4;
+  --docusaurus-highlighted-code-line-bg: rgba(255, 107, 53, 0.2);
+}
+
+/* AWS Service badges */
+.badge-aws {
+  background: linear-gradient(135deg, #ff9900 0%, #ff6b35 100%);
+  color: white;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+/* Custom navbar styling */
+.navbar {
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+}
+
+[data-theme='dark'] .navbar {
+  background-color: #1b1b1d;
+}
+
+/* Code blocks */
+.prism-code {
+  border-radius: 8px;
+}
+
+/* Sidebar styling */
+.menu__link {
+  border-radius: 4px;
+}
+
+.menu__link--active {
+  background-color: rgba(255, 107, 53, 0.1);
+}
+
+/* Hero section styling */
+.hero-title {
+  font-size: 3rem;
+  font-weight: 700;
+  background: linear-gradient(135deg, #ff6b35 0%, #ff9900 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Feature grid */
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 1.5rem;
+  margin: 2rem 0;
+}
+
+.feature-card {
+  padding: 1.5rem;
+  border-radius: 8px;
+  background: var(--ifm-card-background-color);
+  border: 1px solid var(--ifm-color-emphasis-200);
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.feature-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+/* AWS service icons */
+.aws-icon {
+  width: 48px;
+  height: 48px;
+  margin-bottom: 1rem;
+}
+
+/* Table styling */
+table {
+  display: table;
+  width: 100%;
+}
+
+th {
+  background-color: var(--ifm-color-emphasis-100);
+}
+
+/* Admonition customization */
+.admonition-tip {
+  border-left-color: #ff6b35;
+}
+
+.admonition-tip .admonition-icon svg {
+  fill: #ff6b35;
+}
+
+/* Best Practices (note) - Dracula dark theme like code blocks */
+[data-theme='dark'] .admonition-note {
+  background-color: #282a36;
+  border-left-color: #6272a4;
+}
+
+[data-theme='dark'] .admonition-note .admonition-heading {
+  color: #f8f8f2;
+}
+
+[data-theme='dark'] .admonition-note .admonition-icon svg {
+  fill: #6272a4;
+}
+
+[data-theme='dark'] .admonition-note .admonition-content {
+  color: #f8f8f2;
+}
+
+/* Footer */
+.footer {
+  background-color: #1b1b1d;
+}
+
+.footer a {
+  color: #ff8451;
+}
+
+.footer a:hover {
+  color: #ff6b35;
+}
+
+/* YAML/Code examples */
+.language-yaml .token.key {
+  color: #ff6b35;
+}
+
+/* Responsive adjustments */
+@media (max-width: 996px) {
+  .hero-title {
+    font-size: 2rem;
+  }
+}

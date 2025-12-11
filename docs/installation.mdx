@@ -1,0 +1,751 @@
+---
+title: 'Como Usar'
+description: 'Instale o Infra Operator via Helm Chart'
+---
+
+## Pré-requisitos
+
+Antes de instalar o Infra Operator, certifique-se de ter:
+
+- **Kubernetes 1.28+** - Cluster Kubernetes funcionando
+- **Helm 3.x** - Gerenciador de pacotes Kubernetes
+- **kubectl** - CLI do Kubernetes configurado
+- **AWS Credentials** - Credenciais AWS ou LocalStack para testes
+
+<Tip>
+  Para desenvolvimento local, recomendamos usar **LocalStack** para emular serviços AWS sem custos.
+</Tip>
+
+## Instalação via Helm
+
+### 1. Clone o Repositório
+
+```bash
+git clone https://github.com/andrebassi/infra-operator-aws.git
+cd infra-operator
+```
+
+### 2. Instale via Helm
+
+```bash
+# Instalar com valores padrão
+helm install infra-operator ./chart \
+  --namespace iop-system \
+  --create-namespace
+
+# Ou com valores customizados
+helm install infra-operator ./chart \
+  --namespace iop-system \
+  --create-namespace \
+  --set image.tag=latest \
+  --set replicaCount=2 \
+  --set resources.requests.memory=256Mi
+```
+
+### 3. Verificar Instalação
+
+```bash
+# Verificar pods
+kubectl get pods -n iop-system
+
+# Deve mostrar algo como:
+# NAME                              READY   STATUS    RESTARTS   AGE
+# infra-operator-5d4c7b9f8d-xxxxx   1/1     Running   0          30s
+
+# Verificar CRDs instalados (26 CRDs)
+kubectl get crds | grep aws-infra-operator.runner.codes
+
+# Verificar logs
+kubectl logs -n iop-system deploy/infra-operator
+```
+
+<Check>
+  Se todos os pods estiverem **Running** e os 26 CRDs criados, a instalação foi bem-sucedida!
+</Check>
+
+## Configuração do AWSProvider
+
+Antes de criar recursos AWS, você precisa configurar as credenciais:
+
+### Opção 1: IRSA (Recomendado para EKS)
+
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: AWSProvider
+metadata:
+  name: aws-provider
+spec:
+  region: us-east-1
+  roleARN: arn:aws:iam::123456789012:role/infra-operator-role
+```
+
+### Opção 2: Credenciais Estáticas
+
+```bash
+# Criar secret com credenciais AWS
+kubectl create secret generic aws-credentials \
+  --from-literal=aws-access-key-id=YOUR_ACCESS_KEY \
+  --from-literal=aws-secret-access-key=YOUR_SECRET_KEY \
+  -n iop-system
+```
+
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: AWSProvider
+metadata:
+  name: aws-provider
+spec:
+  region: us-east-1
+  credentials:
+    secretRef:
+      name: aws-credentials
+```
+
+### Opção 3: LocalStack (Desenvolvimento)
+
+```bash
+# Instalar LocalStack
+docker run -d \
+  --name localstack \
+  -p 4566:4566 \
+  -e SERVICES=ec2,s3,dynamodb,sqs,sns,iam,secretsmanager,kms \
+  localstack/localstack:latest
+```
+
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: AWSProvider
+metadata:
+  name: localstack-provider
+spec:
+  region: us-east-1
+  endpoint: http://localstack:4566
+  credentials:
+    secretRef:
+      name: localstack-credentials
+```
+
+<Note>
+  Para LocalStack, use credenciais fake: `test` / `test`
+</Note>
+
+## Aplicar o Provider
+
+```bash
+kubectl apply -f awsprovider.yaml
+
+# Verificar status
+kubectl get awsprovider aws-provider
+
+# Deve mostrar:
+# NAME           REGION      READY   AGE
+# aws-provider   us-east-1   True    10s
+```
+
+## Testando com Samples
+
+O repositório inclui **26 samples** prontos na pasta `./samples/`, organizados na ordem recomendada de criação:
+
+### Estrutura dos Samples
+
+#### 📡 Networking (01-09)
+
+**01-vpc.yaml** - Virtual Private Cloud
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: VPC
+spec:
+  cidrBlock: "10.10.0.0/16"          # Range de IPs privados
+  enableDnsSupport: true              # Habilita DNS resolution
+  enableDnsHostnames: true            # Habilita DNS hostnames
+```
+Cria a base da rede AWS. Todos os outros recursos de rede dependem do VPC.
+
+**02-subnet.yaml** - Subnet dentro do VPC
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Subnet
+spec:
+  vpcID: "vpc-xxx"                    # Referência ao VPC criado
+  cidrBlock: "10.10.1.0/24"          # Sub-range do VPC
+  availabilityZone: us-east-1a        # AZ específica
+  mapPublicIpOnLaunch: true          # Atribui IP público automaticamente
+```
+Cria subnet pública para hospedar recursos acessíveis pela internet.
+
+**03-elastic-ip.yaml** - IP Público Estático
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: ElasticIP
+spec:
+  domain: vpc                         # IP para uso em VPC
+```
+IP público fixo, usado para NAT Gateways ou EC2 instances.
+
+**04-internet-gateway.yaml** - Gateway de Internet
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: InternetGateway
+spec:
+  vpcID: "vpc-xxx"                    # Anexado ao VPC
+```
+Permite que recursos na VPC acessem a internet e sejam acessados externamente.
+
+**05-nat-gateway.yaml** - NAT Gateway
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: NATGateway
+spec:
+  subnetID: "subnet-xxx"              # Subnet pública
+  allocationID: ""                    # Elastic IP allocation
+```
+Permite que instâncias em subnets privadas acessem a internet (saída apenas).
+
+**06-route-table.yaml** - Tabela de Roteamento
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: RouteTable
+spec:
+  vpcID: "vpc-xxx"
+  routes:
+    - destinationCIDR: 0.0.0.0/0      # Rota padrão
+      gatewayID: ""                    # Internet Gateway ID
+```
+Define rotas de tráfego de rede (ex: para internet via IGW).
+
+**07-security-group.yaml** - Firewall Virtual
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: SecurityGroup
+spec:
+  vpcID: "vpc-xxx"
+  ingressRules:                       # Tráfego de entrada
+    - ipProtocol: tcp
+      fromPort: 80
+      toPort: 80
+      cidrIPv4: 0.0.0.0/0            # Permite HTTP de qualquer origem
+  egressRules:                        # Tráfego de saída
+    - ipProtocol: "-1"                # Todos os protocolos
+      cidrIPv4: 0.0.0.0/0            # Para qualquer destino
+```
+Controla o tráfego de rede permitido para recursos AWS.
+
+**08-alb.yaml** - Application Load Balancer (Layer 7)
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: ALB
+spec:
+  loadBalancerName: helm-test-alb
+  scheme: internet-facing             # Público ou interno
+  subnets: ["subnet-xxx"]             # Múltiplas subnets (HA)
+  ipAddressType: ipv4
+```
+Load balancer para HTTP/HTTPS com roteamento baseado em conteúdo.
+
+**09-nlb.yaml** - Network Load Balancer (Layer 4)
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: NLB
+spec:
+  loadBalancerName: helm-test-nlb
+  scheme: internet-facing
+  ipAddressType: ipv4
+```
+Load balancer para TCP/UDP com alta performance e baixa latência.
+
+#### 🔐 Security (10-13)
+
+**10-iam-role.yaml** - IAM Role
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: IAMRole
+spec:
+  roleName: helm-test-role
+  assumeRolePolicyDocument: |         # Trust policy
+    {
+      "Statement": [{
+        "Effect": "Allow",
+        "Principal": {"Service": "lambda.amazonaws.com"},
+        "Action": "sts:AssumeRole"
+      }]
+    }
+```
+Role IAM para Lambda functions assumirem e acessarem recursos AWS.
+
+**11-kms-key.yaml** - KMS Encryption Key
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: KMSKey
+spec:
+  description: "Helm test KMS key"
+  keyUsage: ENCRYPT_DECRYPT           # Encryption/Decryption
+```
+Chave de criptografia gerenciada para proteger dados sensíveis.
+
+**12-secrets-manager.yaml** - Secrets Manager
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: SecretsManagerSecret
+spec:
+  secretName: helm-test-secret
+  secretString: '{"username":"admin","password":"secret123"}'
+```
+Armazena credenciais, API keys e outros secrets com rotação automática.
+
+**13-certificate.yaml** - ACM SSL/TLS Certificate
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Certificate
+spec:
+  domainName: example.com
+  subjectAlternativeNames:            # SANs
+    - "*.example.com"                 # Wildcard
+  validationMethod: DNS               # DNS ou EMAIL
+```
+Certificado SSL/TLS para HTTPS em ALB, CloudFront, API Gateway.
+
+#### 💾 Storage & Database (14-18)
+
+**14-s3.yaml** - S3 Bucket
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: S3Bucket
+spec:
+  bucketName: helm-test-bucket
+  versioning:
+    enabled: true                     # Versionamento de objetos
+  encryption:
+    algorithm: AES256                 # Encryption at rest
+```
+Object storage para arquivos, backups, data lakes, hosting estático.
+
+**15-ecr-repository.yaml** - Container Registry
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: ECRRepository
+spec:
+  repositoryName: helm-test-repo
+  imageTagMutability: MUTABLE
+  imageScanningConfiguration:
+    scanOnPush: true                  # Scan de vulnerabilidades
+```
+Registry privado para imagens Docker/OCI.
+
+**16-dynamodb.yaml** - DynamoDB NoSQL Table
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: DynamoDBTable
+spec:
+  tableName: helm-test-users
+  hashKey:
+    name: userID                      # Partition key
+    type: S                           # String type
+  billingMode: PAY_PER_REQUEST        # On-demand pricing
+```
+Banco NoSQL serverless com alta performance e escalabilidade automática.
+
+**17-rds-instance.yaml** - RDS Relational Database
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: RDSInstance
+spec:
+  dbInstanceIdentifier: helm-test-db
+  dbInstanceClass: db.t3.micro        # Instance type
+  engine: postgres                    # postgres, mysql, mariadb, etc
+  engineVersion: "14.5"
+  masterUsername: admin
+  masterUserPassword: secret123
+  allocatedStorage: 20                # GB
+  storageType: gp2                    # SSD
+```
+Banco relacional gerenciado (PostgreSQL, MySQL, etc) com backups automáticos.
+
+**18-elasticache.yaml** - ElastiCache Redis/Memcached
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: ElastiCacheCluster
+spec:
+  cacheClusterID: helm-test-cache
+  engine: redis                       # redis ou memcached
+  cacheNodeType: cache.t3.micro
+  numCacheNodes: 1
+```
+Cache in-memory gerenciado para melhorar performance de aplicações.
+
+#### 📨 Messaging (19-20)
+
+**19-sqs.yaml** - SQS Queue
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: SQSQueue
+spec:
+  queueName: helm-test-queue
+  messageRetentionPeriod: 345600      # 4 dias (segundos)
+  visibilityTimeout: 30               # 30 segundos
+```
+Fila de mensagens para comunicação assíncrona entre serviços.
+
+**20-sns.yaml** - SNS Topic
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: SNSTopic
+spec:
+  topicName: helm-test-notifications
+  displayName: "Helm Test Notifications"
+```
+Pub/Sub para notificações (email, SMS, Lambda, SQS, HTTP).
+
+#### ⚙️ Compute (21-24)
+
+**21-ec2-instance.yaml** - EC2 Virtual Machine
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: EC2Instance
+spec:
+  imageID: ami-12345678               # AMI da região
+  instanceType: t2.micro              # Instance type
+  subnetID: "subnet-xxx"
+  securityGroupIDs: []                # Security Groups
+```
+Máquina virtual para workloads gerais, aplicações, servidores.
+
+**22-lambda.yaml** - Lambda Function
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: LambdaFunction
+spec:
+  functionName: helm-test-function
+  runtime: python3.9                  # Runtime environment
+  handler: lambda_function.handler    # Entry point
+  role: arn:aws:iam::xxx:role/lambda-role
+  code:
+    zipFile: <base64>                 # Código em ZIP base64
+  timeout: 30                         # Timeout em segundos
+  memorySize: 128                     # MB
+```
+Função serverless para executar código sem gerenciar servidores.
+
+**23-ecs-cluster.yaml** - ECS Cluster
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: ECSCluster
+spec:
+  clusterName: helm-test-ecs
+```
+Cluster para orquestrar containers Docker com Fargate ou EC2.
+
+**24-eks-cluster.yaml** - EKS Kubernetes Cluster
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: EKSCluster
+spec:
+  clusterName: helm-test-eks
+  version: "1.28"                     # Kubernetes version
+  roleARN: arn:aws:iam::xxx:role/eks-cluster-role
+  resourcesVpcConfig:
+    subnetIDs: ["subnet-xxx"]
+    endpointPublicAccess: true
+    endpointPrivateAccess: false
+```
+Cluster Kubernetes gerenciado pela AWS.
+
+#### 🌐 API & CDN (25-26)
+
+**25-api-gateway.yaml** - API Gateway
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: APIGateway
+spec:
+  name: helm-test-api
+  description: "Helm test API Gateway"
+  protocolType: HTTP                  # HTTP, REST, ou WebSocket
+```
+Gateway para criar, publicar e gerenciar APIs REST/HTTP/WebSocket.
+
+**26-cloudfront.yaml** - CloudFront CDN
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: CloudFront
+spec:
+  comment: "Helm test CloudFront"
+  enabled: true
+  origins:
+    - id: test-origin
+      domainName: example.com
+      customOriginConfig:
+        httpPort: 80
+        httpsPort: 443
+        originProtocolPolicy: http-only
+  defaultCacheBehavior:
+    targetOriginId: test-origin
+    viewerProtocolPolicy: allow-all
+    allowedMethods: [GET, HEAD]
+    cachedMethods: [GET, HEAD]
+    forwardedValues:
+      queryString: false              # Não encaminhar query strings
+      cookies:
+        forward: none                 # Não encaminhar cookies
+```
+CDN global para distribuir conteúdo com baixa latência e cache edge.
+
+### Testar um Serviço Específico
+
+#### 1. VPC (Networking Foundation)
+
+```bash
+# Aplicar VPC
+kubectl apply -f samples/01-vpc.yaml
+
+# Verificar status
+kubectl get vpc production-vpc
+
+# Ver detalhes completos
+kubectl describe vpc production-vpc
+```
+
+#### 2. S3 Bucket (Storage)
+
+```bash
+# Aplicar S3
+kubectl apply -f samples/14-s3.yaml
+
+# Verificar status
+kubectl get s3bucket app-data
+
+# Status deve mostrar:
+# NAME       BUCKET NAME               READY   AGE
+# app-data   mycompany-app-data-prod   True    30s
+```
+
+#### 3. DynamoDB (Database)
+
+```bash
+# Aplicar DynamoDB
+kubectl apply -f samples/16-dynamodb.yaml
+
+# Verificar status
+kubectl get dynamodbtable users-table
+```
+
+### Testar Stack Completa
+
+Para testar múltiplos serviços de uma vez:
+
+```bash
+# Aplicar Networking (VPC, Subnet, IGW, NAT)
+kubectl apply -f samples/01-vpc.yaml
+kubectl apply -f samples/02-subnet.yaml
+kubectl apply -f samples/04-internet-gateway.yaml
+kubectl apply -f samples/05-nat-gateway.yaml
+
+# Aguardar recursos ficarem Ready
+kubectl wait --for=condition=Ready vpc/production-vpc --timeout=60s
+kubectl wait --for=condition=Ready subnet/public-subnet-1a --timeout=60s
+
+# Aplicar Load Balancers
+kubectl apply -f samples/08-alb.yaml
+kubectl apply -f samples/09-nlb.yaml
+
+# Verificar todos os recursos
+kubectl get vpc,subnet,internetgateway,natgateway,alb,nlb
+```
+
+## Ordem Recomendada de Criação
+
+Para criar uma infraestrutura AWS completa, siga esta ordem:
+
+### 1️⃣ Networking Foundation
+```bash
+kubectl apply -f samples/01-vpc.yaml
+kubectl apply -f samples/02-subnet.yaml
+kubectl apply -f samples/03-elastic-ip.yaml
+kubectl apply -f samples/04-internet-gateway.yaml
+kubectl apply -f samples/05-nat-gateway.yaml
+kubectl apply -f samples/06-route-table.yaml
+kubectl apply -f samples/07-security-group.yaml
+```
+
+### 2️⃣ Load Balancing
+```bash
+kubectl apply -f samples/08-alb.yaml
+kubectl apply -f samples/09-nlb.yaml
+```
+
+### 3️⃣ Security
+```bash
+kubectl apply -f samples/10-iam-role.yaml
+kubectl apply -f samples/11-kms-key.yaml
+kubectl apply -f samples/12-secrets-manager.yaml
+kubectl apply -f samples/13-certificate.yaml
+```
+
+### 4️⃣ Storage & Database
+```bash
+kubectl apply -f samples/14-s3.yaml
+kubectl apply -f samples/15-ecr-repository.yaml
+kubectl apply -f samples/16-dynamodb.yaml
+kubectl apply -f samples/17-rds-instance.yaml
+kubectl apply -f samples/18-elasticache.yaml
+```
+
+### 5️⃣ Messaging
+```bash
+kubectl apply -f samples/19-sqs.yaml
+kubectl apply -f samples/20-sns.yaml
+```
+
+### 6️⃣ Compute
+```bash
+kubectl apply -f samples/21-ec2-instance.yaml
+kubectl apply -f samples/22-lambda.yaml
+kubectl apply -f samples/23-ecs-cluster.yaml
+kubectl apply -f samples/24-eks-cluster.yaml
+```
+
+### 7️⃣ API & CDN
+```bash
+kubectl apply -f samples/25-api-gateway.yaml
+kubectl apply -f samples/26-cloudfront.yaml
+```
+
+## Verificar Todos os Recursos
+
+```bash
+# Ver todos os recursos criados
+kubectl get awsprovider,vpc,subnet,elasticip,internetgateway,natgateway,routetable,securitygroup,alb,nlb
+
+# Ver recursos de security
+kubectl get iamrole,kmskey,secretsmanagersecret,certificate
+
+# Ver storage e database
+kubectl get s3bucket,ecrrepository,dynamodbtable,rdsinstance,elasticachecluster
+
+# Ver messaging
+kubectl get sqsqueue,snstopic
+
+# Ver compute
+kubectl get ec2instance,lambdafunction,ecscluster,ekscluster
+
+# Ver API e CDN
+kubectl get apigateway,cloudfront
+```
+
+## Comandos Úteis
+
+### Verificar Status de um Recurso
+
+```bash
+# Ver status Ready
+kubectl get vpc production-vpc -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
+
+# Ver AWS Resource ID
+kubectl get vpc production-vpc -o jsonpath='{.status.vpcId}'
+
+# Ver todos os status conditions
+kubectl get vpc production-vpc -o jsonpath='{.status.conditions}' | jq
+```
+
+### Deletar Recursos
+
+```bash
+# Deletar um recurso específico
+kubectl delete vpc production-vpc
+
+# Deletar todos os recursos de um tipo
+kubectl delete vpc --all
+
+# Deletar todos os samples
+kubectl delete -f samples/
+```
+
+<Warning>
+  Por padrão, deletar um CR também **deleta o recurso AWS**. Use `deletionPolicy: Retain` para manter o recurso AWS.
+</Warning>
+
+## Desinstalar
+
+```bash
+# Deletar todos os recursos criados
+kubectl delete -f samples/
+
+# Desinstalar Helm chart
+helm uninstall infra-operator -n iop-system
+
+# Deletar CRDs (opcional)
+kubectl delete crd $(kubectl get crd | grep aws-infra-operator.runner.codes | awk '{print $1}')
+
+# Deletar namespace
+kubectl delete namespace iop-system
+```
+
+## Próximos Passos
+
+<CardGroup cols={2}>
+  <Card
+    title="Networking"
+    icon="network-wired"
+    href="/services/networking/vpc"
+  >
+    Comece criando VPCs, Subnets e Load Balancers
+  </Card>
+
+  <Card
+    title="Storage"
+    icon="database"
+    href="/services/storage/s3"
+  >
+    Configure S3 Buckets com versionamento e encryption
+  </Card>
+
+  <Card
+    title="Compute"
+    icon="server"
+    href="/services/compute/ec2"
+  >
+    Provisione EC2 instances, Lambda functions e clusters EKS
+  </Card>
+
+  <Card
+    title="Todos os Serviços"
+    icon="list"
+    href="/services/networking/vpc"
+  >
+    Explore os 26 serviços AWS disponíveis
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+### Pods não iniciam
+
+```bash
+# Ver logs do operator
+kubectl logs -n iop-system deploy/infra-operator --tail=100
+
+# Ver eventos
+kubectl get events -n iop-system --sort-by='.lastTimestamp'
+```
+
+### AWSProvider não fica Ready
+
+```bash
+# Verificar credenciais
+kubectl describe awsprovider aws-provider
+
+# Testar credenciais manualmente
+aws sts get-caller-identity --region us-east-1
+```
+
+### Recursos ficam em "NotReady"
+
+```bash
+# Ver motivo
+kubectl describe vpc production-vpc
+
+# Ver events
+kubectl get events --field-selector involvedObject.name=production-vpc
+```
+
+<Tip>
+  Para mais detalhes sobre troubleshooting, consulte a documentação específica de cada serviço.
+</Tip>

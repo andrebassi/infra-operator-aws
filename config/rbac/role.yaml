@@ -1,0 +1,51 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: infra-operator-manager-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - aws-infra-operator.runner.codes
+  resources:
+  - awsproviders
+  - s3buckets
+  - rdsinstances
+  - ec2instances
+  - sqsqueues
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - aws-infra-operator.runner.codes
+  resources:
+  - awsproviders/finalizers
+  - s3buckets/finalizers
+  - rdsinstances/finalizers
+  - ec2instances/finalizers
+  - sqsqueues/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - aws-infra-operator.runner.codes
+  resources:
+  - awsproviders/status
+  - s3buckets/status
+  - rdsinstances/status
+  - ec2instances/status
+  - sqsqueues/status
+  verbs:
+  - get
+  - patch
+  - update

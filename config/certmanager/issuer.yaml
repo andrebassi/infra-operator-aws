@@ -1,0 +1,9 @@
+---
+# Self-signed issuer for development
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: infra-operator-selfsigned-issuer
+  namespace: iop-system
+spec:
+  selfSigned: {}

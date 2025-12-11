@@ -1,0 +1,14 @@
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: VPC
+metadata:
+  name: test-vpc
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  cidrBlock: "10.10.0.0/16"
+  enableDnsSupport: true
+  enableDnsHostnames: true
+  tags:
+    Name: helm-test-vpc
+    Environment: test

@@ -1,0 +1,50 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "infra-operator.fullname" . }}-test-connection"
+  labels:
+    {{- include "infra-operator.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  containers:
+  - name: wget
+    image: busybox:1.36
+    command: ['sh', '-c']
+    args:
+    - |
+      echo "Testing infra-operator connectivity..."
+      echo ""
+      echo "1. Testing health endpoint..."
+      if wget -q -O- --timeout=5 http://{{ include "infra-operator.fullname" . }}:8080/healthz; then
+        echo "✓ Health check passed"
+      else
+        echo "✗ Health check failed"
+        exit 1
+      fi
+      echo ""
+      echo "2. Testing readiness endpoint..."
+      if wget -q -O- --timeout=5 http://{{ include "infra-operator.fullname" . }}:8080/readyz; then
+        echo "✓ Readiness check passed"
+      else
+        echo "✗ Readiness check failed"
+        exit 1
+      fi
+      echo ""
+      {{- if .Values.operator.metrics.enabled }}
+      echo "3. Testing metrics endpoint..."
+      if wget -q -O- --timeout=5 http://{{ include "infra-operator.fullname" . }}:{{ .Values.operator.metrics.port }}/metrics | grep -q "controller_runtime"; then
+        echo "✓ Metrics endpoint responding"
+      else
+        echo "✗ Metrics endpoint not responding"
+        exit 1
+      fi
+      echo ""
+      {{- end }}
+      echo "All tests passed successfully!"
+  restartPolicy: Never
+  {{- with .Values.imagePullSecrets }}
+  imagePullSecrets:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}

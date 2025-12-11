@@ -1,0 +1,169 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: albs.aws-infra-operator.runner.codes
+spec:
+  group: aws-infra-operator.runner.codes
+  names:
+    kind: ALB
+    listKind: ALBList
+    plural: albs
+    shortNames:
+    - alb
+    singular: alb
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.dnsName
+      name: DNS
+      type: string
+    - jsonPath: .status.state
+      name: State
+      type: string
+    - jsonPath: .status.ready
+      name: Ready
+      type: boolean
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: ALB is the Schema for the albs API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: ALBSpec defines the desired state of ALB
+            properties:
+              deletionPolicy:
+                default: Delete
+                description: DeletionPolicy determines what happens when the CR is
+                  deleted
+                enum:
+                - Delete
+                - Retain
+                type: string
+              enableDeletionProtection:
+                description: EnableDeletionProtection enables deletion protection
+                type: boolean
+              enableHttp2:
+                default: true
+                description: EnableHttp2 enables HTTP/2
+                type: boolean
+              enableWafFailOpen:
+                description: EnableWafFailOpen enables WAF fail open
+                type: boolean
+              idleTimeout:
+                default: 60
+                description: IdleTimeout is the idle timeout in seconds
+                format: int32
+                maximum: 4000
+                minimum: 1
+                type: integer
+              ipAddressType:
+                default: ipv4
+                description: IPAddressType defines the IP address type (ipv4, dualstack)
+                enum:
+                - ipv4
+                - dualstack
+                type: string
+              loadBalancerName:
+                description: LoadBalancerName is the name of the Application Load
+                  Balancer
+                maxLength: 32
+                minLength: 1
+                type: string
+              providerRef:
+                description: ProviderRef references the AWSProvider for credentials
+                properties:
+                  name:
+                    description: Name of the AWSProvider
+                    type: string
+                  namespace:
+                    description: Namespace of the AWSProvider (if different from current
+                      namespace)
+                    type: string
+                required:
+                - name
+                type: object
+              scheme:
+                default: internet-facing
+                description: Scheme defines if the ALB is internet-facing or internal
+                enum:
+                - internet-facing
+                - internal
+                type: string
+              securityGroups:
+                description: SecurityGroups is the list of security group IDs
+                items:
+                  type: string
+                minItems: 1
+                type: array
+              subnets:
+                description: |-
+                  Subnets is the list of subnet IDs where the ALB will be deployed
+                  Must be at least 2 subnets in different AZs
+                items:
+                  type: string
+                minItems: 2
+                type: array
+              tags:
+                additionalProperties:
+                  type: string
+                description: Tags are custom tags for the ALB
+                type: object
+            required:
+            - loadBalancerName
+            - providerRef
+            - subnets
+            type: object
+          status:
+            description: ALBStatus defines the observed state of ALB
+            properties:
+              canonicalHostedZoneID:
+                description: CanonicalHostedZoneID is the Route53 hosted zone ID
+                type: string
+              dnsName:
+                description: DNSName is the DNS name of the ALB
+                type: string
+              lastSyncTime:
+                description: LastSyncTime is the last time the resource was synced
+                format: date-time
+                type: string
+              loadBalancerARN:
+                description: LoadBalancerARN is the ARN of the ALB
+                type: string
+              ready:
+                description: Ready indicates if the ALB is ready
+                type: boolean
+              state:
+                description: State is the current state of the ALB
+                type: string
+              vpcID:
+                description: VpcID is the VPC ID where the ALB is deployed
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

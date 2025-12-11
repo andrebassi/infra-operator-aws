@@ -1,0 +1,308 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: s3buckets.aws-infra-operator.runner.codes
+spec:
+  group: aws-infra-operator.runner.codes
+  names:
+    kind: S3Bucket
+    listKind: S3BucketList
+    plural: s3buckets
+    shortNames:
+    - s3
+    singular: s3bucket
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.bucketName
+      name: Bucket
+      type: string
+    - jsonPath: .status.ready
+      name: Ready
+      type: boolean
+    - jsonPath: .status.region
+      name: Region
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: S3Bucket is the Schema for the s3buckets API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: S3BucketSpec defines the desired state of S3Bucket
+            properties:
+              acl:
+                description: ACL is the canned ACL to apply to the bucket
+                enum:
+                - private
+                - public-read
+                - public-read-write
+                - authenticated-read
+                type: string
+              bucketName:
+                description: BucketName is the name of the S3 bucket
+                maxLength: 63
+                minLength: 3
+                type: string
+              corsRules:
+                description: CORS configuration
+                items:
+                  description: CORSRule defines a CORS rule
+                  properties:
+                    allowedHeaders:
+                      description: AllowedHeaders
+                      items:
+                        type: string
+                      type: array
+                    allowedMethods:
+                      description: AllowedMethods
+                      items:
+                        type: string
+                      type: array
+                    allowedOrigins:
+                      description: AllowedOrigins
+                      items:
+                        type: string
+                      type: array
+                    exposeHeaders:
+                      description: ExposeHeaders
+                      items:
+                        type: string
+                      type: array
+                    maxAgeSeconds:
+                      description: MaxAgeSeconds
+                      format: int32
+                      type: integer
+                  required:
+                  - allowedMethods
+                  - allowedOrigins
+                  type: object
+                type: array
+              deletionPolicy:
+                default: Delete
+                description: DeletionPolicy determines what happens to the bucket
+                  when the CR is deleted
+                enum:
+                - Delete
+                - Retain
+                - Orphan
+                type: string
+              encryption:
+                description: Encryption configuration for the bucket
+                properties:
+                  algorithm:
+                    description: Algorithm to use for encryption (AES256 or aws_kms)
+                    enum:
+                    - AES256
+                    - aws_kms
+                    type: string
+                  kmsKeyID:
+                    description: KMSKeyID for KMS encryption
+                    type: string
+                required:
+                - algorithm
+                type: object
+              lifecycleRules:
+                description: LifecycleConfiguration rules
+                items:
+                  description: LifecycleRule defines a lifecycle rule
+                  properties:
+                    enabled:
+                      description: Enabled indicates if the rule is enabled
+                      type: boolean
+                    expiration:
+                      description: Expiration configuration
+                      properties:
+                        days:
+                          description: Days after which objects expire
+                          format: int32
+                          type: integer
+                      required:
+                      - days
+                      type: object
+                    id:
+                      description: ID of the rule
+                      type: string
+                    prefix:
+                      description: Prefix filter
+                      type: string
+                    transitions:
+                      description: Transition rules
+                      items:
+                        description: LifecycleTransition defines transition settings
+                        properties:
+                          days:
+                            description: Days after which to transition
+                            format: int32
+                            type: integer
+                          storageClass:
+                            description: StorageClass to transition to
+                            enum:
+                            - GLACIER
+                            - DEEP_ARCHIVE
+                            - INTELLIGENT_TIERING
+                            - STANDARD_IA
+                            - ONEZONE_IA
+                            type: string
+                        required:
+                        - days
+                        - storageClass
+                        type: object
+                      type: array
+                  required:
+                  - enabled
+                  - id
+                  type: object
+                type: array
+              providerRef:
+                description: ProviderRef references the AWSProvider to use
+                properties:
+                  name:
+                    description: Name of the AWSProvider
+                    type: string
+                  namespace:
+                    description: Namespace of the AWSProvider (if different from current
+                      namespace)
+                    type: string
+                required:
+                - name
+                type: object
+              publicAccessBlock:
+                description: Public access block configuration
+                properties:
+                  blockPublicAcls:
+                    description: BlockPublicAcls
+                    type: boolean
+                  blockPublicPolicy:
+                    description: BlockPublicPolicy
+                    type: boolean
+                  ignorePublicAcls:
+                    description: IgnorePublicAcls
+                    type: boolean
+                  restrictPublicBuckets:
+                    description: RestrictPublicBuckets
+                    type: boolean
+                type: object
+              tags:
+                additionalProperties:
+                  type: string
+                description: Tags for the bucket
+                type: object
+              versioning:
+                description: Versioning enables versioning for the bucket
+                properties:
+                  enabled:
+                    description: Enabled indicates if versioning is enabled
+                    type: boolean
+                required:
+                - enabled
+                type: object
+            required:
+            - bucketName
+            - providerRef
+            type: object
+          status:
+            description: S3BucketStatus defines the observed state of S3Bucket
+            properties:
+              arn:
+                description: ARN of the bucket
+                type: string
+              bucketDomainName:
+                description: BucketDomainName
+                type: string
+              conditions:
+                description: Conditions represent the latest available observations
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              lastSyncTime:
+                description: LastSyncTime
+                format: date-time
+                type: string
+              ready:
+                description: Ready indicates if the bucket is ready
+                type: boolean
+              region:
+                description: Region where the bucket exists
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

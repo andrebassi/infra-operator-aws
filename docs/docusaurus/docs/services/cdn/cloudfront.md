@@ -1,0 +1,436 @@
+---
+title: 'CloudFront'
+description: 'Manage AWS CloudFront CDN distributions with Kubernetes'
+sidebar_position: 1
+---
+
+## Overview
+
+The **CloudFront** resource manages AWS CloudFront distributions for global content delivery.
+
+## Use Cases
+
+- **CDN**: Global content delivery with low latency
+- **Static Assets**: Serve images, CSS, JS worldwide
+- **Video Streaming**: HLS, DASH streaming
+- **API Acceleration**: Speed up API responses
+
+## Basic Example
+
+**Example:**
+
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: CloudFront
+metadata:
+  name: my-distribution
+  namespace: default
+spec:
+  providerRef:
+    name: aws-provider
+
+  # Comment
+  comment: Production CDN
+
+  # Default root object
+  defaultRootObject: index.html
+
+  # Origins
+  origins:
+- id: my-s3-origin
+      domainName: my-bucket.s3.amazonaws.com
+      s3OriginConfig:
+        originAccessIdentity: origin-access-identity/cloudfront/ABCDEFG
+
+  # Default cache behavior
+  defaultCacheBehavior:
+targetOriginId: my-s3-origin
+viewerProtocolPolicy: redirect-to-https
+allowedMethods:
+      - GET
+      - HEAD
+cachedMethods:
+      - GET
+      - HEAD
+compress: true
+
+  # Enable distribution
+  enabled: true
+
+  # Price class
+  priceClass: PriceClass_100
+
+  # Tags
+  tags:
+    Environment: production
+
+  # Deletion policy
+  deletionPolicy: Delete
+```
+
+## Spec Fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `providerRef` | Object | Yes | Reference to AWSProvider |
+| `comment` | String | No | Description |
+| `defaultRootObject` | String | No | Default page (e.g., index.html) |
+| `origins` | Array | Yes | Origin servers (min 1) |
+| `defaultCacheBehavior` | Object | Yes | Default caching rules |
+| `cacheBehaviors` | Array | No | Path-specific caching |
+| `enabled` | Boolean | No | Enable distribution (default: true) |
+| `priceClass` | String | No | Coverage area |
+| `viewerCertificate` | Object | No | SSL/TLS certificate |
+| `aliases` | Array | No | CNAMEs |
+| `tags` | Map | No | Key-value tags |
+| `deletionPolicy` | String | No | `Delete`, `Retain`, or `Orphan` |
+
+## Status Fields
+
+| Field | Description |
+|-------|-------------|
+| `ready` | Boolean indicating if deployed |
+| `distributionId` | CloudFront distribution ID |
+| `domainName` | CloudFront domain (*.cloudfront.net) |
+| `status` | Distribution status (Deployed, InProgress) |
+
+## Origins
+
+### S3 Origin
+
+**Example:**
+
+```yaml
+origins:
+  - id: s3-static-assets
+domainName: my-bucket.s3.us-east-1.amazonaws.com
+originPath: /production
+s3OriginConfig:
+      originAccessIdentity: origin-access-identity/cloudfront/ABCDEFG
+```
+
+### Custom Origin (ALB, API Gateway, EC2)
+
+**Example:**
+
+```yaml
+origins:
+  - id: api-origin
+domainName: api.example.com
+customOriginConfig:
+      httpPort: 80
+      httpsPort: 443
+      originProtocolPolicy: https-only
+```
+
+## Cache Behaviors
+
+### Default Behavior
+
+**Example:**
+
+```yaml
+defaultCacheBehavior:
+  targetOriginId: my-origin
+  viewerProtocolPolicy: redirect-to-https
+  allowedMethods:
+- GET
+- HEAD
+- OPTIONS
+  cachedMethods:
+- GET
+- HEAD
+  compress: true
+  minTTL: 0
+  maxTTL: 31536000
+  defaultTTL: 86400
+```
+
+### Path-Specific Behaviors
+
+**Example:**
+
+```yaml
+cacheBehaviors:
+  - pathPattern: /api/*
+targetOriginId: api-origin
+viewerProtocolPolicy: https-only
+allowedMethods:
+      - GET
+      - HEAD
+      - OPTIONS
+      - PUT
+      - POST
+      - PATCH
+      - DELETE
+minTTL: 0
+maxTTL: 0
+defaultTTL: 0  # No caching for API
+
+  - pathPattern: /images/*
+targetOriginId: s3-origin
+viewerProtocolPolicy: redirect-to-https
+compress: true
+minTTL: 3600
+defaultTTL: 86400
+maxTTL: 31536000  # Long cache for images
+```
+
+## Price Classes
+
+Control geographic distribution and cost:
+
+### PriceClass_All
+All edge locations worldwide:
+```yaml
+priceClass: PriceClass_All
+```
+
+### PriceClass_200
+North America, Europe, Asia, Middle East, Africa:
+```yaml
+priceClass: PriceClass_200
+```
+
+### PriceClass_100 (Cheapest)
+North America and Europe only:
+```yaml
+priceClass: PriceClass_100
+```
+
+## Viewer Certificate
+
+### Default CloudFront Certificate
+
+**Example:**
+
+```yaml
+viewerCertificate:
+  cloudFrontDefaultCertificate: true
+```
+
+Access via: `https://d123xyz.cloudfront.net`
+
+### Custom ACM Certificate
+
+**Example:**
+
+```yaml
+viewerCertificate:
+  acmCertificateArn: arn:aws:acm:us-east-1:123456789012:certificate/abc-123
+  minimumProtocolVersion: TLSv1.2_2021
+  sslSupportMethod: sni-only
+```
+
+**Important**: ACM certificate MUST be in **us-east-1** for CloudFront!
+
+## Custom Domains (Aliases)
+
+**Example:**
+
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: CloudFront
+metadata:
+  name: custom-domain-cdn
+spec:
+  providerRef:
+    name: aws-provider
+  comment: CDN with custom domain
+
+  # Custom domains
+  aliases:
+- cdn.example.com
+- assets.example.com
+
+  # ACM certificate (must be in us-east-1!)
+  viewerCertificate:
+acmCertificateArn: arn:aws:acm:us-east-1:123456789012:certificate/abc-123
+minimumProtocolVersion: TLSv1.2_2021
+sslSupportMethod: sni-only
+
+  origins:
+- id: s3-origin
+      domainName: my-bucket.s3.amazonaws.com
+
+  defaultCacheBehavior:
+targetOriginId: s3-origin
+viewerProtocolPolicy: redirect-to-https
+compress: true
+```
+
+Then create Route53 records:
+```yaml
+# Route53 CNAME (example)
+cdn.example.com -> d123xyz.cloudfront.net
+```
+
+## Complete Example
+
+**Example:**
+
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: CloudFront
+metadata:
+  name: production-cdn
+  namespace: production
+spec:
+  providerRef:
+    name: aws-provider
+
+  comment: Production CDN for static assets and API
+  defaultRootObject: index.html
+  enabled: true
+  priceClass: PriceClass_100
+
+  # Custom domains
+  aliases:
+- cdn.example.com
+
+  # SSL certificate
+  viewerCertificate:
+acmCertificateArn: arn:aws:acm:us-east-1:123456789012:certificate/abc-123
+minimumProtocolVersion: TLSv1.2_2021
+sslSupportMethod: sni-only
+
+  # Origins
+  origins:
+# S3 for static assets
+- id: s3-static
+      domainName: static-assets.s3.amazonaws.com
+      s3OriginConfig:
+        originAccessIdentity: origin-access-identity/cloudfront/ABC123
+
+# API Gateway
+- id: api-gateway
+      domainName: abc123.execute-api.us-east-1.amazonaws.com
+      originPath: /prod
+      customOriginConfig:
+        httpsPort: 443
+        originProtocolPolicy: https-only
+
+  # Default: serve from S3
+  defaultCacheBehavior:
+targetOriginId: s3-static
+viewerProtocolPolicy: redirect-to-https
+allowedMethods:
+      - GET
+      - HEAD
+cachedMethods:
+      - GET
+      - HEAD
+compress: true
+minTTL: 0
+defaultTTL: 86400
+maxTTL: 31536000
+
+  # API: no caching
+  cacheBehaviors:
+- pathPattern: /api/*
+      targetOriginId: api-gateway
+      viewerProtocolPolicy: https-only
+      allowedMethods:
+        - DELETE
+        - GET
+        - HEAD
+        - OPTIONS
+        - PATCH
+        - POST
+        - PUT
+      minTTL: 0
+      defaultTTL: 0
+      maxTTL: 0
+
+  tags:
+    Environment: production
+    ManagedBy: infra-operator
+
+  deletionPolicy: Retain
+```
+
+## Monitoring
+
+Check distribution status:
+
+```bash
+kubectl get cloudfront production-cdn -o yaml
+```
+
+Example output:
+```yaml
+status:
+  ready: true
+  distributionId: E123ABCXYZ
+  domainName: d123xyz.cloudfront.net
+  status: Deployed
+```
+
+Access the CDN:
+```bash
+curl https://d123xyz.cloudfront.net
+# or with custom domain:
+curl https://cdn.example.com
+```
+
+## Best Practices
+
+:::note Best Practices
+
+- **Use HTTPS everywhere** — Redirect HTTP to HTTPS, use TLS 1.2+ only
+- **Configure appropriate TTLs** — Balance freshness vs cache hit ratio
+- **Enable compression** — Gzip/Brotli for text-based content
+- **Use Origin Shield** — Reduces origin load for popular content
+- **Set restrictive CORS headers** — Limit allowed origins for security
+
+:::
+
+## Troubleshooting
+
+### Distribution Stuck in InProgress
+
+CloudFront deployments can take 15-30 minutes:
+```bash
+kubectl get cloudfront my-distribution -w
+```
+
+### 403 Forbidden from S3
+
+Check Origin Access Identity (OAI) and S3 bucket policy:
+```json
+{
+  "Effect": "Allow",
+  "Principal": {
+"AWS": "arn:aws:iam::cloudfront:user/CloudFront Origin Access Identity ABC123"
+  },
+  "Action": "s3:GetObject",
+  "Resource": "arn:aws:s3:::my-bucket/*"
+}
+```
+
+### Certificate Errors
+
+Ensure:
+- ACM certificate is in **us-east-1**
+- Domain names match aliases
+- Certificate is validated
+
+### High Cache Miss Rate
+
+Check:
+- Query string forwarding
+- Cookie forwarding
+- Header forwarding
+- TTL values
+
+## Related Resources
+
+- [S3 Bucket](/services/storage/s3)
+- [ACM Certificate](/services/security/acm)
+- [API Gateway](/services/api/api-gateway)
+
+## AWS Documentation
+
+- [CloudFront Documentation](https://docs.aws.amazon.com/cloudfront/)
+- [Using Custom Domains](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/CNAMEs.html)
+- [Caching Best Practices](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/ConfiguringCaching.html)

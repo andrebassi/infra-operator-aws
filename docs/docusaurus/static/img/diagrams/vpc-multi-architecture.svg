@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 300">
+  <defs>
+    <style>
+      .prod-vpc { fill: #ffebee; stroke: #c62828; stroke-width: 3; }
+      .staging-vpc { fill: #fff3e0; stroke: #ef6c00; stroke-width: 3; }
+      .dev-vpc { fill: #e8f5e9; stroke: #2e7d32; stroke-width: 3; }
+      .prod-app { fill: #ffcdd2; stroke: #e53935; stroke-width: 2; }
+      .staging-app { fill: #ffe0b2; stroke: #fb8c00; stroke-width: 2; }
+      .dev-app { fill: #c8e6c9; stroke: #43a047; stroke-width: 2; }
+      .text-title { font-family: Arial, sans-serif; font-size: 14px; font-weight: bold; fill: #333; }
+      .text-label { font-family: Arial, sans-serif; font-size: 11px; fill: #333; }
+      .text-cidr { font-family: Arial, sans-serif; font-size: 10px; fill: #666; }
+      .peering-line { stroke: #9e9e9e; stroke-width: 2; fill: none; }
+      .peering-text { font-family: Arial, sans-serif; font-size: 9px; fill: #666; }
+    </style>
+  </defs>
+
+  <!-- Production VPC -->
+  <rect class="prod-vpc" x="30" y="50" width="200" height="200" rx="10"/>
+  <text class="text-title" x="75" y="80">VPC Production</text>
+  <text class="text-cidr" x="90" y="100">10.0.0.0/16</text>
+  <rect class="prod-app" x="55" y="120" width="150" height="100" rx="5"/>
+  <text class="text-label" x="85" y="165">Applications</text>
+  <text class="text-label" x="90" y="185">Production</text>
+
+  <!-- Staging VPC -->
+  <rect class="staging-vpc" x="300" y="50" width="200" height="200" rx="10"/>
+  <text class="text-title" x="355" y="80">VPC Staging</text>
+  <text class="text-cidr" x="360" y="100">10.1.0.0/16</text>
+  <rect class="staging-app" x="325" y="120" width="150" height="100" rx="5"/>
+  <text class="text-label" x="355" y="165">Applications</text>
+  <text class="text-label" x="370" y="185">Staging</text>
+
+  <!-- Development VPC -->
+  <rect class="dev-vpc" x="570" y="50" width="200" height="200" rx="10"/>
+  <text class="text-title" x="605" y="80">VPC Development</text>
+  <text class="text-cidr" x="630" y="100">10.2.0.0/16</text>
+  <rect class="dev-app" x="595" y="120" width="150" height="100" rx="5"/>
+  <text class="text-label" x="620" y="165">Applications</text>
+  <text class="text-label" x="620" y="185">Development</text>
+
+  <!-- VPC Peering Lines -->
+  <line class="peering-line" x1="230" y1="150" x2="300" y2="150"/>
+  <text class="peering-text" x="240" y="140">VPC Peering</text>
+
+  <line class="peering-line" x1="500" y1="150" x2="570" y2="150"/>
+  <text class="peering-text" x="510" y="140">VPC Peering</text>
+</svg>

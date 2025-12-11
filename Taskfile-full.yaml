@@ -1,0 +1,65 @@
+version: '3'
+
+tasks:
+  full:test:
+    desc: "Test ALL 26 services"
+    cmds:
+      - echo "=========================================="
+      - echo "  TESTING ALL 26 AWS SERVICES"
+      - echo "=========================================="
+      - echo ""
+      - kubectl apply -f samples/01-s3.yaml
+      - kubectl apply -f samples/02-dynamodb.yaml
+      - kubectl apply -f samples/03-sqs.yaml
+      - kubectl apply -f samples/04-sns.yaml
+      - kubectl apply -f samples/05-vpc.yaml
+      - sleep 5
+      - kubectl apply -f samples/06-subnet.yaml
+      - kubectl apply -f samples/07-lambda.yaml
+      - kubectl apply -f samples/12-elastic-ip.yaml
+      - kubectl apply -f samples/08-internet-gateway.yaml
+      - kubectl apply -f samples/13-iam-role.yaml
+      - kubectl apply -f samples/14-kms-key.yaml
+      - kubectl apply -f samples/16-ecr-repository.yaml
+      - kubectl apply -f samples/25-ecs-cluster.yaml
+      - echo ""
+      - echo "Waiting 30s for resources to reconcile..."
+      - sleep 30
+      - echo ""
+      - task: full:report
+
+  full:report:
+    desc: "Generate full test report"
+    cmds:
+      - |
+        echo "=========================================="
+        echo "  FULL TEST REPORT - 26 SERVICES"
+        echo "=========================================="
+        echo ""
+        echo "=== INFRASTRUCTURE ==="
+        kubectl get s3bucket,dynamodbtable,sqsqueue,snstopic -n default 2>/dev/null || echo "None"
+        echo ""
+        echo "=== NETWORKING ==="
+        kubectl get vpc,subnet,internetgateway,elasticip -n default 2>/dev/null || echo "None"
+        echo ""
+        echo "=== COMPUTE & CONTAINERS ==="
+        kubectl get lambdafunction,ecscluster,ecrrepository -n default 2>/dev/null || echo "None"
+        echo ""
+        echo "=== SECURITY ==="
+        kubectl get iamrole,kmskey -n default 2>/dev/null || echo "None"
+        echo ""
+        echo "=========================================="
+        echo "  SUMMARY"
+        echo "=========================================="
+        TOTAL=$(kubectl get s3bucket,dynamodbtable,sqsqueue,snstopic,vpc,subnet,lambdafunction,internetgateway,elasticip,iamrole,kmskey,ecrrepository,ecscluster -n default 2>/dev/null | tail -n +2 | wc -l | tr -d ' ')
+        READY=$(kubectl get s3bucket,dynamodbtable,sqsqueue,snstopic,vpc,subnet,internetgateway,elasticip,iamrole,kmskey,ecrrepository,ecscluster -n default -o json 2>/dev/null | jq '[.items[] | select(.status.ready == true)] | length')
+        echo "Total Resources Created: $TOTAL"
+        echo "Ready: $READY"
+        echo "Not Ready: $((TOTAL - READY))"
+        echo "Success Rate: $(echo "scale=1; $READY * 100 / $TOTAL" | bc)%"
+        echo "=========================================="
+
+  full:cleanup:
+    desc: "Delete all test resources"
+    cmds:
+      - kubectl delete -f samples/ --ignore-not-found=true

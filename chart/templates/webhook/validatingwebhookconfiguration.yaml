@@ -1,0 +1,55 @@
+{{- if .Values.webhooks.enabled }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: {{ include "infra-operator.fullname" . }}-validating-webhook-configuration
+  labels:
+    {{- include "infra-operator.labels" . | nindent 4 }}
+  {{- if .Values.webhooks.certManager.enabled }}
+  annotations:
+    cert-manager.io/inject-ca-from: {{ include "infra-operator.namespace" . }}/{{ include "infra-operator.webhookCertName" . }}
+  {{- end }}
+webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: {{ include "infra-operator.webhookServiceName" . }}
+      namespace: {{ include "infra-operator.namespace" . }}
+      path: /validate-infra-io-v1alpha1-awsprovider
+  failurePolicy: {{ .Values.webhooks.failurePolicy }}
+  name: vawsprovider.kb.io
+  rules:
+  - apiGroups:
+    - aws-infra-operator.runner.codes
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - awsproviders
+  sideEffects: None
+  timeoutSeconds: {{ .Values.webhooks.timeoutSeconds }}
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: {{ include "infra-operator.webhookServiceName" . }}
+      namespace: {{ include "infra-operator.namespace" . }}
+      path: /validate-infra-io-v1alpha1-s3bucket
+  failurePolicy: {{ .Values.webhooks.failurePolicy }}
+  name: vs3bucket.kb.io
+  rules:
+  - apiGroups:
+    - aws-infra-operator.runner.codes
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - s3buckets
+  sideEffects: None
+  timeoutSeconds: {{ .Values.webhooks.timeoutSeconds }}
+{{- end }}

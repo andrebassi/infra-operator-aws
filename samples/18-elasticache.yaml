@@ -1,0 +1,13 @@
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: ElastiCacheCluster
+metadata:
+  name: test-cache
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  clusterID: helm-test-cache
+  engine: redis
+  engineVersion: "7.0"
+  nodeType: cache.t3.micro
+  numCacheNodes: 1

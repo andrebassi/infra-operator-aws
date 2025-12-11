@@ -1,0 +1,21 @@
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: SecurityGroup
+metadata:
+  name: test-sg
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  groupName: helm-test-sg
+  description: "Helm test security group"
+  vpcID: "vpc-6eb2ede03d16229c9"
+  ingressRules:
+    - ipProtocol: tcp
+      fromPort: 80
+      toPort: 80
+      cidrBlocks:
+        - 0.0.0.0/0
+  egressRules:
+    - ipProtocol: "-1"
+      cidrBlocks:
+        - 0.0.0.0/0

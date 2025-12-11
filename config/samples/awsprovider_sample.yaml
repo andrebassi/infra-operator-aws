@@ -1,0 +1,41 @@
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: AWSProvider
+metadata:
+  name: aws-provider-irsa
+  namespace: default
+spec:
+  region: us-east-1
+  # Using IRSA (IAM Roles for Service Accounts) - recommended for EKS
+  roleARN: arn:aws:iam::123456789012:role/infra-operator-role
+  defaultTags:
+    managed-by: infra-operator
+    environment: production
+---
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: AWSProvider
+metadata:
+  name: aws-provider-keys
+  namespace: default
+spec:
+  region: us-west-2
+  # Using static credentials from a Secret
+  accessKeyIDRef:
+    name: aws-credentials
+    key: access-key-id
+  secretAccessKeyRef:
+    name: aws-credentials
+    key: secret-access-key
+  defaultTags:
+    managed-by: infra-operator
+    environment: development
+---
+# Secret for static credentials (if not using IRSA)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: aws-credentials
+  namespace: default
+type: Opaque
+stringData:
+  access-key-id: AKIAIOSFODNN7EXAMPLE
+  secret-access-key: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY

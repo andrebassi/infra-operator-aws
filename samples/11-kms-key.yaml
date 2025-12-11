@@ -1,0 +1,12 @@
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: KMSKey
+metadata:
+  name: test-kms
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  description: "Helm test KMS key"
+  keyUsage: ENCRYPT_DECRYPT
+  tags:
+    Name: helm-test-kms

@@ -1,0 +1,159 @@
+{{- $validationWarnings := include "infra-operator.validateValues" . -}}
+{{- if $validationWarnings }}
+{{ $validationWarnings }}
+{{- end }}
+
+Obrigado por instalar o {{ .Chart.Name }}!
+
+Sua release se chama {{ .Release.Name }} e foi instalada no namespace {{ include "infra-operator.namespace" . }}.
+
+================================================================================
+  RESUMO DA INSTALAÇÃO
+================================================================================
+
+Versão do Chart:     {{ .Chart.Version }}
+Versão da App:       {{ .Chart.AppVersion }}
+Nome da Release:     {{ .Release.Name }}
+Namespace:           {{ include "infra-operator.namespace" . }}
+Réplicas:            {{ .Values.replicaCount }}
+Eleição de Líder:    {{ .Values.operator.leaderElection.enabled }}
+Webhooks:            {{ .Values.operator.webhooks.enabled }}
+Métricas:            {{ .Values.operator.metrics.enabled }}
+ServiceMonitor:      {{ .Values.prometheus.serviceMonitor.enabled }}
+
+================================================================================
+  CONFIGURAÇÃO AWS
+================================================================================
+
+Região Padrão:       {{ .Values.aws.defaultRegion }}
+IRSA Habilitado:     {{ .Values.aws.irsa.enabled }}
+{{- if .Values.aws.irsa.enabled }}
+ARN do IAM Role:     {{ .Values.aws.irsa.roleARN }}
+{{- end }}
+Credenciais Est.:    {{ .Values.aws.staticCredentials.enabled }}
+
+================================================================================
+  PRÓXIMOS PASSOS
+================================================================================
+
+1. Verificar se o operador está rodando:
+
+   kubectl get deployment {{ include "infra-operator.fullname" . }} -n {{ include "infra-operator.namespace" . }}
+   kubectl get pods -n {{ include "infra-operator.namespace" . }} -l app.kubernetes.io/name={{ include "infra-operator.name" . }}
+
+2. Verificar logs do operador:
+
+   kubectl logs -n {{ include "infra-operator.namespace" . }} -l app.kubernetes.io/name={{ include "infra-operator.name" . }} --tail=50 -f
+
+3. Verificar se os CRDs foram instalados:
+
+   kubectl get crds | grep aws.infra-operator.io
+
+4. Criar um recurso AWSProvider:
+
+   kubectl apply -f - <<EOF
+   apiVersion: aws.infra-operator.io/v1alpha1
+   kind: AWSProvider
+   metadata:
+     name: default
+   spec:
+     region: {{ .Values.aws.defaultRegion }}
+     {{- if .Values.aws.irsa.enabled }}
+     roleARN: {{ .Values.aws.irsa.roleARN }}
+     {{- end }}
+   EOF
+
+5. Aguardar o AWSProvider ficar pronto:
+
+   kubectl get awsprovider default -w
+
+6. Criar seu primeiro recurso AWS (exemplo de VPC):
+
+   kubectl apply -f - <<EOF
+   apiVersion: aws.infra-operator.io/v1alpha1
+   kind: VPC
+   metadata:
+     name: my-vpc
+   spec:
+     providerRef:
+       name: default
+     cidrBlock: "10.0.0.0/16"
+     enableDnsSupport: true
+     enableDnsHostnames: true
+   EOF
+
+7. Verificar status da VPC:
+
+   kubectl get vpc my-vpc -w
+   kubectl describe vpc my-vpc
+
+{{- if .Values.metrics.enabled }}
+
+================================================================================
+  MONITORAMENTO
+================================================================================
+
+Endpoint de métricas: http://{{ include "infra-operator.metricsServiceName" . }}.{{ include "infra-operator.namespace" . }}.svc:{{ .Values.metrics.port }}/metrics
+
+Para acessar métricas localmente:
+
+   kubectl port-forward -n {{ include "infra-operator.namespace" . }} svc/{{ include "infra-operator.metricsServiceName" . }} {{ .Values.metrics.port }}:{{ .Values.metrics.port }}
+
+Depois visite: http://localhost:{{ .Values.metrics.port }}/metrics
+
+{{- if .Values.prometheus.serviceMonitor.enabled }}
+
+ServiceMonitor do Prometheus criado. As métricas serão coletadas automaticamente pelo Prometheus.
+{{- end }}
+{{- end }}
+
+{{- if .Values.webhooks.enabled }}
+
+================================================================================
+  WEBHOOKS
+================================================================================
+
+Webhooks estão habilitados. O operador validará recursos antes de serem criados.
+
+{{- if .Values.webhooks.certManager.enabled }}
+Certificados de webhook gerenciados pelo cert-manager.
+
+Verificar status do certificado:
+
+   kubectl get certificate {{ include "infra-operator.webhookCertName" . }} -n {{ include "infra-operator.namespace" . }}
+{{- else }}
+AVISO: Integração com cert-manager está desabilitada. Você deve fornecer certificados TLS manualmente.
+{{- end }}
+{{- end }}
+
+================================================================================
+  DOCUMENTAÇÃO
+================================================================================
+
+Para mais informações:
+- Documentação do Chart: {{ .Chart.Home }}
+- Recursos Suportados: 19+ serviços AWS (VPC, S3, RDS, Lambda, etc.)
+- Exemplos: https://github.com/your-org/infra-operator/tree/main/config/samples
+
+Para saber mais sobre esta release:
+
+   helm status {{ .Release.Name }} -n {{ include "infra-operator.namespace" . }}
+   helm get all {{ .Release.Name }} -n {{ include "infra-operator.namespace" . }}
+
+================================================================================
+  SOLUÇÃO DE PROBLEMAS
+================================================================================
+
+Se encontrar problemas:
+
+1. Verificar logs do operador em busca de erros
+2. Verificar configuração de credenciais AWS/IRSA
+3. Garantir que as permissões IAM estão corretas
+4. Verificar condições de status do AWSProvider
+5. Verificar conectividade de rede com APIs da AWS
+
+Para suporte, visite: {{ .Chart.Home }}/issues
+
+================================================================================
+
+Bom provisionamento de infraestrutura com Kubernetes!

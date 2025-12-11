@@ -1,0 +1,186 @@
+# Production values for infra-operator
+# Override default values for production IMPLANTAÇÃOs
+
+# High availability with 2 replicas
+replicaCount: 2
+
+image:
+  # Always pull latest tag in production
+  pullPolicy: Always
+  # Use specific version tag
+  tag: "v1.0.0"
+
+# Leader election is required for HA
+leaderElection:
+  enabled: true
+  leaseDuration: "15s"
+  renewDeadline: "10s"
+  retryPeriod: "2s"
+
+# Production-grade resource allocation
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+  requests:
+    cpu: 500m
+    memory: 512Mi
+
+# Spread pods across nodes for HA
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+    - weight: 100
+      podAffinityTerm:
+        labelSelector:
+          matchExpressions:
+          - key: app.kubernetes.io/name
+            operator: In
+            values:
+            - infra-operator
+        topologyKey: kubernetes.io/hostname
+    - weight: 50
+      podAffinityTerm:
+        labelSelector:
+          matchExpressions:
+          - key: app.kubernetes.io/name
+            operator: In
+            values:
+            - infra-operator
+        topologyKey: topology.kubernetes.io/zone
+
+# High priority for operator pods
+priorityClassName: "system-cluster-critical"
+
+# Enable Prometheus MONITORAMENTO
+prometheus:
+  serviceMonitor:
+    enabled: true
+    namespace: monitoring
+    labels:
+      prometheus: kube-prometheus
+    interval: 30s
+    scrapeTimeout: 10s
+
+# Enable WEBHOOKS with cert-manager
+webhooks:
+  enabled: true
+  certManager:
+    enabled: true
+    issuerRef:
+      kind: ClusterIssuer
+      name: letsencrypt-prod
+    duration: 8760h
+    renewBefore: 720h
+  failurePolicy: Fail
+  timeoutSeconds: 10
+
+# Manter CRDs na desinstalação (critical for production)
+crds:
+  keep: true
+  annotations:
+    helm.sh/resource-policy: keep
+
+# Production logging (structured JSON)
+logging:
+  level: info
+  development: false
+  encoder: json
+  stacktraceLevel: error
+
+# AWS IRSA configuration (recommended for EKS)
+aws:
+  defaultRegion: "us-east-1"
+  irsa:
+    enabled: true
+    roleARN: "arn:aws:iam::123456789012:role/infra-operator-role"
+
+# Enable drift detection with conservative settings
+driftDetection:
+  enabled: true
+  checkInterval: "10m"
+  autoHeal: true
+
+# Production update strategy (zero downtime)
+updateStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxUnavailable: 0
+    maxSurge: 1
+
+# ORÇAMENTO DE INTERRUPÇÃO DE POD for HA
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# POLÍTICA DE REDE for security
+networkPolicy:
+  enabled: true
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow metrics scraping from Prometheus
+    - from:
+      - namespaceSelector:
+          matchLabels:
+            name: monitoring
+      ports:
+      - protocol: TCP
+        port: 8080
+    # Allow webhook calls from API server
+    - from:
+      - namespaceSelector: {}
+        podSelector:
+          matchLabels:
+            component: kube-apiserver
+      ports:
+      - protocol: TCP
+        port: 9443
+  egress:
+    # Allow AWS API calls
+    - to:
+      - podSelector: {}
+      ports:
+      - protocol: TCP
+        port: 443
+    # Allow DNS
+    - to:
+      - namespaceSelector:
+          matchLabels:
+            name: kube-system
+        podSelector:
+          matchLabels:
+            k8s-app: kube-dns
+      ports:
+      - protocol: UDP
+        port: 53
+
+# Global tags for cost allocation
+globalTags:
+  managed-by: infra-operator
+  environment: production
+  cost-center: platform
+  terraform: "false"
+  operator-version: "1.0.0"
+
+# CONTA DE SERVIÇO annotations for IRSA
+serviceAccount:
+  create: true
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/infra-operator-role"
+
+# Pod annotations
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8080"
+  prometheus.io/path: "/metrics"
+
+# Graceful shutdown
+terminationGracePeriodSeconds: 30
+
+# Production lifecycle hooks
+lifecycle:
+  preStop:
+    exec:
+      command: ["/bin/sh", "-c", "sleep 15"]

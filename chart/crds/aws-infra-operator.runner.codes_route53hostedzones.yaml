@@ -1,0 +1,141 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: route53hostedzones.aws-infra-operator.runner.codes
+spec:
+  group: aws-infra-operator.runner.codes
+  names:
+    kind: Route53HostedZone
+    listKind: Route53HostedZoneList
+    plural: route53hostedzones
+    shortNames:
+    - r53hz
+    - r53hostedzone
+    singular: route53hostedzone
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.name
+      name: Domain
+      type: string
+    - jsonPath: .status.hostedZoneID
+      name: Hosted Zone ID
+      type: string
+    - jsonPath: .spec.privateZone
+      name: Private
+      type: boolean
+    - jsonPath: .status.ready
+      name: Ready
+      type: boolean
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Route53HostedZone is the Schema for the route53hostedzones API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: Route53HostedZoneSpec defines the desired state of Route53HostedZone
+            properties:
+              comment:
+                description: Comment is a comment about the hosted zone
+                type: string
+              deletionPolicy:
+                default: Delete
+                description: |-
+                  DeletionPolicy determines what happens to the hosted zone when the CR is deleted
+                  Valid values: Delete, Retain
+                enum:
+                - Delete
+                - Retain
+                type: string
+              name:
+                description: Name is the domain name of the hosted zone (e.g., example.com)
+                type: string
+              privateZone:
+                default: false
+                description: PrivateZone indicates if this is a private hosted zone
+                type: boolean
+              providerRef:
+                description: ProviderRef references the AWSProvider for authentication
+                properties:
+                  name:
+                    description: Name of the AWSProvider
+                    type: string
+                  namespace:
+                    description: Namespace of the AWSProvider (if different from current
+                      namespace)
+                    type: string
+                required:
+                - name
+                type: object
+              tags:
+                additionalProperties:
+                  type: string
+                description: Tags to apply to the hosted zone
+                type: object
+              vpcId:
+                description: |-
+                  VPCId is the ID of the VPC to associate with a private hosted zone
+                  Required if PrivateZone is true
+                type: string
+              vpcRegion:
+                description: |-
+                  VPCRegion is the region of the VPC to associate with a private hosted zone
+                  Required if PrivateZone is true
+                type: string
+            required:
+            - name
+            - providerRef
+            type: object
+          status:
+            description: Route53HostedZoneStatus defines the observed state of Route53HostedZone
+            properties:
+              hostedZoneID:
+                description: HostedZoneID is the Route53 hosted zone ID
+                type: string
+              lastSyncTime:
+                description: LastSyncTime is the last time the hosted zone was synced
+                format: date-time
+                type: string
+              nameServers:
+                description: NameServers are the authoritative name servers for the
+                  hosted zone
+                items:
+                  type: string
+                type: array
+              ready:
+                description: Ready indicates if the hosted zone is created
+                type: boolean
+              resourceRecordSetCount:
+                description: ResourceRecordSetCount is the number of resource record
+                  sets in the hosted zone
+                format: int64
+                type: integer
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

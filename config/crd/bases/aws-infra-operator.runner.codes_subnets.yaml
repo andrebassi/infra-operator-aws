@@ -1,0 +1,144 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: subnets.aws-infra-operator.runner.codes
+spec:
+  group: aws-infra-operator.runner.codes
+  names:
+    kind: Subnet
+    listKind: SubnetList
+    plural: subnets
+    shortNames:
+    - subnet
+    singular: subnet
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.subnetID
+      name: Subnet-ID
+      type: string
+    - jsonPath: .status.vpcID
+      name: VPC-ID
+      type: string
+    - jsonPath: .status.cidrBlock
+      name: CIDR
+      type: string
+    - jsonPath: .status.availabilityZone
+      name: AZ
+      type: string
+    - jsonPath: .status.state
+      name: State
+      type: string
+    - jsonPath: .status.ready
+      name: Ready
+      type: boolean
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Subnet is the Schema for the subnets API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: SubnetSpec defines the desired state of Subnet
+            properties:
+              availabilityZone:
+                description: AvailabilityZone for the subnet
+                type: string
+              cidrBlock:
+                description: CidrBlock is the IPv4 CIDR block for the subnet
+                pattern: ^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$
+                type: string
+              deletionPolicy:
+                default: Delete
+                description: DeletionPolicy
+                enum:
+                - Delete
+                - Retain
+                type: string
+              mapPublicIpOnLaunch:
+                description: MapPublicIpOnLaunch indicates whether instances launched
+                  in this subnet receive a public IP
+                type: boolean
+              providerRef:
+                description: ProviderRef references the AWSProvider to use
+                properties:
+                  name:
+                    description: Name of the AWSProvider
+                    type: string
+                  namespace:
+                    description: Namespace of the AWSProvider (if different from current
+                      namespace)
+                    type: string
+                required:
+                - name
+                type: object
+              tags:
+                additionalProperties:
+                  type: string
+                description: Tags to apply to the subnet
+                type: object
+              vpcID:
+                description: VpcID is the ID of the VPC
+                type: string
+            required:
+            - cidrBlock
+            - providerRef
+            - vpcID
+            type: object
+          status:
+            description: SubnetStatus defines the observed state of Subnet
+            properties:
+              availabilityZone:
+                description: AvailabilityZone
+                type: string
+              availableIpAddressCount:
+                description: AvailableIpAddressCount
+                format: int32
+                type: integer
+              cidrBlock:
+                description: CidrBlock is the IPv4 CIDR block
+                type: string
+              lastSyncTime:
+                description: LastSyncTime
+                format: date-time
+                type: string
+              ready:
+                description: Ready indicates if the subnet is ready
+                type: boolean
+              state:
+                description: State is the current state of the subnet
+                type: string
+              subnetID:
+                description: SubnetID is the ID of the subnet
+                type: string
+              vpcID:
+                description: VpcID is the ID of the VPC
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Infra Operator - Kubernetes Operator for AWS Infrastructure</title>
+    <meta name="description" content="Manage AWS infrastructure using Kubernetes CRDs. GitOps-native, declarative, and production-ready.">
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <script>
+        // Detect country by IP using Cloudflare headers and redirect
+        (function() {
+            fetch('/cdn-cgi/trace')
+                .then(function(res) { return res.text(); })
+                .then(function(data) {
+                    var match = data.match(/loc=([A-Z]{2})/);
+                    var country = match ? match[1] : 'US';
+
+                    // Portuguese-speaking countries: Brazil, Portugal, Angola, Mozambique, etc.
+                    var ptCountries = ['BR', 'PT', 'AO', 'MZ', 'CV', 'GW', 'ST', 'TL'];
+
+                    if (ptCountries.indexOf(country) !== -1) {
+                        window.location.replace('pt.html');
+                    } else {
+                        window.location.replace('en.html');
+                    }
+                })
+                .catch(function() {
+                    // Fallback to English on error
+                    window.location.replace('en.html');
+                });
+        })();
+    </script>
+</head>
+<body>
+    <noscript>
+        <meta http-equiv="refresh" content="0; url=en.html">
+    </noscript>
+</body>
+</html>

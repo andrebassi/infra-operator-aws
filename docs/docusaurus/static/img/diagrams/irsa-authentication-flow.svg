@@ -1,0 +1,126 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 450">
+  <defs>
+    <style>
+      .bg { fill: #0f172a; }
+      .k8s-box { fill: #326ce5; stroke: #4a8df8; stroke-width: 2; }
+      .operator-box { fill: #10b981; stroke: #34d399; stroke-width: 2; }
+      .aws-box { fill: #ff9900; stroke: #ffb84d; stroke-width: 2; }
+      .sts-box { fill: #dd6b20; stroke: #ed8936; stroke-width: 2; }
+      .text-title { font-family: 'Segoe UI', Arial, sans-serif; font-size: 11px; font-weight: 600; fill: #fff; }
+      .text-label { font-family: 'Segoe UI', Arial, sans-serif; font-size: 10px; fill: #fff; }
+      .text-small { font-family: 'Segoe UI', Arial, sans-serif; font-size: 9px; fill: #94a3b8; }
+      .text-code { font-family: 'Consolas', monospace; font-size: 8px; fill: #cbd5e1; }
+      .arrow { stroke: #60a5fa; stroke-width: 2; fill: none; marker-end: url(#arrow-blue); }
+      .arrow-aws { stroke: #ffb84d; stroke-width: 2; fill: none; marker-end: url(#arrow-orange); }
+      .arrow-auto { stroke: #34d399; stroke-width: 2; stroke-dasharray: 5,3; fill: none; marker-end: url(#arrow-green); }
+      .step-circle { fill: #3b82f6; stroke: #60a5fa; stroke-width: 2; }
+      .step-num { font-family: 'Segoe UI', Arial, sans-serif; font-size: 9px; font-weight: 700; fill: #fff; }
+    </style>
+    <marker id="arrow-blue" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#60a5fa"/>
+    </marker>
+    <marker id="arrow-orange" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#ffb84d"/>
+    </marker>
+    <marker id="arrow-green" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#34d399"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect class="bg" width="900" height="450" rx="12"/>
+
+  <!-- Title -->
+  <text x="450" y="28" text-anchor="middle" style="font-family: 'Segoe UI', Arial; font-size: 16px; font-weight: 700; fill: #f1f5f9;">IRSA Authentication Flow</text>
+
+  <!-- Step 1: Pod starts -->
+  <rect class="k8s-box" x="50" y="60" width="200" height="60" rx="8"/>
+  <circle class="step-circle" cx="65" cy="90" r="12"/>
+  <text class="step-num" x="65" y="94" text-anchor="middle">1</text>
+  <text class="text-title" x="150" y="85" text-anchor="middle">Operator Pod Starts</text>
+  <text class="text-small" x="150" y="100" text-anchor="middle">With annotated ServiceAccount</text>
+  <text class="text-code" x="150" y="115" text-anchor="middle">eks.amazonaws.com/role-arn</text>
+
+  <!-- Step 2: K8s mounts JWT -->
+  <rect class="k8s-box" x="50" y="150" width="200" height="70" rx="8"/>
+  <circle class="step-circle" cx="65" cy="180" r="12"/>
+  <text class="step-num" x="65" y="184" text-anchor="middle">2</text>
+  <text class="text-title" x="150" y="172" text-anchor="middle">Kubernetes Mounts JWT</text>
+  <text class="text-small" x="150" y="190" text-anchor="middle">Token mounted in pod at:</text>
+  <text class="text-code" x="150" y="205" text-anchor="middle">/var/run/secrets/eks...</text>
+  <text class="text-code" x="150" y="217" text-anchor="middle">.../serviceaccount/token</text>
+
+  <!-- Step 3: Controller builds config -->
+  <rect class="operator-box" x="50" y="250" width="200" height="55" rx="8"/>
+  <circle class="step-circle" cx="65" cy="277" r="12"/>
+  <text class="step-num" x="65" y="281" text-anchor="middle">3</text>
+  <text class="text-title" x="150" y="272" text-anchor="middle">Build aws.Config</text>
+  <text class="text-small" x="150" y="290" text-anchor="middle">AWSProvider controller</text>
+  <text class="text-small" x="150" y="302" text-anchor="middle">with specified roleARN</text>
+
+  <!-- Step 4: AWS SDK automatic -->
+  <rect class="aws-box" x="320" y="150" width="260" height="110" rx="10"/>
+  <circle class="step-circle" cx="335" cy="180" r="12"/>
+  <text class="step-num" x="335" y="184" text-anchor="middle">4</text>
+  <text class="text-title" x="450" y="175" text-anchor="middle">AWS SDK Automatically</text>
+
+  <rect x="335" y="195" width="230" height="55" rx="6" style="fill: #1e293b; stroke: #475569;"/>
+  <text class="text-small" x="450" y="212" text-anchor="middle">• Reads JWT token from filesystem</text>
+  <text class="text-small" x="450" y="227" text-anchor="middle">• Calls STS AssumeRoleWithWebIdentity</text>
+  <text class="text-small" x="450" y="242" text-anchor="middle">• Obtains temporary credentials</text>
+
+  <!-- Step 5: Credentials used -->
+  <rect class="aws-box" x="320" y="290" width="260" height="60" rx="8"/>
+  <circle class="step-circle" cx="335" cy="320" r="12"/>
+  <text class="step-num" x="335" y="324" text-anchor="middle">5</text>
+  <text class="text-title" x="450" y="315" text-anchor="middle">Credentials Used</text>
+  <text class="text-small" x="450" y="333" text-anchor="middle">For AWS API calls</text>
+  <text class="text-small" x="450" y="345" text-anchor="middle">(S3, RDS, EC2, etc)</text>
+
+  <!-- Step 6: Auto-renewal -->
+  <rect class="sts-box" x="320" y="380" width="260" height="50" rx="8"/>
+  <circle class="step-circle" cx="335" cy="405" r="12"/>
+  <text class="step-num" x="335" y="409" text-anchor="middle">6</text>
+  <text class="text-title" x="450" y="402" text-anchor="middle">Auto-Renewal</text>
+  <text class="text-small" x="450" y="420" text-anchor="middle">SDK renews before expiration</text>
+
+  <!-- AWS Services -->
+  <rect class="aws-box" x="650" y="100" width="200" height="220" rx="10" style="fill-opacity: 0.3;"/>
+  <text class="text-title" x="750" y="125" text-anchor="middle">AWS Services</text>
+
+  <rect class="sts-box" x="670" y="145" width="160" height="45" rx="6"/>
+  <text class="text-label" x="750" y="165" text-anchor="middle">STS</text>
+  <text class="text-small" x="750" y="180" text-anchor="middle">AssumeRoleWithWebIdentity</text>
+
+  <rect class="aws-box" x="670" y="205" width="160" height="100" rx="6"/>
+  <text class="text-label" x="750" y="225" text-anchor="middle">Target Services</text>
+  <text class="text-small" x="750" y="245" text-anchor="middle">S3 • RDS • EC2</text>
+  <text class="text-small" x="750" y="260" text-anchor="middle">EKS • Lambda</text>
+  <text class="text-small" x="750" y="275" text-anchor="middle">SQS • SNS</text>
+  <text class="text-small" x="750" y="290" text-anchor="middle">DynamoDB • etc.</text>
+
+  <!-- Arrows -->
+  <path class="arrow" d="M 150 120 L 150 150"/>
+  <path class="arrow" d="M 150 220 L 150 250"/>
+  <path class="arrow" d="M 250 277 L 320 220"/>
+
+  <!-- AWS SDK internal arrow -->
+  <path class="arrow-aws" d="M 580 200 L 670 170"/>
+
+  <!-- Credentials to services -->
+  <path class="arrow-aws" d="M 580 320 L 670 280"/>
+
+  <!-- Auto-renewal loop -->
+  <path class="arrow-auto" d="M 450 380 L 450 350"/>
+  <path class="arrow-auto" d="M 580 405 Q 630 405, 630 350 L 630 320 L 580 320"/>
+
+  <!-- Legend -->
+  <rect x="670" y="350" width="180" height="75" rx="6" style="fill: #1e293b; stroke: #475569;"/>
+  <text class="text-small" x="760" y="368" text-anchor="middle">Legend</text>
+  <line x1="685" y1="385" x2="715" y2="385" stroke="#60a5fa" stroke-width="2"/>
+  <text class="text-small" x="760" y="388">K8s Operations</text>
+  <line x1="685" y1="402" x2="715" y2="402" stroke="#ffb84d" stroke-width="2"/>
+  <text class="text-small" x="760" y="405">AWS API Calls</text>
+  <line x1="685" y1="419" x2="715" y2="419" stroke="#34d399" stroke-width="2" stroke-dasharray="5,3"/>
+  <text class="text-small" x="760" y="422">Auto (SDK)</text>
+</svg>

@@ -1,0 +1,17 @@
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: EKSCluster
+metadata:
+  name: test-eks
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  clusterName: helm-test-eks
+  version: "1.28"
+  roleARN: arn:aws:iam::000000000000:role/eks-cluster-role
+  vpcConfig:
+    subnetIDs:
+      - subnet-7d3f1b2373b43aeaa
+      - subnet-example2
+    endpointPublicAccess: true
+    endpointPrivateAccess: false

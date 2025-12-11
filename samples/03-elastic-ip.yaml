@@ -1,0 +1,11 @@
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: ElasticIP
+metadata:
+  name: test-eip
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  domain: vpc
+  tags:
+    Name: helm-test-eip

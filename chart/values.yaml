@@ -1,0 +1,683 @@
+# Valores padrão para infra-operator
+# Este é um arquivo formatado em YAML.
+# Declare variáveis a serem passadas para seus templates.
+
+#==============================================================================
+# CONFIGURAÇÕES GLOBAIS
+#==============================================================================
+
+global:
+  # Registro de imagem global (overrides image.registry if set)
+  imageRegistry: ""
+  # Secrets globais para pull de imagem
+  imagePullSecrets: []
+  # - name: registry-secret
+
+#==============================================================================
+# CONFIGURAÇÃO DE IMAGEM
+#==============================================================================
+
+image:
+  # Registro de contêiner
+  registry: ghcr.io
+  # Repositório da imagem
+  repository: andrebassi/infra-operator-aws
+  # Política de pull da imagem
+  pullPolicy: IfNotPresent
+  # Sobrescreve a tag da imagem (default is Chart.appVersion)
+  tag: ""
+
+# Secrets de pull para registros privados
+imagePullSecrets: []
+# - name: registry-secret
+
+#==============================================================================
+# NOMENCLATURA
+#==============================================================================
+
+# Sobrescrever nome do chart
+nameOverride: ""
+# Sobrescrever nome completo
+fullnameOverride: ""
+
+#==============================================================================
+# IMPLANTAÇÃO
+#==============================================================================
+
+# Número de réplicas do operador (use 1 para eleição de líder, 2+ para HA)
+replicaCount: 1
+
+# Update strategy for IMPLANTAÇÃO
+updateStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxUnavailable: 0
+    maxSurge: 1
+
+# Número mínimo de segundos durante os quais um Pod recém-criado deve estar pronto
+minReadySeconds: 0
+
+# Número de ReplicaSets antigos a manter
+revisionHistoryLimit: 10
+
+# Período de encerramento gracioso (segundos)
+terminationGracePeriodSeconds: 30
+
+#==============================================================================
+# CONTA DE SERVIÇO
+#==============================================================================
+
+serviceAccount:
+  # Specifies whether a CONTA DE SERVIÇO should be created
+  create: true
+  # Annotations to add to the CONTA DE SERVIÇO
+  annotations: {}
+    # Para AWS IRSA (IAM Roles for CONTA DE SERVIÇOs) no EKS:
+    # eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/infra-operator-role
+    # Para GCP Workload Identity:
+    # iam.gke.io/gcp-SERVIÇO-account: infra-operator@project-id.iam.gSERVIÇOaccount.com
+  # Labels to add to the CONTA DE SERVIÇO
+  labels: {}
+  # The name of the CONTA DE SERVIÇO to use
+  # Se não definido e create for true, um nome é gerado usando o template fullname
+  name: ""
+  # Automatically mount CONTA DE SERVIÇO token
+  automountServiceAccountToken: true
+
+#==============================================================================
+# RBAC (Controle de Acesso Baseado em Funções)
+#==============================================================================
+
+rbac:
+  # Specifies whether RBAC (Controle de Acesso Baseado em Funções) RECURSOS should be created
+  create: true
+  # Usar ClusterRole (true) ou Role com namespace (false)
+  clusterRole: true
+
+#==============================================================================
+# CONTEXTOS DE SEGURANÇA
+#==============================================================================
+
+# Contexto de segurança do Pod
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  fsGroupChangePolicy: "OnRootMismatch"
+  seccompProfile:
+    type: RuntimeDefault
+  supplementalGroups: []
+
+# Contexto de segurança do contêiner
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+    - ALL
+  privileged: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+
+#==============================================================================
+# RECURSOS
+#==============================================================================
+
+# Limites e requisições de recursos for the operator pod
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+#==============================================================================
+# AUTOESCALONAMENTO (HPA)
+#==============================================================================
+
+# Autoescalonador Horizontal de Pods (not recommended for operators with leader election)
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+  # Custom metrics
+  metrics: []
+  # Behavior configuration (Kubernetes 1.23+)
+  behavior: {}
+
+#==============================================================================
+# ORÇAMENTO DE INTERRUPÇÃO DE POD
+#==============================================================================
+
+podDisruptionBudget:
+  enabled: false
+  # Minimum available pods (int or percentage)
+  minAvailable: 1
+  # Maximum unavailable pods (int or percentage)
+  # maxUnavailable: 1
+
+#==============================================================================
+# SCHEDULING
+#==============================================================================
+
+# SELETOR DE NÓS for pod assignment
+nodeSelector: {}
+# Example:
+# nodeSelector:
+#   kubernetes.io/os: linux
+#   node-type: infra
+
+# TOLERÂNCIAS for pod assignment
+tolerations: []
+# Example:
+# TOLERÂNCIAS:
+# - key: "node-role.kubernetes.io/control-plane"
+#   operator: "Exists"
+#   effect: "NoSchedule"
+
+# AFINIDADE for pod assignment
+affinity: {}
+# Example for HA anti-AFINIDADE:
+# AFINIDADE:
+#   podAntiAFINIDADE:
+#     preferredDuringSchedulingIgnoredDuringExecution:
+#     - weight: 100
+#       podAFINIDADETerm:
+#         labelSelector:
+#           matchLabels:
+#             app.kubernetes.io/name: infra-operator
+#         topologyKey: kubernetes.io/hostname
+
+# CLASSE DE PRIORIDADE for operator pods
+priorityClassName: ""
+# Example: system-cluster-critical
+
+# CLASSE DE PRIORIDADE object to create
+priorityClass:
+  create: false
+  name: ""
+  value: 1000000
+  globalDefault: false
+  description: "Priority class for infra-operator"
+  preemptionPolicy: PreemptLowerPriority
+
+# Topology spread constraints (Kubernetes 1.19+)
+topologySpreadConstraints: []
+# Example:
+# topologySpreadConstraints:
+# - maxSkew: 1
+#   topologyKey: topology.kubernetes.io/zone
+#   whenUnsatisfiable: DoNotSchedule
+#   labelSelector:
+#     matchLabels:
+#       app.kubernetes.io/name: infra-operator
+
+#==============================================================================
+# DNS CONFIGURATION
+#==============================================================================
+
+# DNS policy
+dnsPolicy: ClusterFirst
+# DNS config
+dnsConfig: {}
+# Example:
+# dnsConfig:
+#   options:
+#   - name: ndots
+#     value: "1"
+
+# Host network
+hostNetwork: false
+
+#==============================================================================
+# CONFIGURAÇÃO DO OPERADOR
+#==============================================================================
+
+operator:
+  # Leader Election (required for HA with multiple replicas)
+  leaderElection:
+    enabled: true
+    # Namespace for leader election (defaults to operator namespace)
+    namespace: ""
+    # Leader election lease duration
+    leaseDuration: "15s"
+    # Leader election renew deadline
+    renewDeadline: "10s"
+    # Leader election retry period
+    retryPeriod: "2s"
+
+  # Metrics server configuration
+  metrics:
+    enabled: true
+    # Metrics server port
+    port: 8080
+    # Metrics bind address
+    bindAddress: "0.0.0.0:8080"
+
+  # Health probe server configuration
+  health:
+    enabled: true
+    # Health probe port
+    port: 8081
+    # Health probe bind address
+    bindAddress: "0.0.0.0:8081"
+
+  # Webhook server configuration
+  webhooks:
+    enabled: false
+    # Webhook server port
+    port: 9443
+    # Certificate directory
+    certDir: "/tmp/k8s-webhook-server/serving-certs"
+
+  # Reconciliation settings
+  reconciliation:
+    # Maximum concurrent reconciles
+    maxConcurrentReconciles: 10
+    # Default requeue after duration
+    requeueAfter: "5m"
+    # Reconcile timeout
+    timeout: "10m"
+
+#==============================================================================
+# LOGGING
+#==============================================================================
+
+logging:
+  # Log level: debug, info, warn, error
+  level: info
+  # Development mode (human-readable logs)
+  development: false
+  # Log encoding: json or console
+  encoder: json
+  # Enable stacktrace on errors
+  stacktraceLevel: error
+  # Sampling configuration (reduces log volume)
+  sampling:
+    enabled: false
+    initial: 100
+    thereafter: 100
+
+#==============================================================================
+# CONFIGURAÇÃO AWS
+#==============================================================================
+
+aws:
+  # Default AWS region (can be overridden by AWSProvider CRs)
+  defaultRegion: "us-east-1"
+
+  # IRSA (IAM Roles for CONTA DE SERVIÇOs) - Recommended for EKS
+  irsa:
+    enabled: false
+    # ARN of the IAM role to assume
+    roleARN: ""
+    # Example: arn:aws:iam::123456789012:role/infra-operator-role
+
+  # Static credentials (NOT recommended for production)
+  staticCredentials:
+    enabled: false
+    # Name of the secret containing AWS credentials
+    secretName: aws-credentials
+    # Keys in the secret
+    accessKeyIDKey: aws_access_key_id
+    secretAccessKeyKey: aws_secret_access_key
+    sessionTokenKey: aws_session_token
+    # Create the secret from values (NOT recommended - use external secrets)
+    create: false
+    accessKeyID: ""
+    secretAccessKey: ""
+    sessionToken: ""
+
+  # AssumeRole configuration (for cross-account access)
+  assumeRole:
+    enabled: false
+    # Role to assume
+    roleARN: ""
+    # Session name
+    sessionName: infra-operator
+    # External ID (opcional)
+    externalID: ""
+    # Session duration
+    duration: "1h"
+
+  # LocalStack configuration (for development)
+  localstack:
+    enabled: true
+    # LocalStack endpoint
+    endpoint: http://localstack.localstack.svc.cluster.local:4566
+    # Force path style for S3
+    s3ForcePathStyle: true
+
+#==============================================================================
+# DRIFT DETECTION
+#==============================================================================
+
+driftDetection:
+  # Enable drift detection globally
+  enabled: true
+  # Default check interval
+  defaultCheckInterval: "5m"
+  # Automatically fix drift
+  defaultAutoHeal: true
+  # Reconciliation jitter (percentage)
+  jitter: 10
+
+#==============================================================================
+# SERVIÇOS
+#==============================================================================
+
+# Metrics SERVIÇO configuration
+service:
+  # SERVIÇO type
+  type: ClusterIP
+  # SERVIÇO port
+  port: 8080
+  # Target port
+  targetPort: 8080
+  # SERVIÇO annotations
+  annotations: {}
+  # SERVIÇO labels
+  labels: {}
+  # Session AFINIDADE
+  sessionAffinity: None
+
+#==============================================================================
+# PROMETHEUS MONITORAMENTO
+#==============================================================================
+
+prometheus:
+  # SERVIÇOMonitor (requires Prometheus Operator)
+  serviceMonitor:
+    enabled: false
+    # Namespace where SERVIÇOMonitor will be created (defaults to release namespace)
+    namespace: ""
+    # Additional labels for SERVIÇOMonitor (used for Prometheus selector)
+    labels: {}
+      # prometheus: kube-prometheus
+    # Scrape interval
+    interval: 30s
+    # Scrape timeout
+    scrapeTimeout: 10s
+    # Metric relabeling
+    metricRelabelings: []
+    # Relabeling
+    relabelings: []
+    # Honor labels
+    honorLabels: true
+
+  # PrometheusRule (alerting rules)
+  prometheusRule:
+    enabled: false
+    # Namespace where PrometheusRule will be created
+    namespace: ""
+    # Additional labels
+    labels: {}
+    # Alert groups
+    groups: []
+    # Example:
+    # groups:
+    # - name: infra-operator
+    #   interval: 30s
+    #   rules:
+    #   - alert: InfraOperatorDown
+    #     expr: up{job="infra-operator"} == 0
+    #     for: 5m
+    #     labels:
+    #       severity: critical
+    #     annotations:
+    #       summary: "Infra Operator is down"
+
+#==============================================================================
+# WEBHOOKS
+#==============================================================================
+
+webhooks:
+  enabled: false
+  # Webhook SERVIÇO configuration
+  service:
+    type: ClusterIP
+    port: 443
+    targetPort: 9443
+    annotations: {}
+    labels: {}
+
+  # Integração com cert-manager
+  certManager:
+    enabled: false
+    # Create self-signed issuer
+    createIssuer: true
+    # Issuer configuration
+    issuerRef:
+      kind: Issuer
+      name: selfsigned-issuer
+      group: cert-manager.io
+    # Configuração de certificado
+    certificate:
+      # Certificate duration
+      duration: 8760h  # 1 year
+      # Renew before expiration
+      renewBefore: 720h  # 30 days
+      # DNS names
+      dnsNames: []
+      # Additional DNS names (auto-generated based on SERVIÇO)
+      # - infra-operator-webhook-SERVIÇO.NAMESPACE.svc
+      # - infra-operator-webhook-SERVIÇO.NAMESPACE.svc.cluster.local
+
+  # Validating webhook configuration
+  validating:
+    # Failure policy: Fail or Ignore
+    failurePolicy: Fail
+    # Match policy: Exact or Equivalent
+    matchPolicy: Equivalent
+    # Timeout seconds
+    timeoutSeconds: 10
+    # Side effects: None, NoneOnDryRun
+    sideEffects: None
+    # Admission review versions
+    admissionReviewVersions:
+    - v1
+    - v1beta1
+
+#==============================================================================
+# CRDS
+#==============================================================================
+
+crds:
+  # Instalar CRDs as part of chart installation
+  install: true
+  # Keep CRDs when chart is uninstalled (recommended for production)
+  keep: true
+  # Annotations to add to CRDs
+  annotations:
+    helm.sh/resource-policy: keep
+
+#==============================================================================
+# POLÍTICA DE REDE
+#==============================================================================
+
+networkPolicy:
+  enabled: false
+  # Policy types
+  policyTypes:
+  - Ingress
+  - Egress
+  # Ingress rules
+  ingress: []
+  # Example:
+  # ingress:
+  # - from:
+  #   - namespaceSelector:
+  #       matchLabels:
+  #         name: MONITORAMENTO
+  #   ports:
+  #   - protocol: TCP
+  #     port: 8080
+
+  # Egress rules
+  egress: []
+  # Example:
+  # egress:
+  # - to:
+  #   - podSelector: {}
+  #   ports:
+  #   - protocol: TCP
+  #     port: 443
+
+#==============================================================================
+# ADDITIONAL CONFIGURATION
+#==============================================================================
+
+# Dados do ConfigMap
+configMap:
+  # Create ConfigMap
+  create: false
+  # ConfigMap name (defaults to fullname)
+  name: ""
+  # Data
+  data: {}
+  # Binary data
+  binaryData: {}
+
+# Additional environment variables
+env: []
+# Example:
+# env:
+# - name: AWS_SDK_LOAD_CONFIG
+#   value: "1"
+# - name: HTTP_PROXY
+#   value: "http://proxy.example.com:8080"
+
+# Additional environment variables from secrets/configmaps
+envFrom: []
+# Example:
+# envFrom:
+# - secretRef:
+#     name: aws-credentials
+# - configMapRef:
+#     name: aws-config
+
+# Volumes extras
+extraVolumes: []
+# Example:
+# extraVolumes:
+# - name: aws-config
+#   configMap:
+#     name: aws-config
+
+# Montagens de volume extras
+extraVolumeMounts: []
+# Example:
+# extraVolumeMounts:
+# - name: aws-config
+#   mountPath: /etc/aws
+#   readOnly: true
+
+# Additional init containers
+initContainers: []
+# Example:
+# initContainers:
+# - name: init-aws-config
+#   image: busybox:1.35
+#   command: ['sh', '-c', 'echo "Initializing..."']
+
+# Additional sidecar containers
+sidecars: []
+# Example:
+# sidecars:
+# - name: log-forwarder
+#   image: fluent/fluent-bit:1.9
+#   volumeMounts:
+#   - name: varlog
+#     mountPath: /var/log
+
+#==============================================================================
+# LIFECYCLE & PROBES
+#==============================================================================
+
+# Hooks de ciclo de vida
+lifecycle: {}
+# Example:
+# lifecycle:
+#   preStop:
+#     exec:
+#       command: ["/bin/sh", "-c", "sleep 15"]
+
+# Sonda de vivacidade configuration
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: 8081
+    scheme: HTTP
+  initialDelaySeconds: 15
+  periodSeconds: 20
+  timeoutSeconds: 5
+  successThreshold: 1
+  failureThreshold: 3
+
+# Sonda de prontidão configuration
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: 8081
+    scheme: HTTP
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 5
+  successThreshold: 1
+  failureThreshold: 3
+
+# Sonda de inicialização (Kubernetes 1.20+)
+startupProbe:
+  httpGet:
+    path: /healthz
+    port: 8081
+    scheme: HTTP
+  initialDelaySeconds: 0
+  periodSeconds: 5
+  timeoutSeconds: 5
+  successThreshold: 1
+  failureThreshold: 30
+
+#==============================================================================
+# ANNOTATIONS & LABELS
+#==============================================================================
+
+# Pod annotations
+podAnnotations: {}
+# Example:
+# podAnnotations:
+#   prometheus.io/scrape: "true"
+#   prometheus.io/port: "8080"
+
+# Pod labels
+podLabels: {}
+
+# IMPLANTAÇÃO annotations
+deploymentAnnotations: {}
+
+# SERVIÇO annotations
+serviceAnnotations: {}
+
+# Custom labels for all RECURSOS
+commonLabels: {}
+
+# Common annotations for all RECURSOS
+commonAnnotations: {}
+
+#==============================================================================
+# GLOBAL TAGS FOR AWS RECURSOS
+#==============================================================================
+
+globalTags: {}
+# Example:
+# globalTags:
+#   managed-by: infra-operator
+#   environment: production
+#   team: platform
+#   cost-center: engineering
+#   project: infrastructure

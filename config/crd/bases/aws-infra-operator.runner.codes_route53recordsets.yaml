@@ -1,0 +1,206 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: route53recordsets.aws-infra-operator.runner.codes
+spec:
+  group: aws-infra-operator.runner.codes
+  names:
+    kind: Route53RecordSet
+    listKind: Route53RecordSetList
+    plural: route53recordsets
+    shortNames:
+    - r53rs
+    - r53record
+    singular: route53recordset
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.name
+      name: Name
+      type: string
+    - jsonPath: .spec.type
+      name: Type
+      type: string
+    - jsonPath: .spec.ttl
+      name: TTL
+      type: integer
+    - jsonPath: .status.ready
+      name: Ready
+      type: boolean
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Route53RecordSet is the Schema for the route53recordsets API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: Route53RecordSetSpec defines the desired state of Route53RecordSet
+            properties:
+              aliasTarget:
+                description: |-
+                  AliasTarget defines alias target for alias records
+                  Mutually exclusive with ResourceRecords and TTL
+                properties:
+                  dnsName:
+                    description: DNSName is the DNS name of the target
+                    type: string
+                  evaluateTargetHealth:
+                    default: false
+                    description: EvaluateTargetHealth determines if Route53 health
+                      checks the target
+                    type: boolean
+                  hostedZoneID:
+                    description: HostedZoneID is the hosted zone ID of the target
+                    type: string
+                required:
+                - dnsName
+                - hostedZoneID
+                type: object
+              deletionPolicy:
+                default: Delete
+                description: |-
+                  DeletionPolicy determines what happens to the record when the CR is deleted
+                  Valid values: Delete, Retain
+                enum:
+                - Delete
+                - Retain
+                type: string
+              failover:
+                description: Failover is the failover type (PRIMARY or SECONDARY)
+                enum:
+                - PRIMARY
+                - SECONDARY
+                type: string
+              geoLocation:
+                description: GeoLocation is the geographic location for geolocation
+                  routing
+                properties:
+                  continentCode:
+                    description: ContinentCode is the two-letter continent code
+                    type: string
+                  countryCode:
+                    description: CountryCode is the two-letter country code
+                    type: string
+                  subdivisionCode:
+                    description: SubdivisionCode is the subdivision code (state/province)
+                    type: string
+                type: object
+              healthCheckID:
+                description: HealthCheckID is the health check to associate with the
+                  record
+                type: string
+              hostedZoneID:
+                description: HostedZoneID is the ID of the hosted zone containing
+                  the record
+                type: string
+              multiValueAnswer:
+                description: MultiValueAnswer enables multivalue answer routing
+                type: boolean
+              name:
+                description: Name is the DNS name of the record (e.g., www.example.com)
+                type: string
+              providerRef:
+                description: ProviderRef references the AWSProvider for authentication
+                properties:
+                  name:
+                    description: Name of the AWSProvider
+                    type: string
+                  namespace:
+                    description: Namespace of the AWSProvider (if different from current
+                      namespace)
+                    type: string
+                required:
+                - name
+                type: object
+              region:
+                description: Region is the AWS region for latency-based routing
+                type: string
+              resourceRecords:
+                description: |-
+                  ResourceRecords are the resource record values
+                  Required for non-alias records
+                items:
+                  type: string
+                type: array
+              setIdentifier:
+                description: SetIdentifier is the unique identifier for weighted,
+                  latency, geolocation, or failover routing
+                type: string
+              ttl:
+                description: |-
+                  TTL is the time-to-live in seconds
+                  Required for non-alias records
+                format: int64
+                type: integer
+              type:
+                description: Type is the DNS record type (A, AAAA, CNAME, MX, TXT,
+                  etc.)
+                enum:
+                - A
+                - AAAA
+                - CNAME
+                - MX
+                - TXT
+                - PTR
+                - SRV
+                - SPF
+                - NS
+                - SOA
+                - CAA
+                - NAPTR
+                type: string
+              weight:
+                description: Weight is the weight for weighted routing policy (0-255)
+                format: int64
+                type: integer
+            required:
+            - hostedZoneID
+            - name
+            - providerRef
+            - type
+            type: object
+          status:
+            description: Route53RecordSetStatus defines the observed state of Route53RecordSet
+            properties:
+              changeID:
+                description: ChangeID is the ID of the last change batch
+                type: string
+              changeStatus:
+                description: ChangeStatus is the status of the last change (PENDING
+                  or INSYNC)
+                type: string
+              lastSyncTime:
+                description: LastSyncTime is the last time the record set was synced
+                format: date-time
+                type: string
+              ready:
+                description: Ready indicates if the record set is created
+                type: boolean
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

@@ -1,0 +1,1428 @@
+---
+title: 'Lambda Function - Computação Serverless'
+description: 'Execute código sem gerenciar servidores com funções serverless'
+icon: 'bolt'
+---
+
+Execute código sem gerenciar servidores. AWS Lambda é um serviço de computação sem servidor que executa seu código em resposta a eventos e gerencia automaticamente os recursos de computação necessários.
+
+## Pré-requisito: Configuração do AWSProvider
+
+Antes de criar qualquer recurso AWS, você precisa configurar um **AWSProvider** que gerencia as credenciais e autenticação com a AWS.
+
+<CodeGroup>
+```yaml IRSA
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: AWSProvider
+metadata:
+  name: production-aws
+  namespace: default
+spec:
+  region: us-east-1
+  roleARN: arn:aws:iam::123456789012:role/infra-operator-role
+  defaultTags:
+    managed-by: infra-operator
+    environment: production
+```
+
+```yaml Credenciais Estáticas
+apiVersion: v1
+kind: Secret
+metadata:
+  name: aws-credentials
+  namespace: default
+type: Opaque
+stringData:
+  access-key-id: test
+  secret-access-key: test
+---
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: AWSProvider
+metadata:
+  name: localstack
+  namespace: default
+spec:
+  region: us-east-1
+  accessKeyIDRef:
+    name: aws-credentials
+    key: access-key-id
+  secretAccessKeyRef:
+    name: aws-credentials
+    key: secret-access-key
+  defaultTags:
+    managed-by: infra-operator
+    environment: test
+```
+
+```bash Verificar Status
+kubectl get awsprovider
+kubectl describe awsprovider production-aws
+```
+</CodeGroup>
+
+<Warning>
+  Para produção, sempre use **IRSA** (IAM Roles for Service Accounts) ao invés de credenciais estáticas.
+</Warning>
+
+### Criar IAM Role para IRSA
+
+Para usar IRSA em produção, você precisa criar uma IAM Role com as permissões necessárias:
+
+<CodeGroup>
+```json Trust Policy (trust-policy.json)
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::123456789012:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B71EXAMPLE"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "oidc.eks.us-east-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B71EXAMPLE:sub": "system:serviceaccount:infra-operator-system:infra-operator-controller-manager",
+          "oidc.eks.us-east-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B71EXAMPLE:aud": "sts.amazonaws.com"
+        }
+      }
+    }
+  ]
+}
+```
+
+```json IAM Policy - Lambda (lambda-policy.json)
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "lambda:CreateFunction",
+        "lambda:DeleteFunction",
+        "lambda:GetFunction",
+        "lambda:GetFunctionConfiguration",
+        "lambda:UpdateFunctionCode",
+        "lambda:UpdateFunctionConfiguration",
+        "lambda:TagResource",
+        "lambda:UntagResource",
+        "lambda:ListTags",
+        "lambda:PublishVersion",
+        "lambda:CreateAlias",
+        "lambda:UpdateAlias"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "iam:PassRole"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": "lambda.amazonaws.com"
+        }
+      }
+    }
+  ]
+}
+```
+
+```bash Criar Role com AWS CLI
+# 1. Obter OIDC Provider do cluster EKS
+export CLUSTER_NAME=my-cluster
+export AWS_REGION=us-east-1
+export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+
+OIDC_PROVIDER=$(aws eks describe-cluster \
+  --name $CLUSTER_NAME \
+  --region $AWS_REGION \
+  --query "cluster.identity.oidc.issuer" \
+  --output text | sed -e "s/^https:\/\///")
+
+# 2. Atualizar trust-policy.json com valores corretos
+cat > trust-policy.json <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::${AWS_ACCOUNT_ID}:oidc-provider/${OIDC_PROVIDER}"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "${OIDC_PROVIDER}:sub": "system:serviceaccount:infra-operator-system:infra-operator-controller-manager",
+          "${OIDC_PROVIDER}:aud": "sts.amazonaws.com"
+        }
+      }
+    }
+  ]
+}
+EOF
+
+# 3. Criar IAM Role
+aws iam create-role \
+  --role-name infra-operator-lambda-role \
+  --assume-role-policy-document file://trust-policy.json \
+  --description "Role for Infra Operator Lambda management"
+
+# 4. Criar e anexar policy
+aws iam put-role-policy \
+  --role-name infra-operator-lambda-role \
+  --policy-name LambdaManagement \
+  --policy-document file://lambda-policy.json
+
+# 5. Obter ARN da Role
+aws iam get-role \
+  --role-name infra-operator-lambda-role \
+  --query 'Role.Arn' \
+  --output text
+```
+
+```bash Anotar ServiceAccount do Operator
+# Adicionar annotation ao ServiceAccount do operator
+kubectl annotate serviceaccount infra-operator-controller-manager \
+  -n infra-operator-system \
+  eks.amazonaws.com/role-arn=arn:aws:iam::123456789012:role/infra-operator-lambda-role
+```
+</CodeGroup>
+
+<Note>
+  Substitua `123456789012` pelo seu AWS Account ID e `EXAMPLED539D4633E53DE1B71EXAMPLE` pelo ID do seu OIDC provider.
+</Note>
+
+## Visão Geral
+
+AWS Lambda permite que você execute código sem provisionar ou gerenciar servidores. Você apenas carrega seu código e Lambda executa com alta disponibilidade. Você paga apenas pelo tempo de computação que usa - não há cobrança quando o código não está executando.
+
+**Características:**
+- Executa código sem gerenciar servidores (serverless)
+- Escalabilidade automática e instantânea
+- Paga apenas pelo tempo de execução (100ms de granularidade)
+- Múltiplas linguagens: Python, Node.js, Java, Go, C#, Ruby
+- Integração nativa com serviços AWS (S3, DynamoDB, SQS, API Gateway)
+- VPC support para acessar bancos de dados privados
+- Layers para compartilhar código e bibliotecas
+- Dead Letter Queues (DLQ) para falhas
+- Reserved Concurrency para controle
+- X-Ray tracing
+
+## Início Rápido
+
+<CodeGroup>
+```yaml Lambda Python
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: LambdaFunction
+metadata:
+  name: e2e-hello-function
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  functionName: e2e-hello-world
+  runtime: python3.12
+  handler: index.handler
+  role: arn:aws:iam::000000000000:role/lambda-role
+  timeout: 30
+  memorySize: 256
+  code:
+    zipFile: UEsDBBQAAAAIAHRLdluO3E/MUgAAAFMAAAAIABwAaW5kZXgucHlVVAkAAzusIWk7rCFpdXgLAAEE9QEAAAQAAAAAS0lNU8hIzEvJSS3SSC1LzSvRUUjOzytJrSjRtOJSAIKi1JLSojyFavXiksSS0mLn/JRUdSsFIwMDHQX1pPyUSiBH3SM1JydfITy/KCdFvZYLAFBLAQIeAxQAAAAIAHRLdluO3E/MUgAAAFMAAAAIABgAAAAAAAEAAACkgQAAAABpbmRleC5weVVUBQADO6whaXV4CwABBPUBAAAEAAAAAFBLBQYAAAAAAQABAE4AAACUAAAAAAA=
+  environment:
+    variables:
+      ENV: test
+      LOG_LEVEL: debug
+  tags:
+    Environment: test
+    ManagedBy: infra-operator
+  deletionPolicy: Delete
+```
+
+```yaml Lambda Node.js
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: LambdaFunction
+metadata:
+  name: e2e-nodejs-function
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  functionName: e2e-nodejs-handler
+  runtime: nodejs20.x
+  handler: index.handler
+  role: arn:aws:iam::000000000000:role/lambda-role
+  timeout: 10
+  memorySize: 128
+  code:
+    zipFile: UEsDBBQAAAAIANxLdlvWeVkhYQAAAGQAAAAIABwAaW5kZXguanNVVAkAAwCtIWkArSFpdXgLAAEE9QEAAAQAAAAADckxCoNAEEbh3lP8nRGCiKVBmzSpvMPqTgiy7sjMrCiSu7uPr3t0bCym9c9FH0jQw+kZZzxop2gV+gFXgZyQJYm4oOYs6Zs9dWib5omJ/dmh/FAIjK/wijHPetES/1eR3VBLAQIeAxQAAAAIANxLdlvWeVkhYQAAAGQAAAAIABgAAAAAAAEAAACkgQAAAABpbmRleC5qc1VUBQADAK0haXV4CwABBPUBAAAEAAAAAFBLBQYAAAAAAQABAE4AAACjAAAAAAA=
+  tags:
+    Environment: test
+    Runtime: nodejs
+  deletionPolicy: Delete
+```
+
+```yaml Lambda de Produção
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: LambdaFunction
+metadata:
+  name: process-orders
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  # Nome da função na AWS
+  functionName: process-orders
+
+  # Runtime e handler
+  runtime: python3.11
+  handler: index.handler
+
+  # Código inline (simples)
+  code:
+    zipFile: |
+      import json
+      def handler(event, context):
+          return {
+              'statusCode': 200,
+              'body': json.dumps('Hello World!')
+          }
+
+  # IAM Role para execução
+  role: arn:aws:iam::123456789012:role/lambda-execution-role
+
+  # Configuração
+  memorySize: 256
+  timeout: 30
+
+  # Variáveis de ambiente
+  environment:
+    variables:
+      ENV: production
+      DB_HOST: db.example.com
+
+  tags:
+    Environment: production
+    Application: orders-processor
+```
+
+```bash Aplicar
+kubectl apply -f lambda.yaml
+```
+
+```bash Verificar Status
+kubectl get lambdafunctions
+kubectl describe lambdafunction e2e-hello-function
+```
+</CodeGroup>
+
+## Referência de Configuração
+
+### Campos Obrigatórios
+
+<ParamField path="spec.providerRef" type="object" required>
+  Referência ao recurso AWSProvider para autenticação
+
+  <Expandable title="properties">
+    <ParamField path="name" type="string" required>
+      Nome do recurso AWSProvider
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="spec.functionName" type="string" required>
+  Nome único da função Lambda na AWS (entre 1 e 64 caracteres)
+
+  ```yaml
+  functionName: my-processor-function
+  ```
+</ParamField>
+
+<ParamField path="spec.runtime" type="string" required>
+  Ambiente de execução da função
+
+  **Opções:**
+  - `python3.11`, `python3.10`, `python3.9`
+  - `nodejs20.x`, `nodejs18.x`
+  - `go1.x`
+  - `ruby3.3`, `ruby3.2`
+  - `java21`, `java17`, `java11`
+  - `dotnet8`, `dotnet6`
+  - `provided.al2` (runtimes customizados)
+</ParamField>
+
+<ParamField path="spec.handler" type="string" required>
+  Função que Lambda invoca no arquivo de código
+
+  **Formato:** `filename.function-name`
+
+  ```yaml
+  handler: index.handler      # Python/Node: arquivo index, função handler
+  handler: main.main          # Go: package main, função main
+  handler: Main               # Java: classe Main com método handler
+  ```
+</ParamField>
+
+<ParamField path="spec.code" type="object" required>
+  Código da função Lambda
+
+  <Expandable title="properties">
+    <ParamField path="zipFile" type="string">
+      Código inline (para funções pequenas)
+      ```yaml
+      code:
+        zipFile: |
+          def handler(event, context):
+              return 'Hello'
+      ```
+    </ParamField>
+
+    <ParamField path="s3Bucket" type="string">
+      Nome do bucket S3 contendo o código
+    </ParamField>
+
+    <ParamField path="s3Key" type="string">
+      Chave do arquivo ZIP no bucket S3
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="spec.role" type="string" required>
+  ARN da IAM Role que Lambda assume durante execução
+
+  ```yaml
+  role: arn:aws:iam::123456789012:role/lambda-execution-role
+  ```
+
+  A role DEVE ter política de confiança para Lambda:
+  ```json
+  {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": {
+          "Service": "lambda.amazonaws.com"
+        },
+        "Action": "sts:AssumeRole"
+      }
+    ]
+  }
+  ```
+</ParamField>
+
+### Campos Opcionais
+
+<ParamField path="spec.memorySize" type="integer" default="128">
+  Memória alocada para a função (MB)
+
+  **Intervalo:** 128 - 10.240 MB (em incrementos de 1 MB)
+
+  ```yaml
+  memorySize: 512  # 512 MB de RAM
+  ```
+
+  **Nota:** CPU é alocada proporcionalmente à memória:
+  - 128 MB = 0.08 vCPU
+  - 1.769 MB = 1 vCPU completa
+  - 10.240 MB = 6 vCPU
+</ParamField>
+
+<ParamField path="spec.timeout" type="integer" default="3">
+  Tempo máximo de execução em segundos
+
+  **Intervalo:** 3 - 900 segundos (15 minutos)
+
+  ```yaml
+  timeout: 60  # 1 minuto
+  ```
+</ParamField>
+
+<ParamField path="spec.environment" type="object">
+  Variáveis de ambiente acessíveis ao código
+
+  <Expandable title="properties">
+    <ParamField path="variables" type="object">
+      Pares chave-valor de variáveis de ambiente
+
+      ```yaml
+      environment:
+        variables:
+          DATABASE_URL: postgres://user:pass@db.example.com/mydb
+          ENVIRONMENT: production
+          DEBUG: "false"
+      ```
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="spec.vpcConfig" type="object">
+  Configuração para executar Lambda dentro de uma VPC
+
+  <Expandable title="properties">
+    <ParamField path="securityGroupIds" type="array of strings">
+      Lista de IDs de security groups
+      ```yaml
+      vpcConfig:
+        securityGroupIds:
+          - sg-0123456789abcdef0
+      ```
+    </ParamField>
+
+    <ParamField path="subnetIds" type="array of strings">
+      Lista de IDs de subnets
+      ```yaml
+      vpcConfig:
+        subnetIds:
+          - subnet-0123456789abcdef0
+          - subnet-0123456789abcdef1
+      ```
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="spec.layers" type="array of strings">
+  ARNs de Lambda Layers contendo bibliotecas compartilhadas
+
+  ```yaml
+  layers:
+    - arn:aws:lambda:us-east-1:123456789012:layer:my-dependencies:1
+    - arn:aws:lambda:us-east-1:123456789012:layer:custom-utilities:2
+  ```
+</ParamField>
+
+<ParamField path="spec.deadLetterConfig" type="object">
+  Configuração de Dead Letter Queue para falhas
+
+  <Expandable title="properties">
+    <ParamField path="targetArn" type="string">
+      ARN de fila SQS ou tópico SNS para mensagens que falharam
+
+      ```yaml
+      deadLetterConfig:
+        targetArn: arn:aws:sqs:us-east-1:123456789012:my-dlq
+      ```
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="spec.ephemeralStorage" type="integer" default="512">
+  Espaço temporário disponível em `/tmp` (MB)
+
+  **Intervalo:** 512 - 10.240 MB
+
+  ```yaml
+  ephemeralStorage: 1024  # 1 GB em /tmp
+  ```
+</ParamField>
+
+<ParamField path="spec.reservedConcurrentExecutions" type="integer">
+  Número máximo de execuções simultâneas
+
+  ```yaml
+  reservedConcurrentExecutions: 100
+  ```
+
+  Útil para controlar custos ou evitar throttling de dependências.
+</ParamField>
+
+<ParamField path="spec.architectures" type="array of strings" default="[x86_64]">
+  Arquitetura do processador
+
+  **Opções:**
+  - `x86_64` (padrão)
+  - `arm64` (AWS Graviton, mais barato)
+
+  ```yaml
+  architectures:
+    - arm64
+  ```
+</ParamField>
+
+<ParamField path="spec.tags" type="object">
+  Pares chave-valor para marcar a função
+
+  ```yaml
+  tags:
+    Application: order-processor
+    Team: backend
+    Environment: production
+    CostCenter: engineering
+  ```
+</ParamField>
+
+<ParamField path="spec.deletionPolicy" type="string" default="Delete">
+  O que acontece com a função quando o CR é deletado
+
+  **Opções:**
+  - `Delete`: Função é deletada da AWS
+  - `Retain`: Função permanece na AWS mas não gerenciada
+</ParamField>
+
+## Campos de Status
+
+Após a função ser criada, os seguintes campos de status são populados:
+
+<ResponseField name="status.functionArn" type="string">
+  ARN completo da função Lambda
+
+  ```
+  arn:aws:lambda:us-east-1:123456789012:function:my-function
+  ```
+</ResponseField>
+
+<ResponseField name="status.functionName" type="string">
+  Nome da função Lambda
+</ResponseField>
+
+<ResponseField name="status.version" type="string">
+  Versão publicada da função (ex: `$LATEST`, `1`, `2`, etc)
+</ResponseField>
+
+<ResponseField name="status.state" type="string">
+  Estado atual da função
+  - `Pending`: Função está sendo criada
+  - `Active`: Função está ativa e pronta para uso
+  - `Inactive`: Função foi desativada
+  - `Failed`: Falha na criação
+</ResponseField>
+
+<ResponseField name="status.lastModified" type="string">
+  Timestamp da última modificação
+
+  ```
+  2025-11-22T20:30:15Z
+  ```
+</ResponseField>
+
+<ResponseField name="status.codeSize" type="integer">
+  Tamanho do código em bytes
+</ResponseField>
+
+<ResponseField name="status.memorySize" type="integer">
+  Memória alocada em MB
+</ResponseField>
+
+<ResponseField name="status.timeout" type="integer">
+  Timeout em segundos
+</ResponseField>
+
+<ResponseField name="status.ready" type="boolean">
+  `true` quando a função está ativa e pronta para invocação
+</ResponseField>
+
+<ResponseField name="status.lastSyncTime" type="string">
+  Timestamp da última sincronização com a AWS
+</ResponseField>
+
+## Exemplos
+
+### Lambda Básica - Hello World
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: LambdaFunction
+metadata:
+  name: hello-world
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  functionName: hello-world
+
+  runtime: python3.11
+  handler: index.handler
+
+  code:
+    zipFile: |
+      import json
+      def handler(event, context):
+          return {
+              'statusCode': 200,
+              'body': json.dumps({
+                  'message': 'Hello, World!',
+                  'input': event
+              })
+          }
+
+  role: arn:aws:iam::123456789012:role/lambda-execution-role
+  memorySize: 128
+  timeout: 10
+
+  tags:
+    Environment: production
+    Type: demo
+```
+
+### Lambda com Trigger S3
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: LambdaFunction
+metadata:
+  name: s3-image-processor
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  functionName: s3-image-processor
+
+  runtime: python3.11
+  handler: processor.handler
+
+  code:
+    s3Bucket: my-lambda-code-bucket
+    s3Key: image-processor.zip
+
+  role: arn:aws:iam::123456789012:role/lambda-s3-execution-role
+
+  memorySize: 512
+  timeout: 60
+  ephemeralStorage: 2048
+
+  environment:
+    variables:
+      OUTPUT_BUCKET: processed-images
+      LOG_LEVEL: INFO
+
+  tags:
+    Application: image-processing
+    Environment: production
+```
+
+### Lambda com VPC e Acesso a Banco de Dados
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: LambdaFunction
+metadata:
+  name: db-query-function
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  functionName: db-query-function
+
+  runtime: python3.11
+  handler: database.query_handler
+
+  code:
+    zipFile: |
+      import json
+      import psycopg2
+      import os
+
+      def query_handler(event, context):
+          conn = psycopg2.connect(
+              host=os.getenv('DB_HOST'),
+              user=os.getenv('DB_USER'),
+              password=os.getenv('DB_PASSWORD'),
+              database=os.getenv('DB_NAME')
+          )
+          cursor = conn.cursor()
+          cursor.execute('SELECT * FROM users LIMIT 10')
+          users = cursor.fetchall()
+          cursor.close()
+          conn.close()
+
+          return {
+              'statusCode': 200,
+              'body': json.dumps({'users': users})
+          }
+
+  role: arn:aws:iam::123456789012:role/lambda-db-role
+
+  memorySize: 256
+  timeout: 30
+
+  # Lambda roda dentro da VPC
+  vpcConfig:
+    securityGroupIds:
+      - sg-0123456789abcdef0
+    subnetIds:
+      - subnet-0123456789abcdef0
+      - subnet-0123456789abcdef1
+
+  environment:
+    variables:
+      DB_HOST: postgres.internal.example.com
+      DB_NAME: production
+      DB_USER: lambda_user
+      # DB_PASSWORD via Secrets Manager, não variáveis de ambiente!
+
+  tags:
+    Application: user-service
+    Environment: production
+```
+
+### Lambda com Layers e Dependências
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: LambdaFunction
+metadata:
+  name: api-handler
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  functionName: api-handler
+
+  runtime: python3.11
+  handler: api.handler
+
+  code:
+    zipFile: |
+      import json
+      import requests  # Vem do layer
+      from utilities import format_response  # Vem do layer
+
+      def handler(event, context):
+          response = requests.get('https://api.example.com/data')
+          formatted = format_response(response.json())
+          return formatted
+
+  # Layers contêm bibliotecas compartilhadas
+  layers:
+    - arn:aws:lambda:us-east-1:123456789012:layer:python-dependencies:2
+    - arn:aws:lambda:us-east-1:123456789012:layer:custom-utilities:1
+
+  role: arn:aws:iam::123456789012:role/lambda-api-role
+
+  memorySize: 256
+  timeout: 15
+
+  tags:
+    Application: api
+    Environment: production
+```
+
+### Lambda com Dead Letter Queue (DLQ)
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: LambdaFunction
+metadata:
+  name: async-processor
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  functionName: async-processor
+
+  runtime: python3.11
+  handler: processor.handler
+
+  code:
+    zipFile: |
+      import json
+      def handler(event, context):
+          # Processa mensagens da fila
+          try:
+              process_record(event)
+              return {'statusCode': 200}
+          except Exception as e:
+              # Se falhar, a mensagem vai para DLQ
+              print(f"Error: {str(e)}")
+              raise
+
+  # Fila para mensagens que falharam
+  deadLetterConfig:
+    targetArn: arn:aws:sqs:us-east-1:123456789012:failed-messages
+
+  role: arn:aws:iam::123456789012:role/lambda-processor-role
+
+  memorySize: 512
+  timeout: 300  # 5 minutos para processamento pesado
+
+  reservedConcurrentExecutions: 10  # Máximo 10 execuções simultâneas
+
+  environment:
+    variables:
+      QUEUE_NAME: async-jobs
+      RETRY_COUNT: "3"
+
+  tags:
+    Application: async-processing
+    Environment: production
+```
+
+### Lambda com Reserved Concurrency
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: LambdaFunction
+metadata:
+  name: critical-handler
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  functionName: critical-handler
+
+  runtime: nodejs20.x
+  handler: index.handler
+
+  code:
+    zipFile: |
+      exports.handler = async (event) => {
+          return {
+              statusCode: 200,
+              body: JSON.stringify('Critical function executed')
+          };
+      };
+
+  role: arn:aws:iam::123456789012:role/lambda-critical-role
+
+  memorySize: 1024
+  timeout: 60
+
+  # Reserved Concurrency garante capacidade
+  reservedConcurrentExecutions: 100
+
+  # ARM é mais barato que x86
+  architectures:
+    - arm64
+
+  tags:
+    Application: critical-service
+    CostOptimization: arm64-graviton
+    Environment: production
+```
+
+## Verificação
+
+### Verificar Status da Função
+
+```bash
+# Listar todas as funções Lambda
+kubectl get lambdafunctions
+
+# Obter informações detalhadas
+kubectl get lambdafunction db-query-function -o yaml
+
+# Acompanhar criação em tempo real
+kubectl get lambdafunction my-function -w
+```
+
+### Verificar na AWS
+
+<Tabs>
+  <Tab title="AWS CLI">
+    ```bash
+    # Listar funções Lambda
+    aws lambda list-functions
+
+    # Obter detalhes da função
+    aws lambda get-function \
+      --function-name my-function \
+      --query 'Configuration' \
+      --output json
+
+    # Invocar função para teste
+    aws lambda invoke \
+      --function-name my-function \
+      --payload '{"key": "value"}' \
+      response.json && cat response.json
+
+    # Ver logs recentes
+    aws logs tail /aws/lambda/my-function --follow
+    ```
+  </Tab>
+
+  <Tab title="LocalStack">
+    ```bash
+    # Para testes com LocalStack
+    export AWS_ENDPOINT_URL=http://localhost:4566
+
+    aws lambda list-functions
+
+    # Invocar função
+    aws lambda invoke \
+      --function-name my-function \
+      --payload '{"test": true}' \
+      response.json
+
+    # Ver logs
+    aws logs tail /aws/lambda/my-function --follow
+    ```
+  </Tab>
+</Tabs>
+
+### Saída Esperada
+
+```yaml
+status:
+  functionArn: arn:aws:lambda:us-east-1:123456789012:function:my-function
+  functionName: my-function
+  version: $LATEST
+  state: Active
+  lastModified: "2025-11-22T20:30:15.000+0000"
+  codeSize: 2048
+  memorySize: 256
+  timeout: 30
+  ready: true
+  lastSyncTime: "2025-11-22T20:30:15Z"
+```
+
+## Resolução de Problemas
+
+<AccordionGroup>
+  <Accordion title="Timeout errors - Função demora demais">
+    **Sintomas:** Funções invocadas terminam com erro de timeout
+
+    **Causas comuns:**
+    1. Timeout configurado muito curto para a operação
+    2. Conexões de banco de dados lentas
+    3. Cold start (primeira invocação)
+    4. Processamento pesado sem parallelização
+    5. Latência de rede em VPC
+
+    **Soluções:**
+    ```bash
+    # Aumentar timeout (máximo 900 segundos)
+    kubectl patch lambdafunction my-function --type merge \
+      -p '{"spec":{"timeout":60}}'
+
+    # Aumentar memória (melhora CPU)
+    kubectl patch lambdafunction my-function --type merge \
+      -p '{"spec":{"memorySize":512}}'
+
+    # Usar Reserved Concurrency para evitar cold starts
+    kubectl patch lambdafunction my-function --type merge \
+      -p '{"spec":{"reservedConcurrentExecutions":10}}'
+
+    # Ver logs para identificar gargalo
+    aws logs tail /aws/lambda/my-function --follow
+    ```
+  </Accordion>
+
+  <Accordion title="Out of memory - Função sem memória suficiente">
+    **Sintomas:** Erro `Process exited before completing request` ou `Memory exceeded`
+
+    **Causas comuns:**
+    1. Memória alocada insuficiente
+    2. Memory leak no código
+    3. Dependências grandes não otimizadas
+    4. Cache não limitado na função
+
+    **Soluções:**
+    ```bash
+    # Aumentar memória alocada
+    kubectl patch lambdafunction my-function --type merge \
+      -p '{"spec":{"memorySize":1024}}'
+
+    # Otimizar dependências - remover bibliotecas não usadas
+    # Usar layer para dependências
+    # Usar Lambda Layers para código compartilhado
+    ```
+  </Accordion>
+
+  <Accordion title="Cold starts - Primeira invocação lenta">
+    **Sintomas:** Primeira invocação é lenta, invocações subsequentes rápidas
+
+    **Causas:**
+    1. Lambda precisa criar novo container
+    2. Importações/inicializações pesadas
+    3. Conexões de banco de dados na inicialização
+
+    **Soluções:**
+    ```bash
+    # Usar Reserved Concurrency para manter containers ativos
+    kubectl patch lambdafunction my-function --type merge \
+      -p '{"spec":{"reservedConcurrentExecutions":10}}'
+
+    # Provisioned Concurrency (custo adicional mas sem frio)
+    # Não disponível neste CR, configure na AWS Console se necessário
+
+    # Código otimizado - initialize fora do handler
+    # ✅ BOM - Inicializa uma vez quando container é criado
+    import db
+    connection = db.connect()  # Uma vez
+
+    def handler(event, context):
+        return connection.query()  # Reutiliza conexão
+
+    # ❌ RUIM - Inicializa a cada invocação
+    def handler(event, context):
+        connection = db.connect()  # Toda invocação!
+        return connection.query()
+    ```
+  </Accordion>
+
+  <Accordion title="VPC networking issues - Conexão lenta em VPC">
+    **Sintomas:** Lambda em VPC tem latência alta ou não consegue conectar ao banco
+
+    **Causas comuns:**
+    1. Security group não permite conexões de saída
+    2. NAT Gateway não configurado para subnets privadas
+    3. Route tables não configuradas corretamente
+    4. DNS não resolve dentro da VPC
+
+    **Soluções:**
+    ```bash
+    # Verificar security group permite tráfego de saída
+    aws ec2 describe-security-groups --group-ids sg-xxx
+
+    # Deve ter règle de saída (egress) como:
+    # Protocol: TCP, Port: 5432, CIDR: 10.0.0.0/16
+
+    # Verificar ENI criado corretamente
+    aws ec2 describe-network-interfaces \
+      --filters "Name=description,Values=*lambda*"
+
+    # Aumentar timeout - VPC pode ser mais lenta
+    kubectl patch lambdafunction my-function --type merge \
+      -p '{"spec":{"timeout":60}}'
+
+    # Aumentar ephemeral storage se usar /tmp
+    kubectl patch lambdafunction my-function --type merge \
+      -p '{"spec":{"ephemeralStorage":1024}}'
+    ```
+  </Accordion>
+
+  <Accordion title="Permission denied - Erro de IAM Role">
+    **Sintomas:** `User: arn:aws:iam::xxx is not authorized` ou `AccessDenied`
+
+    **Causas:**
+    1. Role ARN incorreto
+    2. Role não tem permissões necessárias
+    3. Role não permite Lambda assumir
+
+    **Soluções:**
+    ```bash
+    # Verificar role existe
+    aws iam get-role --role-name lambda-execution-role
+
+    # Verificar trust policy (assume role)
+    aws iam get-role --role-name lambda-execution-role \
+      --query 'Role.AssumeRolePolicyDocument'
+
+    # DEVE conter:
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "lambda.amazonaws.com"
+      },
+      "Action": "sts:AssumeRole"
+    }
+
+    # Adicionar permissões necessárias
+    # Para S3:
+    aws iam attach-role-policy \
+      --role-name lambda-execution-role \
+      --policy-arn arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+
+    # Para DynamoDB:
+    aws iam attach-role-policy \
+      --role-name lambda-execution-role \
+      --policy-arn arn:aws:iam::aws:policy/AmazonDynamoDBReadOnlyAccess
+
+    # Verificar logs do Lambda para erro específico
+    aws logs tail /aws/lambda/my-function --follow
+    ```
+  </Accordion>
+
+  <Accordion title="DLQ não recebe mensagens - Dead Letter Queue não funciona">
+    **Sintomas:** Função falha mas mensagem não chega em DLQ
+
+    **Causas:**
+    1. DLQ Target ARN incorreto
+    2. Role não tem permissão para enviar a DLQ
+    3. DLQ (SQS/SNS) não existe
+
+    **Soluções:**
+    ```bash
+    # Verificar DLQ existe
+    aws sqs get-queue-attributes \
+      --queue-url https://queue.amazonaws.com/123456789012/failed-queue \
+      --attribute-names All
+
+    # Role DEVE ter permissão SendMessage
+    aws iam get-role-policy \
+      --role-name lambda-role \
+      --policy-name inline-policy
+
+    # Deve conter:
+    {
+      "Effect": "Allow",
+      "Action": [
+        "sqs:SendMessage",
+        "sns:Publish"
+      ],
+      "Resource": "arn:aws:sqs:*:*:*"
+    }
+
+    # Atualizar DLQ
+    kubectl patch lambdafunction my-function --type merge -p \
+      '{"spec":{"deadLetterConfig":{"targetArn":"arn:aws:sqs:us-east-1:123456789012:new-dlq"}}}'
+    ```
+  </Accordion>
+
+  <Accordion title="Funções não aparecem no kubectl">
+    **Sintomas:** Criou função AWS diretamente, não aparece em kubectl
+
+    **Causa:** Apenas funções criadas via infra-operator aparecem em kubectl
+
+    **Soluções:**
+    1. Criar Lambda via CR do infra-operator
+    2. Ou importar função existente via Kubernetes secret/configmap
+    3. Ou gerenciar via AWS console e integrar com aplicação
+
+    ```bash
+    # Verificar funções no cluster
+    kubectl get lambdafunctions
+
+    # Se vazia, nenhuma foi criada via operator
+    # Crie uma nova via CR
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Melhores Práticas
+
+<CardGroup cols={2}>
+  <Card title="Right-size Memory" icon="server">
+    - Memória afeta CPU proporcionalmente
+    - Mais memória = melhor performance, mas custo maior
+    - 1.769 MB = 1 vCPU completo
+    - Teste para encontrar tamanho ideal
+    - Use CloudWatch para monitorar MaxMemoryUsed
+  </Card>
+
+  <Card title="Use Layers para Dependências" icon="layer-group">
+    - Layers contêm bibliotecas compartilhadas
+    - Reduzem tamanho do código da função
+    - Compartilhar entre múltiplas funções
+    - Versionamento facilitado de dependências
+    - Melhor organização do código
+  </Card>
+
+  <Card title="Dead Letter Queues para Falhas" icon="circle-notch">
+    - Configure DLQ para processar falhas
+    - Evita perda de dados
+    - Implementar retry logic
+    - Monitorar DLQ para falhas
+    - Alertar quando DLQ recebe mensagens
+  </Card>
+
+  <Card title="X-Ray para Tracing" icon="star">
+    - Ative X-Ray para rastrear requisições
+    - Identifique gargalos
+    - Visualize dependências
+    - Trace através de múltiplos serviços
+    - Role DEVE ter permissão xray:*
+  </Card>
+
+  <Card title="Environment Variables para Config" icon="gear">
+    - Use variáveis de ambiente para configuração
+    - Não hardcode valores
+    - Diferentes valores por environment
+    - Fácil mudar sem redeploy
+    - Evita recompilação
+  </Card>
+
+  <Card title="Secrets Manager para Credenciais" icon="lock">
+    - NUNCA use variáveis de ambiente para secrets
+    - Use AWS Secrets Manager
+    - Rotação automática de credenciais
+    - Auditoria de acesso
+    - Integração com Lambda automática
+  </Card>
+
+  <Card title="Concurrency Control" icon="traffic-light">
+    - Reserved Concurrency garante capacidade
+    - Protege dependências de throttling
+    - Limita custos
+    - Máximo padrão é 1000
+    - Aumente conforme necessário
+  </Card>
+
+  <Card title="Versioning e Aliases" icon="code-branch">
+    - Publique versões para produção
+    - Use Aliases para staging/prod
+    - Rollback fácil entre versões
+    - Traffic shifting gradual
+    - Canary deployments
+  </Card>
+
+  <Card title="Código Testável e Pequeno" icon="minimize-2">
+    - Mantenha funções focadas
+    - Separar lógica de entrada (handler)
+    - Fácil de testar unitariamente
+    - Menores são mais rápidas
+    - Reduz duração e custos
+  </Card>
+</CardGroup>
+
+## Padrões de Uso Comuns
+
+### API REST com API Gateway + Lambda
+
+```yaml
+# Lambda processa requisições HTTP
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: LambdaFunction
+metadata:
+  name: rest-api-handler
+spec:
+  functionName: rest-api-handler
+  runtime: nodejs20.x
+  handler: api.handler
+  code:
+    zipFile: |
+      exports.handler = async (event) => {
+          return {
+              statusCode: 200,
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({
+                  path: event.path,
+                  method: event.httpMethod,
+                  body: JSON.parse(event.body || '{}')
+              })
+          };
+      };
+  role: arn:aws:iam::123456789012:role/lambda-api-role
+```
+
+### S3 Event Processing
+
+```yaml
+# Lambda processa upload de arquivos S3
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: LambdaFunction
+metadata:
+  name: s3-processor
+spec:
+  functionName: s3-processor
+  runtime: python3.11
+  handler: processor.handler
+  code:
+    zipFile: |
+      import json
+      import boto3
+
+      s3 = boto3.client('s3')
+
+      def handler(event, context):
+          # event contém notificação S3
+          bucket = event['Records'][0]['s3']['bucket']['name']
+          key = event['Records'][0]['s3']['object']['key']
+
+          obj = s3.get_object(Bucket=bucket, Key=key)
+          content = obj['Body'].read()
+
+          # Processar conteúdo
+          return {'statusCode': 200}
+  role: arn:aws:iam::123456789012:role/lambda-s3-role
+```
+
+### SQS Consumer Pattern
+
+```yaml
+# Lambda processa mensagens de fila SQS
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: LambdaFunction
+metadata:
+  name: sqs-consumer
+spec:
+  functionName: sqs-consumer
+  runtime: python3.11
+  handler: consumer.handler
+  timeout: 300
+  code:
+    zipFile: |
+      def handler(event, context):
+          for record in event['Records']:
+              message_id = record['messageId']
+              body = record['body']
+
+              try:
+                  process_message(body)
+              except Exception as e:
+                  # Falha - move para DLQ
+                  raise e
+  deadLetterConfig:
+    targetArn: arn:aws:sqs:us-east-1:123456789012:dlq
+  role: arn:aws:iam::123456789012:role/lambda-sqs-role
+```
+
+### Stream Processing (DynamoDB/Kinesis)
+
+```yaml
+# Lambda processa itens modificados em DynamoDB
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: LambdaFunction
+metadata:
+  name: stream-processor
+spec:
+  functionName: stream-processor
+  runtime: python3.11
+  handler: stream.handler
+  code:
+    zipFile: |
+      def handler(event, context):
+          for record in event['Records']:
+              # record contém: eventName, eventSource, dynamodb
+              event_type = record['eventName']  # INSERT, MODIFY, REMOVE
+              new_image = record['dynamodb'].get('NewImage', {})
+
+              if event_type == 'INSERT':
+                  process_new_item(new_image)
+              elif event_type == 'MODIFY':
+                  update_analytics(new_image)
+  role: arn:aws:iam::123456789012:role/lambda-dynamodb-role
+```
+
+## Recursos Relacionados
+
+<CardGroup cols={2}>
+  <Card
+    title="API Gateway"
+    icon="network-wired"
+    href="/services/compute/api-gateway"
+  >
+    Crie APIs REST/WebSocket que triguerem Lambda
+  </Card>
+
+  <Card
+    title="S3"
+    icon="bucket"
+    href="/services/storage/s3"
+  >
+    Configure eventos S3 para disparar Lambda
+  </Card>
+
+  <Card
+    title="SQS"
+    icon="square"
+    href="/services/messaging/sqs"
+  >
+    Fila de mensagens para integração com Lambda
+  </Card>
+
+  <Card
+    title="DynamoDB"
+    icon="database"
+    href="/services/database/dynamodb"
+  >
+    Banco de dados NoSQL com streams para Lambda
+  </Card>
+
+  <Card
+    title="IAM Role"
+    icon="shield"
+    href="/services/security/iam"
+  >
+    Configure permissões de execução da função
+  </Card>
+</CardGroup>
+
+---

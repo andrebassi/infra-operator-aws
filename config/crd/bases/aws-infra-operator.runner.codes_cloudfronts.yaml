@@ -1,0 +1,306 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: cloudfronts.aws-infra-operator.runner.codes
+spec:
+  group: aws-infra-operator.runner.codes
+  names:
+    kind: CloudFront
+    listKind: CloudFrontList
+    plural: cloudfronts
+    singular: cloudfront
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.distributionId
+      name: Distribution ID
+      type: string
+    - jsonPath: .status.domainName
+      name: Domain
+      type: string
+    - jsonPath: .status.status
+      name: Status
+      type: string
+    - jsonPath: .status.ready
+      name: Ready
+      type: boolean
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: CloudFront is the Schema for the cloudfronts API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: CloudFrontSpec defines the desired state of CloudFront
+            properties:
+              aliases:
+                description: Aliases are alternate domain names (CNAMEs)
+                items:
+                  type: string
+                type: array
+              cacheBehaviors:
+                description: CacheBehaviors defines path-specific cache behaviors
+                items:
+                  description: CloudFrontCacheBehavior defines caching behavior
+                  properties:
+                    allowedMethods:
+                      description: AllowedMethods lists allowed HTTP methods
+                      items:
+                        type: string
+                      type: array
+                    cachedMethods:
+                      description: CachedMethods lists methods to cache
+                      items:
+                        type: string
+                      type: array
+                    compress:
+                      description: Compress enables automatic compression
+                      type: boolean
+                    defaultTTL:
+                      description: DefaultTTL is default cache time in seconds
+                      format: int64
+                      type: integer
+                    maxTTL:
+                      description: MaxTTL is maximum cache time in seconds
+                      format: int64
+                      type: integer
+                    minTTL:
+                      description: MinTTL is minimum cache time in seconds
+                      format: int64
+                      type: integer
+                    pathPattern:
+                      description: PathPattern for this cache behavior (omit for default)
+                      type: string
+                    targetOriginId:
+                      description: TargetOriginID references an origin
+                      type: string
+                    viewerProtocolPolicy:
+                      default: redirect-to-https
+                      description: ViewerProtocolPolicy determines viewer connection
+                        policy
+                      enum:
+                      - allow-all
+                      - redirect-to-https
+                      - https-only
+                      type: string
+                  required:
+                  - targetOriginId
+                  type: object
+                type: array
+              comment:
+                description: Comment describes the distribution
+                type: string
+              defaultCacheBehavior:
+                description: DefaultCacheBehavior defines cache behavior for all paths
+                properties:
+                  allowedMethods:
+                    description: AllowedMethods lists allowed HTTP methods
+                    items:
+                      type: string
+                    type: array
+                  cachedMethods:
+                    description: CachedMethods lists methods to cache
+                    items:
+                      type: string
+                    type: array
+                  compress:
+                    description: Compress enables automatic compression
+                    type: boolean
+                  defaultTTL:
+                    description: DefaultTTL is default cache time in seconds
+                    format: int64
+                    type: integer
+                  maxTTL:
+                    description: MaxTTL is maximum cache time in seconds
+                    format: int64
+                    type: integer
+                  minTTL:
+                    description: MinTTL is minimum cache time in seconds
+                    format: int64
+                    type: integer
+                  pathPattern:
+                    description: PathPattern for this cache behavior (omit for default)
+                    type: string
+                  targetOriginId:
+                    description: TargetOriginID references an origin
+                    type: string
+                  viewerProtocolPolicy:
+                    default: redirect-to-https
+                    description: ViewerProtocolPolicy determines viewer connection
+                      policy
+                    enum:
+                    - allow-all
+                    - redirect-to-https
+                    - https-only
+                    type: string
+                required:
+                - targetOriginId
+                type: object
+              defaultRootObject:
+                description: DefaultRootObject is the default page (e.g., index.html)
+                type: string
+              deletionPolicy:
+                default: Delete
+                description: DeletionPolicy determines how to handle the distribution
+                  on CR deletion
+                enum:
+                - Delete
+                - Retain
+                - Orphan
+                type: string
+              enabled:
+                default: true
+                description: Enabled indicates if the distribution is enabled
+                type: boolean
+              origins:
+                description: Origins defines the origin servers
+                items:
+                  description: CloudFrontOrigin represents an origin server
+                  properties:
+                    customHeaders:
+                      additionalProperties:
+                        type: string
+                      description: CustomHeaders are headers to add to origin requests
+                      type: object
+                    customOriginConfig:
+                      description: CustomOriginConfig for custom origins
+                      properties:
+                        httpPort:
+                          default: 80
+                          description: HTTPPort for HTTP connections
+                          format: int32
+                          type: integer
+                        httpsPort:
+                          default: 443
+                          description: HTTPSPort for HTTPS connections
+                          format: int32
+                          type: integer
+                        originProtocolPolicy:
+                          default: https-only
+                          description: OriginProtocolPolicy determines connection
+                            protocol
+                          enum:
+                          - http-only
+                          - https-only
+                          - match-viewer
+                          type: string
+                      type: object
+                    domainName:
+                      description: DomainName is the DNS name of the origin
+                      type: string
+                    id:
+                      description: ID uniquely identifies this origin
+                      type: string
+                    originPath:
+                      description: OriginPath is the path to append to origin requests
+                      type: string
+                    s3OriginConfig:
+                      description: S3OriginConfig for S3 origins
+                      properties:
+                        originAccessIdentity:
+                          description: OriginAccessIdentity restricts S3 access
+                          type: string
+                      type: object
+                  required:
+                  - domainName
+                  - id
+                  type: object
+                minItems: 1
+                type: array
+              priceClass:
+                default: PriceClass_100
+                description: PriceClass determines distribution coverage
+                enum:
+                - PriceClass_All
+                - PriceClass_100
+                - PriceClass_200
+                type: string
+              providerRef:
+                description: ProviderRef references the AWSProvider for credentials
+                properties:
+                  name:
+                    description: Name of the AWSProvider
+                    type: string
+                  namespace:
+                    description: Namespace of the AWSProvider (if different from current
+                      namespace)
+                    type: string
+                required:
+                - name
+                type: object
+              tags:
+                additionalProperties:
+                  type: string
+                description: Tags to apply to the distribution
+                type: object
+              viewerCertificate:
+                description: ViewerCertificate configures SSL/TLS
+                properties:
+                  acmCertificateArn:
+                    description: ACMCertificateARN for ACM certificate
+                    type: string
+                  cloudFrontDefaultCertificate:
+                    description: CloudFrontDefaultCertificate uses CloudFront certificate
+                    type: boolean
+                  minimumProtocolVersion:
+                    default: TLSv1.2_2021
+                    description: MinimumProtocolVersion for SSL/TLS
+                    type: string
+                  sslSupportMethod:
+                    default: sni-only
+                    description: SSLSupportMethod determines how CloudFront serves
+                      HTTPS
+                    enum:
+                    - sni-only
+                    - vip
+                    type: string
+                type: object
+            required:
+            - defaultCacheBehavior
+            - origins
+            - providerRef
+            type: object
+          status:
+            description: CloudFrontStatus defines the observed state of CloudFront
+            properties:
+              distributionId:
+                description: DistributionID is the CloudFront distribution ID
+                type: string
+              domainName:
+                description: DomainName is the CloudFront domain name
+                type: string
+              lastSyncTime:
+                description: LastSyncTime is the last time the resource was synced
+                format: date-time
+                type: string
+              ready:
+                description: Ready indicates if the distribution is ready
+                type: boolean
+              status:
+                description: Status is the distribution status (Deployed, InProgress)
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

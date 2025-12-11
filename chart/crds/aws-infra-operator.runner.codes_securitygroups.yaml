@@ -1,0 +1,200 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: securitygroups.aws-infra-operator.runner.codes
+spec:
+  group: aws-infra-operator.runner.codes
+  names:
+    kind: SecurityGroup
+    listKind: SecurityGroupList
+    plural: securitygroups
+    shortNames:
+    - sg
+    singular: securitygroup
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.groupID
+      name: Group-ID
+      type: string
+    - jsonPath: .status.groupName
+      name: Group-Name
+      type: string
+    - jsonPath: .status.vpcID
+      name: VPC-ID
+      type: string
+    - jsonPath: .status.ready
+      name: Ready
+      type: boolean
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: SecurityGroup is the Schema for the securitygroups API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: SecurityGroupSpec defines the desired state of SecurityGroup
+            properties:
+              deletionPolicy:
+                default: Delete
+                description: DeletionPolicy
+                enum:
+                - Delete
+                - Retain
+                type: string
+              description:
+                description: Description of the security group
+                type: string
+              egressRules:
+                description: EgressRules are the outbound rules
+                items:
+                  description: SecurityGroupRule defines a security group rule
+                  properties:
+                    cidrBlocks:
+                      description: CidrBlocks are the IPv4 CIDR ranges
+                      items:
+                        type: string
+                      type: array
+                    description:
+                      description: Description of the rule
+                      type: string
+                    fromPort:
+                      description: FromPort is the start of port range (-1 for all)
+                      format: int32
+                      type: integer
+                    ipProtocol:
+                      description: IpProtocol is the IP protocol (tcp, udp, icmp,
+                        or -1 for all)
+                      type: string
+                    ipv6CidrBlocks:
+                      description: Ipv6CidrBlocks are the IPv6 CIDR ranges
+                      items:
+                        type: string
+                      type: array
+                    sourceSecurityGroupID:
+                      description: SourceSecurityGroupID is the source security group
+                        ID
+                      type: string
+                    toPort:
+                      description: ToPort is the end of port range (-1 for all)
+                      format: int32
+                      type: integer
+                  required:
+                  - ipProtocol
+                  type: object
+                type: array
+              groupName:
+                description: GroupName is the name of the security group
+                type: string
+              ingressRules:
+                description: IngressRules are the inbound rules
+                items:
+                  description: SecurityGroupRule defines a security group rule
+                  properties:
+                    cidrBlocks:
+                      description: CidrBlocks are the IPv4 CIDR ranges
+                      items:
+                        type: string
+                      type: array
+                    description:
+                      description: Description of the rule
+                      type: string
+                    fromPort:
+                      description: FromPort is the start of port range (-1 for all)
+                      format: int32
+                      type: integer
+                    ipProtocol:
+                      description: IpProtocol is the IP protocol (tcp, udp, icmp,
+                        or -1 for all)
+                      type: string
+                    ipv6CidrBlocks:
+                      description: Ipv6CidrBlocks are the IPv6 CIDR ranges
+                      items:
+                        type: string
+                      type: array
+                    sourceSecurityGroupID:
+                      description: SourceSecurityGroupID is the source security group
+                        ID
+                      type: string
+                    toPort:
+                      description: ToPort is the end of port range (-1 for all)
+                      format: int32
+                      type: integer
+                  required:
+                  - ipProtocol
+                  type: object
+                type: array
+              providerRef:
+                description: ProviderRef references the AWSProvider to use
+                properties:
+                  name:
+                    description: Name of the AWSProvider
+                    type: string
+                  namespace:
+                    description: Namespace of the AWSProvider (if different from current
+                      namespace)
+                    type: string
+                required:
+                - name
+                type: object
+              tags:
+                additionalProperties:
+                  type: string
+                description: Tags to apply to the security group
+                type: object
+              vpcID:
+                description: VpcID is the ID of the VPC
+                type: string
+            required:
+            - description
+            - groupName
+            - providerRef
+            - vpcID
+            type: object
+          status:
+            description: SecurityGroupStatus defines the observed state of SecurityGroup
+            properties:
+              groupID:
+                description: GroupID is the ID of the security group
+                type: string
+              groupName:
+                description: GroupName is the name of the security group
+                type: string
+              lastSyncTime:
+                description: LastSyncTime
+                format: date-time
+                type: string
+              ready:
+                description: Ready indicates if the security group is ready
+                type: boolean
+              vpcID:
+                description: VpcID is the ID of the VPC
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

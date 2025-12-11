@@ -1,0 +1,200 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: ec2keypairs.aws-infra-operator.runner.codes
+spec:
+  group: aws-infra-operator.runner.codes
+  names:
+    kind: EC2KeyPair
+    listKind: EC2KeyPairList
+    plural: ec2keypairs
+    shortNames:
+    - keypair
+    singular: ec2keypair
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.keyName
+      name: KeyName
+      type: string
+    - jsonPath: .status.keyPairID
+      name: KeyPairID
+      type: string
+    - jsonPath: .status.keyFingerprint
+      name: Fingerprint
+      priority: 1
+      type: string
+    - jsonPath: .status.ready
+      name: Ready
+      type: boolean
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: EC2KeyPair é o Schema para a API ec2keypairs
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: EC2KeyPairSpec define o estado desejado do EC2KeyPair
+            properties:
+              deletionPolicy:
+                default: Delete
+                description: DeletionPolicy define o comportamento ao deletar o recurso
+                enum:
+                - Delete
+                - Retain
+                type: string
+              keyName:
+                description: |-
+                  KeyName é o nome do par de chaves na AWS
+                  Se não especificado, usa metadata.name
+                type: string
+              providerRef:
+                description: ProviderRef referencia o AWSProvider a ser usado
+                properties:
+                  name:
+                    description: Name of the AWSProvider
+                    type: string
+                  namespace:
+                    description: Namespace of the AWSProvider (if different from current
+                      namespace)
+                    type: string
+                required:
+                - name
+                type: object
+              publicKeyMaterial:
+                description: |-
+                  PublicKeyMaterial é a chave pública para importar (para importar chaves existentes)
+                  Se não especificado, a AWS gerará um novo par de chaves
+                type: string
+              secretRef:
+                description: SecretRef especifica onde armazenar a chave privada (apenas
+                  para chaves recém-geradas)
+                properties:
+                  name:
+                    description: Name é o nome do secret a ser criado
+                    type: string
+                  namespace:
+                    description: Namespace do secret (padrão é o namespace do KeyPair)
+                    type: string
+                required:
+                - name
+                type: object
+              tags:
+                additionalProperties:
+                  type: string
+                description: Tags são as etiquetas a serem aplicadas ao recurso
+                type: object
+            required:
+            - providerRef
+            type: object
+          status:
+            description: EC2KeyPairStatus define o estado observado do EC2KeyPair
+            properties:
+              conditions:
+                description: Conditions são as condições do recurso
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              keyFingerprint:
+                description: KeyFingerprint é a impressão digital da chave
+                type: string
+              keyName:
+                description: KeyName é o nome do par de chaves na AWS
+                type: string
+              keyPairID:
+                description: KeyPairID é o ID do par de chaves na AWS
+                type: string
+              keyType:
+                description: KeyType é o tipo da chave (rsa, ed25519)
+                type: string
+              lastSyncTime:
+                description: LastSyncTime é a última vez que o recurso foi sincronizado
+                format: date-time
+                type: string
+              ready:
+                description: Ready indica se o recurso está pronto
+                type: boolean
+              secretCreated:
+                description: SecretCreated indica se o secret com a chave privada
+                  foi criado
+                type: boolean
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

@@ -1,0 +1,1159 @@
+---
+title: 'DynamoDB - Banco NoSQL'
+description: 'Banco de dados NoSQL serverless e escalável na AWS'
+icon: 'database'
+---
+
+Crie tabelas NoSQL completamente gerenciadas, escaláveis e de alto desempenho na AWS.
+
+## Pré-requisito: Configuração do AWSProvider
+
+Antes de criar qualquer recurso AWS, você precisa configurar um **AWSProvider** que gerencia as credenciais e autenticação com a AWS.
+
+<CodeGroup>
+```yaml IRSA
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: AWSProvider
+metadata:
+  name: production-aws
+  namespace: default
+spec:
+  region: us-east-1
+  roleARN: arn:aws:iam::123456789012:role/infra-operator-role
+  defaultTags:
+    managed-by: infra-operator
+    environment: production
+```
+
+```yaml Credenciais Estáticas
+apiVersion: v1
+kind: Secret
+metadata:
+  name: aws-credentials
+  namespace: default
+type: Opaque
+stringData:
+  access-key-id: test
+  secret-access-key: test
+---
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: AWSProvider
+metadata:
+  name: localstack
+  namespace: default
+spec:
+  region: us-east-1
+  accessKeyIDRef:
+    name: aws-credentials
+    key: access-key-id
+  secretAccessKeyRef:
+    name: aws-credentials
+    key: secret-access-key
+  defaultTags:
+    managed-by: infra-operator
+    environment: test
+```
+
+```bash Verificar Status
+kubectl get awsprovider
+kubectl describe awsprovider production-aws
+```
+</CodeGroup>
+
+<Warning>
+  Para produção, sempre use **IRSA** (IAM Roles for Service Accounts) ao invés de credenciais estáticas.
+</Warning>
+
+### Criar IAM Role para IRSA
+
+Para usar IRSA em produção, você precisa criar uma IAM Role com as permissões necessárias:
+
+<CodeGroup>
+```json Trust Policy (trust-policy.json)
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::123456789012:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B71EXAMPLE"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "oidc.eks.us-east-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B71EXAMPLE:sub": "system:serviceaccount:infra-operator-system:infra-operator-controller-manager",
+          "oidc.eks.us-east-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B71EXAMPLE:aud": "sts.amazonaws.com"
+        }
+      }
+    }
+  ]
+}
+```
+
+```json IAM Policy - DynamoDB (dynamodb-policy.json)
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:CreateTable",
+        "dynamodb:DeleteTable",
+        "dynamodb:DescribeTable",
+        "dynamodb:UpdateTable",
+        "dynamodb:ListTables",
+        "dynamodb:TagResource",
+        "dynamodb:UntagResource",
+        "dynamodb:ListTagsOfResource",
+        "dynamodb:UpdateTimeToLive",
+        "dynamodb:DescribeTimeToLive",
+        "dynamodb:UpdateContinuousBackups",
+        "dynamodb:DescribeContinuousBackups"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+```bash Criar Role com AWS CLI
+# 1. Obter OIDC Provider do cluster EKS
+export CLUSTER_NAME=my-cluster
+export AWS_REGION=us-east-1
+export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+
+OIDC_PROVIDER=$(aws eks describe-cluster \
+  --name $CLUSTER_NAME \
+  --region $AWS_REGION \
+  --query "cluster.identity.oidc.issuer" \
+  --output text | sed -e "s/^https:\/\///")
+
+# 2. Atualizar trust-policy.json com valores corretos
+cat > trust-policy.json <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::${AWS_ACCOUNT_ID}:oidc-provider/${OIDC_PROVIDER}"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "${OIDC_PROVIDER}:sub": "system:serviceaccount:infra-operator-system:infra-operator-controller-manager",
+          "${OIDC_PROVIDER}:aud": "sts.amazonaws.com"
+        }
+      }
+    }
+  ]
+}
+EOF
+
+# 3. Criar IAM Role
+aws iam create-role \
+  --role-name infra-operator-dynamodb-role \
+  --assume-role-policy-document file://trust-policy.json \
+  --description "Role for Infra Operator DynamoDB management"
+
+# 4. Criar e anexar policy
+aws iam put-role-policy \
+  --role-name infra-operator-dynamodb-role \
+  --policy-name DynamoDBManagement \
+  --policy-document file://dynamodb-policy.json
+
+# 5. Obter ARN da Role
+aws iam get-role \
+  --role-name infra-operator-dynamodb-role \
+  --query 'Role.Arn' \
+  --output text
+```
+
+```bash Anotar ServiceAccount do Operator
+# Adicionar annotation ao ServiceAccount do operator
+kubectl annotate serviceaccount infra-operator-controller-manager \
+  -n infra-operator-system \
+  eks.amazonaws.com/role-arn=arn:aws:iam::123456789012:role/infra-operator-dynamodb-role
+```
+</CodeGroup>
+
+<Note>
+  Substitua `123456789012` pelo seu AWS Account ID e `EXAMPLED539D4633E53DE1B71EXAMPLE` pelo ID do seu OIDC provider.
+</Note>
+
+## Visão Geral
+
+O Amazon DynamoDB é um serviço de banco de dados NoSQL completamente gerenciado que oferece:
+
+- **Serverless**: Sem necessidade de gerenciar infraestrutura
+- **Escalabilidade Automática**: Escala automaticamente com sua demanda
+- **Desempenho Previsível**: Latência em milissegundos
+- **Altamente Disponível**: Replicação automática entre múltiplas AZs
+- **Segurança**: Criptografia em repouso, VPC endpoints, e controle de acesso granular
+- **Modelos de Faturamento Flexíveis**: PAY_PER_REQUEST ou PROVISIONED capacity
+
+## Início Rápido
+
+A configuração mais simples de uma tabela DynamoDB:
+
+<CodeGroup>
+```yaml Tabela Avançada com GSI
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: DynamoDBTable
+metadata:
+  name: e2e-test-table
+  namespace: default
+spec:
+  tableName: e2e-test-users-table
+  providerRef:
+    name: localstack
+  billingMode: PAY_PER_REQUEST
+  hashKey:
+    name: UserID
+    type: "S"
+  rangeKey:
+    name: Timestamp
+    type: "N"
+  attributes:
+  - name: Email
+    type: "S"
+  globalSecondaryIndexes:
+  - indexName: EmailIndex
+    hashKey: Email
+    projectionType: ALL
+  streamEnabled: true
+  streamViewType: NEW_AND_OLD_IMAGES
+  tags:
+    Environment: test
+    ManagedBy: infra-operator
+  deletionPolicy: Delete
+```
+
+```yaml Tabela Simples
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: DynamoDBTable
+metadata:
+  name: e2e-simple-table
+  namespace: default
+spec:
+  tableName: e2e-simple-table
+  providerRef:
+    name: localstack
+  billingMode: PAY_PER_REQUEST
+  hashKey:
+    name: ID
+    type: "S"
+  deletionPolicy: Delete
+```
+
+```bash Aplicar
+kubectl apply -f dynamodb.yaml
+```
+
+```bash Verificar Status
+kubectl get dynamodbtable e2e-test-table
+kubectl describe dynamodbtable e2e-test-table
+```
+</CodeGroup>
+
+## Referência de Configuração
+
+### Campos Obrigatórios
+
+<ParamField path="spec.providerRef" type="object" required>
+  Referência ao recurso AWSProvider
+
+  <Expandable title="properties">
+    <ParamField path="name" type="string" required>
+      Nome do recurso AWSProvider
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="spec.tableName" type="string" required>
+  Nome da tabela DynamoDB (1 a 255 caracteres alfanuméricos e underscores)
+
+  **Requisitos:**
+  - Deve ser único dentro da região
+  - Sensível a maiúsculas/minúsculas
+  - Exemplo: `users`, `orders_v2`, `product_catalog`
+</ParamField>
+
+<ParamField path="spec.billingMode" type="string" required>
+  Modelo de cobrança para a tabela
+
+  **Opções:**
+  - `PAY_PER_REQUEST`: Pague por cada requisição (ideal para cargas variáveis)
+  - `PROVISIONED`: Configure capacity fixa (ideal para workloads previsíveis)
+
+  <Tip>Use PAY_PER_REQUEST para aplicações com tráfego variável ou em desenvolvimento</Tip>
+</ParamField>
+
+<ParamField path="spec.attributes" type="array" required>
+  Lista de atributos usados em chaves e índices
+
+  <Expandable title="structure">
+    <ParamField path="name" type="string" required>
+      Nome do atributo
+    </ParamField>
+    <ParamField path="type" type="string" required>
+      Tipo do atributo:
+      - `S`: String
+      - `N`: Number
+      - `B`: Binary
+    </ParamField>
+  </Expandable>
+
+  **Nota:** Defina apenas atributos usados em keySchema ou índices
+</ParamField>
+
+<ParamField path="spec.keySchema" type="array" required>
+  Define a chave primária da tabela
+
+  <Expandable title="structure">
+    <ParamField path="attributeName" type="string" required>
+      Nome do atributo (deve estar em `attributes`)
+    </ParamField>
+    <ParamField path="keyType" type="string" required>
+      Tipo de chave:
+      - `HASH`: Partition key (obrigatório)
+      - `RANGE`: Sort key (opcional)
+    </ParamField>
+  </Expandable>
+
+  **Padrão:**
+  - Sempre deve ter exatamente 1 HASH key (partition key)
+  - Opcionalmente pode ter 1 RANGE key (sort key)
+</ParamField>
+
+### Campos Opcionais
+
+<ParamField path="spec.billingModeConfig" type="object">
+  Configuração de capacidade para modo PROVISIONED
+
+  <Expandable title="properties">
+    <ParamField path="readCapacityUnits" type="integer" default="5">
+      Unidades de leitura provisionadas
+    </ParamField>
+    <ParamField path="writeCapacityUnits" type="integer" default="5">
+      Unidades de escrita provisionadas
+    </ParamField>
+  </Expandable>
+
+  <Note>Obrigatório quando `billingMode: PROVISIONED`</Note>
+</ParamField>
+
+<ParamField path="spec.globalSecondaryIndexes" type="array">
+  Índices secundários globais para queries alternativas
+
+  <Expandable title="structure">
+    <ParamField path="indexName" type="string" required>
+      Nome único do índice
+    </ParamField>
+    <ParamField path="keys" type="array" required>
+      Chaves do índice (pode ser diferente da chave primária)
+    </ParamField>
+    <ParamField path="projection" type="object">
+      Quais atributos incluir no índice:
+      - `type: ALL`: Todos os atributos
+      - `type: KEYS_ONLY`: Apenas chaves
+      - `type: INCLUDE` com `nonKeyAttributes`: Atributos específicos
+    </ParamField>
+    <ParamField path="billingModeConfig" type="object">
+      Capacidade separada para o índice (se PROVISIONED)
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="spec.localSecondaryIndexes" type="array">
+  Índices secundários locais (mesma partition key, sort key diferente)
+
+  <Expandable title="structure">
+    <ParamField path="indexName" type="string" required>
+      Nome do índice
+    </ParamField>
+    <ParamField path="keys" type="array" required>
+      Deve conter HASH key idêntica à tabela + RANGE key diferente
+    </ParamField>
+    <ParamField path="projection" type="object">
+      Atributos a incluir
+    </ParamField>
+  </Expandable>
+
+  <Note>LSI tem limite de 10 GB por valor de partition key</Note>
+</ParamField>
+
+<ParamField path="spec.streamSpecification" type="object">
+  Habilitar DynamoDB Streams para capturar mudanças
+
+  <Expandable title="properties">
+    <ParamField path="streamViewType" type="string">
+      Tipo de informação no stream:
+      - `NEW_IMAGE`: Apenas novo item
+      - `OLD_IMAGE`: Apenas item anterior
+      - `NEW_AND_OLD_IMAGES`: Ambos
+      - `KEYS_ONLY`: Apenas chaves
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="spec.pointInTimeRecoverySpecification" type="object">
+  Habilitar ponto-no-tempo para backup/restore
+
+  <Expandable title="properties">
+    <ParamField path="pointInTimeRecoveryEnabled" type="boolean" default="false">
+      Se true, permite restore para qualquer ponto nos últimos 35 dias
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="spec.encryption" type="object">
+  Configuração de criptografia
+
+  <Expandable title="properties">
+    <ParamField path="enabled" type="boolean" default="true">
+      Habilitar criptografia em repouso
+    </ParamField>
+    <ParamField path="type" type="string" default="AWS_OWNED">
+      Tipo de chave:
+      - `AWS_OWNED`: Chave gerenciada pela AWS (sem custo)
+      - `AWS_MANAGED`: Chave AWS KMS gerenciada (sem custo, mais controle)
+      - `CUSTOMER_MANAGED`: Sua chave KMS personalizada (custo adicional)
+    </ParamField>
+    <ParamField path="keyArn" type="string">
+      ARN da chave KMS (requerido se `type: CUSTOMER_MANAGED`)
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="spec.tags" type="object">
+  Pares chave-valor para organização e billing
+
+  ```yaml
+  tags:
+    Environment: production
+    Application: myapp
+    Team: platform
+    CostCenter: engineering
+  ```
+</ParamField>
+
+<ParamField path="spec.deletionPolicy" type="string" default="Delete">
+  O que acontece com a tabela quando o CR é deletado
+
+  **Opções:**
+  - `Delete`: Tabela é deletada da AWS
+  - `Retain`: Tabela permanece na AWS
+  - `Orphan`: Tabela permanece mas CR perde ownership
+</ParamField>
+
+## Campos de Status
+
+Após a tabela ser criada, os seguintes campos de status são populados:
+
+<ResponseField name="status.tableArn" type="string">
+  ARN completo da tabela (ex: `arn:aws:dynamodb:us-east-1:123456789012:table/users`)
+</ResponseField>
+
+<ResponseField name="status.tableStatus" type="string">
+  Estado atual da tabela:
+  - `CREATING`: Tabela está sendo criada
+  - `ACTIVE`: Pronta para uso
+  - `DELETING`: Sendo deletada
+  - `UPDATING`: Configuração está sendo atualizada
+</ResponseField>
+
+<ResponseField name="status.itemCount" type="integer">
+  Número de itens na tabela
+</ResponseField>
+
+<ResponseField name="status.tableSizeBytes" type="integer">
+  Tamanho total da tabela em bytes
+</ResponseField>
+
+<ResponseField name="status.ready" type="boolean">
+  `true` quando a tabela está ACTIVE e pronta para queries
+</ResponseField>
+
+<ResponseField name="status.lastSyncTime" type="string">
+  Timestamp da última sincronização com a AWS
+</ResponseField>
+
+## Exemplos
+
+### Tabela Simples com Partition Key
+
+Tabela para armazenar perfis de usuários:
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: DynamoDB
+metadata:
+  name: user-profiles
+spec:
+  providerRef:
+    name: production-aws
+  tableName: user_profiles
+  billingMode: PAY_PER_REQUEST
+
+  # Atributos: userId e email são strings
+  attributes:
+  - name: userId
+    type: S
+  - name: email
+    type: S
+
+  # Apenas partition key
+  keySchema:
+  - attributeName: userId
+    keyType: HASH
+
+  tags:
+    Application: user-service
+    Environment: production
+
+  deletionPolicy: Retain
+```
+
+### Tabela com Partition Key + Sort Key
+
+Tabela para armazenar pedidos com histórico:
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: DynamoDB
+metadata:
+  name: orders-table
+spec:
+  providerRef:
+    name: production-aws
+  tableName: orders
+  billingMode: PROVISIONED
+  billingModeConfig:
+    readCapacityUnits: 10
+    writeCapacityUnits: 10
+
+  attributes:
+  - name: customerId
+    type: S
+  - name: orderDate
+    type: S  # ISO 8601 format
+  - name: orderId
+    type: S
+
+  keySchema:
+  - attributeName: customerId
+    keyType: HASH       # Partition key
+  - attributeName: orderDate
+    keyType: RANGE      # Sort key
+
+  tags:
+    Application: order-service
+    Environment: production
+
+  deletionPolicy: Retain
+```
+
+### Tabela com Global Secondary Indexes (GSI)
+
+Tabela para queries por email ou por status:
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: DynamoDB
+metadata:
+  name: users-with-gsi
+spec:
+  providerRef:
+    name: production-aws
+  tableName: users_v2
+  billingMode: PAY_PER_REQUEST
+
+  attributes:
+  - name: userId
+    type: S
+  - name: email
+    type: S
+  - name: status
+    type: S
+  - name: createdAt
+    type: S
+
+  keySchema:
+  - attributeName: userId
+    keyType: HASH
+
+  # GSI para query por email
+  globalSecondaryIndexes:
+  - indexName: email-index
+    keys:
+    - attributeName: email
+      keyType: HASH
+    projection:
+      type: ALL
+
+  # GSI para query por status + data
+  - indexName: status-created-index
+    keys:
+    - attributeName: status
+      keyType: HASH
+    - attributeName: createdAt
+      keyType: RANGE
+    projection:
+      type: KEYS_ONLY  # Apenas chaves para economia
+
+  tags:
+    Application: user-service
+
+  deletionPolicy: Retain
+```
+
+### Tabela com Streams (para Lambda)
+
+Tabela que captura mudanças para disparar eventos:
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: DynamoDB
+metadata:
+  name: events-table
+spec:
+  providerRef:
+    name: production-aws
+  tableName: domain_events
+  billingMode: PAY_PER_REQUEST
+
+  attributes:
+  - name: aggregateId
+    type: S
+  - name: eventTime
+    type: N
+
+  keySchema:
+  - attributeName: aggregateId
+    keyType: HASH
+  - attributeName: eventTime
+    keyType: RANGE
+
+  # Habilitar DynamoDB Streams
+  streamSpecification:
+    streamViewType: NEW_AND_OLD_IMAGES
+
+  tags:
+    Application: event-sourcing
+
+  deletionPolicy: Retain
+```
+
+### Tabela com PITR (Point-in-Time Recovery)
+
+Tabela de produção com backup automático:
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: DynamoDB
+metadata:
+  name: critical-data
+spec:
+  providerRef:
+    name: production-aws
+  tableName: critical_data
+  billingMode: PROVISIONED
+  billingModeConfig:
+    readCapacityUnits: 25
+    writeCapacityUnits: 25
+
+  attributes:
+  - name: dataId
+    type: S
+
+  keySchema:
+  - attributeName: dataId
+    keyType: HASH
+
+  # Habilitar Point-in-Time Recovery
+  pointInTimeRecoverySpecification:
+    pointInTimeRecoveryEnabled: true
+
+  # Criptografia com chave KMS
+  encryption:
+    enabled: true
+    type: AWS_MANAGED
+
+  tags:
+    Environment: production
+    BackupRequired: "true"
+    CriticalData: "true"
+
+  deletionPolicy: Retain
+```
+
+### Tabela com Local Secondary Index (LSI)
+
+Tabela com índice local para queries alternativas:
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: DynamoDB
+metadata:
+  name: leaderboard-table
+spec:
+  providerRef:
+    name: production-aws
+  tableName: game_leaderboard
+  billingMode: PAY_PER_REQUEST
+
+  attributes:
+  - name: gameId
+    type: S
+  - name: playerId
+    type: S
+  - name: score
+    type: N
+  - name: timestamp
+    type: N
+
+  keySchema:
+  - attributeName: gameId
+    keyType: HASH
+  - attributeName: playerId
+    keyType: RANGE
+
+  # LSI: query por score ao invés de playerId
+  localSecondaryIndexes:
+  - indexName: score-index
+    keys:
+    - attributeName: gameId
+      keyType: HASH       # Mesma partition key
+    - attributeName: score
+      keyType: RANGE      # Sort key diferente
+    projection:
+      type: ALL
+
+  tags:
+    Application: gaming
+
+  deletionPolicy: Delete
+```
+
+## Verificação
+
+### Verificar Status via kubectl
+
+```bash
+# Listar todas as tabelas
+kubectl get dynamodb
+
+# Obter informações detalhadas
+kubectl get dynamodb users-table -o yaml
+
+# Acompanhar criação em tempo real
+kubectl get dynamodb users-table -w
+
+# Ver apenas campos de status
+kubectl get dynamodb users-table -o jsonpath='{.status}'
+```
+
+### Verificar na AWS
+
+<Tabs>
+  <Tab title="AWS CLI">
+    ```bash
+    # Listar tabelas
+    aws dynamodb list-tables --region us-east-1
+
+    # Descrever tabela específica
+    aws dynamodb describe-table \
+      --table-name users \
+      --region us-east-1 \
+      --output json | jq '.Table | {Name, Status, ItemCount, TableArn}'
+
+    # Ver tamanho e itens
+    aws dynamodb describe-table \
+      --table-name users \
+      --query 'Table.{Status,Items:ItemCount,Size:TableSizeBytes}' \
+      --region us-east-1
+
+    # Listar índices
+    aws dynamodb describe-table \
+      --table-name users \
+      --query 'Table.GlobalSecondaryIndexes[*].{Name:IndexName,Status:IndexStatus}' \
+      --region us-east-1
+    ```
+  </Tab>
+
+  <Tab title="LocalStack">
+    ```bash
+    # Apontar para LocalStack
+    export AWS_ENDPOINT_URL=http://localhost:4566
+
+    # Listar tabelas
+    aws dynamodb list-tables
+
+    # Descrever tabela
+    aws dynamodb describe-table --table-name users
+
+    # Escanear todos os itens
+    aws dynamodb scan --table-name users
+    ```
+  </Tab>
+</Tabs>
+
+### Saída Esperada
+
+```yaml
+status:
+  tableArn: arn:aws:dynamodb:us-east-1:123456789012:table/users
+  tableStatus: ACTIVE
+  itemCount: 1234
+  tableSizeBytes: 5242880
+  ready: true
+  lastSyncTime: "2025-11-22T20:18:08Z"
+```
+
+## Resolução de Problemas
+
+<AccordionGroup>
+  <Accordion title="Tabela travada em CREATING">
+    **Sintomas:** `tableStatus: CREATING` por mais de 5 minutos
+
+    **Causas comuns:**
+    1. Credenciais inválidas do AWSProvider
+    2. Limite de tabelas atingido na conta
+    3. Problema de conectividade com AWS
+
+    **Soluções:**
+    ```bash
+    # Verificar status do AWSProvider
+    kubectl describe awsprovider production-aws
+
+    # Ver logs do controller
+    kubectl logs -n infra-operator-system \
+      deploy/infra-operator-controller-manager \
+      -f | grep -i dynamodb
+
+    # Ver eventos do recurso
+    kubectl describe dynamodb users-table
+
+    # Verificar limite de tabelas na AWS
+    aws dynamodb list-tables | jq '.TableNames | length'
+    ```
+  </Accordion>
+
+  <Accordion title="Throughput exceeded (Provisioned)">
+    **Erro:** `ProvisionedThroughputExceededException`
+
+    **Causa:** Aplicação excedeu capacity configurada
+
+    **Soluções:**
+    ```bash
+    # Aumentar capacity
+    kubectl patch dynamodb users-table --type='json' \
+      -p='[{"op": "replace", "path": "/spec/billingModeConfig/readCapacityUnits", "value":25}]'
+
+    # Ou mudar para PAY_PER_REQUEST
+    kubectl patch dynamodb users-table --type='json' \
+      -p='[{"op": "replace", "path": "/spec/billingMode", "value":"PAY_PER_REQUEST"}]'
+    ```
+  </Accordion>
+
+  <Accordion title="GSI não está criando">
+    **Sintomas:** GSI status fica pendente, tabela em UPDATING indefinidamente
+
+    **Causas:**
+    1. GSI referencia atributo não definido em `attributes`
+    2. Problema de capacidade no modo PROVISIONED
+    3. Conflito de nome de índice
+
+    **Soluções:**
+    ```bash
+    # Verificar se atributo existe
+    kubectl get dynamodb users-table -o yaml | grep -A 5 "attributes:"
+
+    # Verificar errors nos eventos
+    kubectl describe dynamodb users-table | grep -i "events" -A 10
+
+    # Remover GSI problemático
+    kubectl patch dynamodb users-table --type='json' \
+      -p='[{"op": "remove", "path": "/spec/globalSecondaryIndexes/0"}]'
+    ```
+  </Accordion>
+
+  <Accordion title="Deleção travada ou timeout">
+    **Sintomas:** Deleção demora muito ou não completa
+
+    **Causa comum:** Muitos dados para backup antes de deletar
+
+    **Soluções:**
+    ```bash
+    # Ver estado de deleção
+    kubectl get dynamodb users-table -o yaml
+
+    # Force delete se necessário (último recurso)
+    kubectl patch dynamodb users-table \
+      -p '{"metadata":{"finalizers":[]}}' \
+      --type=merge
+
+    # Ou usar deletionPolicy: Orphan para não deletar a tabela
+    kubectl patch dynamodb users-table --type='json' \
+      -p='[{"op": "replace", "path": "/spec/deletionPolicy", "value":"Orphan"}]'
+
+    # Depois deletar CR
+    kubectl delete dynamodb users-table
+    ```
+  </Accordion>
+
+  <Accordion title="Hot partition (performance degradada)">
+    **Sintomas:** Latência alta, throttling mesmo com capacity suficiente
+
+    **Causa:** Partition key distribuição desigual (ex: muitos items no mesmo dia)
+
+    **Soluções:**
+    ```bash
+    # Adicionar números aleatórios na partition key
+    # userId#2025-11-22#randomNumber
+
+    # Usar GSI com distribuição melhor
+    # Redistribuir dados através de aplicação
+    ```
+  </Accordion>
+
+  <Accordion title="Custos muito altos">
+    **Sintomas:** Conta AWS com custos DynamoDB inesperados
+
+    **Possíveis causas:**
+    1. Scans ineficientes sem filtros
+    2. Modo PROVISIONED com capacity alta
+    3. LSI/GSI desnecessários
+
+    **Soluções:**
+    ```bash
+    # Mudar para PAY_PER_REQUEST se carga é variável
+    kubectl patch dynamodb users-table --type='json' \
+      -p='[{"op": "replace", "path": "/spec/billingMode", "value":"PAY_PER_REQUEST"}]'
+
+    # Remover índices não utilizados
+    kubectl patch dynamodb users-table --type='json' \
+      -p='[{"op": "remove", "path": "/spec/globalSecondaryIndexes"}]'
+
+    # Ver custo estimado
+    aws ce get-cost-and-usage \
+      --time-period Start=2025-11-01,End=2025-11-22 \
+      --granularity DAILY \
+      --metrics BlendedCost \
+      --filter file://dynamodb-filter.json \
+      --group-by Type=DIMENSION,Key=SERVICE
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Melhores Práticas
+
+<CardGroup cols={2}>
+  <Card title="Design de Chaves" icon="key">
+    - Partition key deve distribuir uniformemente
+    - Use prefixos (ex: USER#, ORDER#) para entidades
+    - Sort key para ordenação e range queries
+    - Evite hot keys (muitos accesses à mesma partition)
+  </Card>
+
+  <Card title="Modelo de Custos" icon="coins">
+    - Use PAY_PER_REQUEST para desenvolvimento
+    - Use PROVISIONED com autoscaling para produção previsível
+    - LSI/GSI custam leitura+escrita: use com cuidado
+    - Archive para S3 após tempo (compliance)
+  </Card>
+
+  <Card title="Operações" icon="cogs">
+    - Habilite PITR para produção (35 dias backup)
+    - Use Streams para event sourcing
+    - Habilite criptografia (sem custo adicional)
+    - Monitore consumo e erros de capacidade
+  </Card>
+
+  <Card title="Performance" icon="zap">
+    - Query com chave é O(1), scan é O(n)
+    - Projection para incluir apenas campos necessários
+    - Batch operations para múltiplos items
+    - DynamoDB Accelerator (DAX) para cache
+  </Card>
+
+  <Card title="Governança" icon="shield-halved">
+    - Tag para cost center e ambiente
+    - deletionPolicy: Retain para produção
+    - Usar encriptação com chave AWS_MANAGED
+    - Documentar query patterns
+  </Card>
+
+  <Card title="Escalabilidade" icon="arrow-up">
+    - Começar com PAY_PER_REQUEST
+    - Mudar para PROVISIONED se padrão é previsível
+    - Usar autoscaling para PROVISIONED
+    - GSI para queries não-PK alternativas
+  </Card>
+</CardGroup>
+
+## Padrões de Arquitetura
+
+### Modelo Single-Table
+
+Usar uma única tabela para múltiplas entidades:
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: DynamoDB
+metadata:
+  name: app-db
+spec:
+  providerRef:
+    name: production-aws
+  tableName: app_db
+  billingMode: PAY_PER_REQUEST
+
+  attributes:
+  - name: pk
+    type: S  # USER#user123, ORDER#order456
+  - name: sk
+    type: S  # PROFILE, ORDERS#2025-11-22
+  - name: gsi1pk
+    type: S  # EMAIL#email@example.com
+  - name: gsi1sk
+    type: S  # For sorting
+
+  keySchema:
+  - attributeName: pk
+    keyType: HASH
+  - attributeName: sk
+    keyType: RANGE
+
+  globalSecondaryIndexes:
+  - indexName: gsi1
+    keys:
+    - attributeName: gsi1pk
+      keyType: HASH
+    - attributeName: gsi1sk
+      keyType: RANGE
+    projection:
+      type: ALL
+
+  tags:
+    Architecture: single-table
+```
+
+### Modelo Event Sourcing
+
+Tabela otimizada para event sourcing:
+
+```
+PK: AggregateID#Type (ex: USER#user123)
+SK: Version#Timestamp (ex: 0001#2025-11-22T20:00:00Z)
+Attributes: eventType, eventData, causedBy, etc
+```
+
+### Padrão Prefix Query
+
+Usar prefixos na chave para queries eficientes:
+
+```
+PK: USER#123
+SK: PROFILE#2025-11-22 (buscar tudo para aquele usuário)
+SK: ORDER#2025-11-22#order1
+SK: ORDER#2025-11-20#order2
+```
+
+## Casos de Uso
+
+### User Profiles & Sessions
+
+```yaml
+# Usuários com sessões ativas
+tableName: user_sessions
+# PK: userId (USER#user123)
+# SK: sessionId (SESSION#abc123)
+# TTL para limpeza automática
+```
+
+### Gaming Leaderboards
+
+```yaml
+# Ranking de jogadores por jogo
+tableName: game_leaderboards
+# PK: gameId
+# SK: score (com playerId para desempate)
+# GSI: userId para buscar rankings do jogador
+```
+
+### IoT Time Series
+
+```yaml
+# Dados de sensores
+tableName: sensor_data
+# PK: deviceId (SENSOR#device123)
+# SK: timestamp (ordered)
+# Streams para processar dados em tempo real
+```
+
+### Shopping Cart
+
+```yaml
+# Carrinhos de compras
+tableName: shopping_carts
+# PK: userId
+# SK: cartId (para múltiplos carrinhos)
+# TTL para abandonar carrinhos
+```
+
+### Message Queue
+
+```yaml
+# Fila de mensagens (alternativa ao SQS)
+tableName: message_queue
+# PK: queueId
+# SK: timestamp (order natural)
+# Streams para processar em real-time
+# PITR para reprocessamento
+```
+
+## Recursos Relacionados
+
+<CardGroup cols={2}>
+  <Card
+    title="RDS"
+    icon="database"
+    href="/services/database/rds"
+  >
+    Banco de dados relacional (SQL) gerenciado
+  </Card>
+
+  <Card
+    title="Lambda"
+    icon="flash"
+    href="/services/compute/lambda"
+  >
+    Processar mudanças com DynamoDB Streams
+  </Card>
+
+  <Card
+    title="SQS"
+    icon="inbox"
+    href="/services/messaging/sqs"
+  >
+    Fila de mensagens para eventos DynamoDB
+  </Card>
+
+  <Card
+    title="ElastiCache"
+    icon="bolt"
+    href="/services/caching/elasticache"
+  >
+    Cache para queries frequentes em DynamoDB
+  </Card>
+
+  <Card
+    title="Guia: Single-Table Design"
+    icon="book"
+    href="/guides/dynamodb-single-table"
+  >
+    Padrão avançado de design
+  </Card>
+</CardGroup>

@@ -1,0 +1,806 @@
+basePath: /api/v1
+definitions:
+  api.APIError:
+    properties:
+      code:
+        type: string
+      details:
+        type: string
+      message:
+        type: string
+    type: object
+  api.APIResponse:
+    properties:
+      data: {}
+      error:
+        $ref: '#/definitions/api.APIError'
+      success:
+        type: boolean
+    type: object
+  api.AWSConfigRequest:
+    description: Request para configurar credenciais AWS
+    properties:
+      accessKeyId:
+        description: Access Key ID da AWS
+        example: AKIAIOSFODNN7EXAMPLE
+        type: string
+      endpoint:
+        description: Endpoint customizado (opcional, para LocalStack ou outros)
+        example: http://localhost:4566
+        type: string
+      profile:
+        description: Profile do AWS CLI (opcional, usa credenciais do ~/.aws/credentials)
+        example: default
+        type: string
+      region:
+        description: 'Região AWS (ex: us-east-1, sa-east-1)'
+        example: us-east-1
+        type: string
+      secretAccessKey:
+        description: Secret Access Key da AWS
+        example: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+        type: string
+      sessionToken:
+        description: Session Token (opcional, para credenciais temporárias)
+        example: ""
+        type: string
+    type: object
+  api.AWSConfigResponse:
+    properties:
+      configured:
+        description: Indica se as credenciais foram configuradas
+        type: boolean
+      endpoint:
+        description: Endpoint customizado (se configurado)
+        type: string
+      message:
+        description: Mensagem de status
+        type: string
+      profile:
+        description: Profile usado (se configurado)
+        type: string
+      region:
+        description: Região configurada
+        type: string
+    type: object
+  api.ApplyRequest:
+    properties:
+      dryRun:
+        type: boolean
+      resources:
+        items:
+          $ref: '#/definitions/core.Resource'
+        type: array
+      yaml:
+        type: string
+    type: object
+  api.ApplyResponse:
+    properties:
+      created:
+        items:
+          $ref: '#/definitions/api.ResourceResponse'
+        type: array
+      failed:
+        items:
+          $ref: '#/definitions/api.ResourceResponse'
+        type: array
+      skipped:
+        items:
+          $ref: '#/definitions/api.ResourceResponse'
+        type: array
+      summary:
+        $ref: '#/definitions/api.ApplySummary'
+      updated:
+        items:
+          $ref: '#/definitions/api.ResourceResponse'
+        type: array
+    type: object
+  api.ApplySummary:
+    properties:
+      created:
+        type: integer
+      failed:
+        type: integer
+      skipped:
+        type: integer
+      updated:
+        type: integer
+    type: object
+  api.DeleteRequest:
+    properties:
+      dryRun:
+        type: boolean
+      resources:
+        items:
+          $ref: '#/definitions/core.Resource'
+        type: array
+      yaml:
+        type: string
+    type: object
+  api.DeleteResponse:
+    properties:
+      deleted:
+        items:
+          $ref: '#/definitions/api.ResourceResponse'
+        type: array
+      failed:
+        items:
+          $ref: '#/definitions/api.ResourceResponse'
+        type: array
+      skipped:
+        items:
+          $ref: '#/definitions/api.ResourceResponse'
+        type: array
+      summary:
+        $ref: '#/definitions/api.DeleteSummary'
+    type: object
+  api.DeleteSummary:
+    properties:
+      deleted:
+        type: integer
+      failed:
+        type: integer
+      skipped:
+        type: integer
+    type: object
+  api.GetResponse:
+    properties:
+      count:
+        type: integer
+      resources:
+        items:
+          $ref: '#/definitions/api.ResourceStateResponse'
+        type: array
+    type: object
+  api.HealthResponse:
+    properties:
+      status:
+        type: string
+      timestamp:
+        type: string
+      version:
+        type: string
+    type: object
+  api.PlanItemResponse:
+    properties:
+      action:
+        type: string
+      changes:
+        items:
+          type: string
+        type: array
+      kind:
+        type: string
+      name:
+        type: string
+      namespace:
+        type: string
+    type: object
+  api.PlanRequest:
+    description: Request para gerar plano de execução
+    properties:
+      resources:
+        description: |-
+          Lista de recursos AWS para planejar
+          Example: [{"apiVersion":"aws-infra-operator.runner.codes/v1alpha1","kind":"VPC","metadata":{"name":"my-vpc"},"spec":{"cidrBlock":"10.0.0.0/16"}}]
+        items:
+          $ref: '#/definitions/core.Resource'
+        type: array
+      yaml:
+        description: YAML dos recursos (alternativa a resources)
+        example: |-
+          apiVersion: aws-infra-operator.runner.codes/v1alpha1
+          kind: VPC
+          metadata:
+            name: my-vpc
+          spec:
+            cidrBlock: 10.0.0.0/16
+        type: string
+    type: object
+  api.PlanResponse:
+    properties:
+      noChange:
+        items:
+          $ref: '#/definitions/api.PlanItemResponse'
+        type: array
+      summary:
+        $ref: '#/definitions/api.PlanSummary'
+      toCreate:
+        items:
+          $ref: '#/definitions/api.PlanItemResponse'
+        type: array
+      toDelete:
+        items:
+          $ref: '#/definitions/api.PlanItemResponse'
+        type: array
+      toUpdate:
+        items:
+          $ref: '#/definitions/api.PlanItemResponse'
+        type: array
+    type: object
+  api.PlanSummary:
+    properties:
+      create:
+        type: integer
+      delete:
+        type: integer
+      noChange:
+        type: integer
+      update:
+        type: integer
+    type: object
+  api.ResourceResponse:
+    properties:
+      awsResources:
+        additionalProperties:
+          type: string
+        type: object
+      error:
+        type: string
+      kind:
+        type: string
+      message:
+        type: string
+      name:
+        type: string
+      namespace:
+        type: string
+    type: object
+  api.ResourceStateResponse:
+    properties:
+      apiVersion:
+        type: string
+      awsResources:
+        additionalProperties:
+          type: string
+        type: object
+      createdAt:
+        type: string
+      kind:
+        type: string
+      name:
+        type: string
+      namespace:
+        type: string
+      status:
+        additionalProperties: true
+        type: object
+      updatedAt:
+        type: string
+    type: object
+  core.Metadata:
+    properties:
+      annotations:
+        additionalProperties:
+          type: string
+        type: object
+      labels:
+        additionalProperties:
+          type: string
+        type: object
+      name:
+        type: string
+      namespace:
+        type: string
+    type: object
+  core.Resource:
+    properties:
+      apiVersion:
+        type: string
+      kind:
+        type: string
+      metadata:
+        $ref: '#/definitions/core.Metadata'
+      spec:
+        additionalProperties: true
+        type: object
+      status:
+        additionalProperties: true
+        type: object
+    type: object
+host: localhost:8080
+info:
+  contact:
+    name: André Bassi
+    url: https://github.com/andrebassi/infra-operator-aws
+  description: |-
+    API REST para gerenciamento de infraestrutura AWS
+    Suporta criação, atualização e deleção de recursos AWS via HTTP
+  license:
+    name: Apache 2.0
+    url: http://www.apache.org/licenses/LICENSE-2.0.html
+  title: Infra Operator AWS API
+  version: 1.0.1
+paths:
+  /apply:
+    post:
+      consumes:
+      - application/json
+      description: Cria ou atualiza recursos AWS conforme especificado
+      parameters:
+      - description: Recursos para aplicar
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.ApplyRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.ApplyResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Aplicar recursos
+      tags:
+      - operations
+  /config/aws:
+    get:
+      description: Retorna a configuração AWS atual (sem expor secrets)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.AWSConfigResponse'
+              type: object
+      security:
+      - ApiKeyAuth: []
+      summary: Obter configuração AWS atual
+      tags:
+      - config
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Configura as credenciais AWS para a API. Existem 3 formas de autenticar:
+
+        **1. Credenciais diretas (Access Key + Secret Key):**
+        ```json
+        {
+        "region": "us-east-1",
+        "accessKeyId": "AKIAIOSFODNN7EXAMPLE",
+        "secretAccessKey": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+        }
+        ```
+
+        **2. Profile do AWS CLI (~/.aws/credentials):**
+        ```json
+        {
+        "region": "us-east-1",
+        "profile": "my-profile"
+        }
+        ```
+
+        **3. LocalStack ou endpoint customizado:**
+        ```json
+        {
+        "region": "us-east-1",
+        "endpoint": "http://localhost:4566",
+        "accessKeyId": "test",
+        "secretAccessKey": "test"
+        }
+        ```
+
+        **4. Credenciais temporárias (STS):**
+        ```json
+        {
+        "region": "us-east-1",
+        "accessKeyId": "ASIAXXX...",
+        "secretAccessKey": "xxx...",
+        "sessionToken": "FwoGZXIvYXdzEBY..."
+        }
+        ```
+      parameters:
+      - description: Configuração AWS
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.AWSConfigRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.AWSConfigResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Configurar credenciais AWS
+      tags:
+      - config
+  /delete:
+    post:
+      consumes:
+      - application/json
+      description: Remove recursos AWS especificados
+      parameters:
+      - description: Recursos para deletar
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.DeleteRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.DeleteResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Deletar recursos
+      tags:
+      - operations
+  /health:
+    get:
+      description: Retorna o status de saúde da API
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.HealthResponse'
+              type: object
+      summary: Health check
+      tags:
+      - health
+  /plan:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Analisa os recursos e retorna o que será criado, atualizado ou deletado
+
+        **Exemplo de request (VPC simples):**
+        ```json
+        {
+        "resources": [{
+        "apiVersion": "aws-infra-operator.runner.codes/v1alpha1",
+        "kind": "VPC",
+        "metadata": {"name": "minha-vpc"},
+        "spec": {"cidrBlock": "10.0.0.0/16"}
+        }]
+        }
+        ```
+
+        **Exemplo ComputeStack (infraestrutura completa):**
+        ```json
+        {
+        "resources": [{
+        "apiVersion": "aws-infra-operator.runner.codes/v1alpha1",
+        "kind": "ComputeStack",
+        "metadata": {"name": "meu-ambiente"},
+        "spec": {
+        "vpcCIDR": "10.100.0.0/16",
+        "bastionInstance": {
+        "enabled": true,
+        "instanceType": "t3.micro"
+        }
+        }
+        }]
+        }
+        ```
+
+        **Exemplo Subnet:**
+        ```json
+        {
+        "resources": [{
+        "apiVersion": "aws-infra-operator.runner.codes/v1alpha1",
+        "kind": "Subnet",
+        "metadata": {"name": "public-subnet-1"},
+        "spec": {"vpcId": "vpc-0abc123def456", "cidrBlock": "10.0.1.0/24", "availabilityZone": "us-east-1a", "mapPublicIpOnLaunch": true}
+        }]
+        }
+        ```
+
+        **Exemplo SecurityGroup:**
+        ```json
+        {
+        "resources": [{
+        "apiVersion": "aws-infra-operator.runner.codes/v1alpha1",
+        "kind": "SecurityGroup",
+        "metadata": {"name": "web-sg"},
+        "spec": {"vpcId": "vpc-0abc123def456", "description": "Security group para web servers", "ingressRules": [{"protocol": "tcp", "fromPort": 443, "toPort": 443, "cidrIp": "0.0.0.0/0"}]}
+        }]
+        }
+        ```
+
+        **Exemplo EC2Instance:**
+        ```json
+        {
+        "resources": [{
+        "apiVersion": "aws-infra-operator.runner.codes/v1alpha1",
+        "kind": "EC2Instance",
+        "metadata": {"name": "web-server"},
+        "spec": {"instanceName": "web-server-1", "instanceType": "t3.micro", "imageId": "ami-0c55b159cbfafe1f0", "subnetId": "subnet-0abc123", "securityGroupIds": ["sg-0abc123"], "keyName": "my-keypair"}
+        }]
+        }
+        ```
+
+        **Exemplo S3Bucket:**
+        ```json
+        {
+        "resources": [{
+        "apiVersion": "aws-infra-operator.runner.codes/v1alpha1",
+        "kind": "S3Bucket",
+        "metadata": {"name": "my-bucket"},
+        "spec": {"bucketName": "my-company-data-bucket", "versioning": true}
+        }]
+        }
+        ```
+
+        **Exemplo RDSInstance:**
+        ```json
+        {
+        "resources": [{
+        "apiVersion": "aws-infra-operator.runner.codes/v1alpha1",
+        "kind": "RDSInstance",
+        "metadata": {"name": "app-postgres"},
+        "spec": {"dbInstanceIdentifier": "app-postgres", "dbInstanceClass": "db.t3.micro", "engine": "postgres", "engineVersion": "15.4", "allocatedStorage": 20, "masterUsername": "admin"}
+        }]
+        }
+        ```
+
+        **Exemplo DynamoDBTable:**
+        ```json
+        {
+        "resources": [{
+        "apiVersion": "aws-infra-operator.runner.codes/v1alpha1",
+        "kind": "DynamoDBTable",
+        "metadata": {"name": "users-table"},
+        "spec": {"tableName": "Users", "billingMode": "PAY_PER_REQUEST"}
+        }]
+        }
+        ```
+
+        **Exemplo SQSQueue:**
+        ```json
+        {
+        "resources": [{
+        "apiVersion": "aws-infra-operator.runner.codes/v1alpha1",
+        "kind": "SQSQueue",
+        "metadata": {"name": "orders-queue"},
+        "spec": {"queueName": "orders-queue", "visibilityTimeout": 30, "fifoQueue": false}
+        }]
+        }
+        ```
+
+        **Exemplo SNSTopic:**
+        ```json
+        {
+        "resources": [{
+        "apiVersion": "aws-infra-operator.runner.codes/v1alpha1",
+        "kind": "SNSTopic",
+        "metadata": {"name": "app-notifications"},
+        "spec": {"topicName": "app-notifications", "displayName": "App Notifications"}
+        }]
+        }
+        ```
+
+        **Exemplo LambdaFunction:**
+        ```json
+        {
+        "resources": [{
+        "apiVersion": "aws-infra-operator.runner.codes/v1alpha1",
+        "kind": "LambdaFunction",
+        "metadata": {"name": "process-orders"},
+        "spec": {"functionName": "process-orders", "runtime": "nodejs18.x", "handler": "index.handler", "role": "arn:aws:iam::123456789:role/lambda-role", "memorySize": 256, "timeout": 30}
+        }]
+        }
+        ```
+
+        **Exemplo EKSCluster:**
+        ```json
+        {
+        "resources": [{
+        "apiVersion": "aws-infra-operator.runner.codes/v1alpha1",
+        "kind": "EKSCluster",
+        "metadata": {"name": "production"},
+        "spec": {"name": "production", "version": "1.28", "roleArn": "arn:aws:iam::123456789:role/eks-cluster-role"}
+        }]
+        }
+        ```
+
+        **Exemplo IAMRole:**
+        ```json
+        {
+        "resources": [{
+        "apiVersion": "aws-infra-operator.runner.codes/v1alpha1",
+        "kind": "IAMRole",
+        "metadata": {"name": "lambda-execution-role"},
+        "spec": {"roleName": "lambda-execution-role", "assumeRolePolicyDocument": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"lambda.amazonaws.com\"},\"Action\":\"sts:AssumeRole\"}]}", "managedPolicyArns": ["arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"]}
+        }]
+        }
+        ```
+      parameters:
+      - description: Recursos para planejar
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.PlanRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.PlanResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Gerar plano de execução
+      tags:
+      - operations
+  /resources:
+    delete:
+      consumes:
+      - application/json
+      description: Remove recursos AWS especificados
+      parameters:
+      - description: Recursos para deletar
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.DeleteRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.DeleteResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Deletar recursos
+      tags:
+      - operations
+    get:
+      description: Lista todos os recursos do estado local
+      parameters:
+      - description: 'Filtrar por tipo (ex: VPC, ComputeStack)'
+        in: query
+        name: kind
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.GetResponse'
+              type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Listar recursos
+      tags:
+      - resources
+  /resources/{kind}:
+    get:
+      description: Lista recursos de um tipo específico
+      parameters:
+      - description: 'Tipo do recurso (ex: VPC, ComputeStack, EC2Instance)'
+        in: path
+        name: kind
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.GetResponse'
+              type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Listar recursos por tipo
+      tags:
+      - resources
+securityDefinitions:
+  ApiKeyAuth:
+    in: header
+    name: X-API-Key
+    type: apiKey
+  BearerAuth:
+    description: Bearer token (prefixo "Bearer " + API Key)
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

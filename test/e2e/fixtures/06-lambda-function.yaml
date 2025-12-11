@@ -1,0 +1,45 @@
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: LambdaFunction
+metadata:
+  name: e2e-hello-function
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  functionName: e2e-hello-world
+  runtime: python3.12
+  handler: index.handler
+  role: arn:aws:iam::000000000000:role/lambda-role
+  timeout: 30
+  memorySize: 256
+  code:
+    zipFile: UEsDBBQAAAAIAHRLdluO3E/MUgAAAFMAAAAIABwAaW5kZXgucHlVVAkAAzusIWk7rCFpdXgLAAEE9QEAAAQAAAAAS0lNU8hIzEvJSS3SSC1LzSvRUUjOzytJrSjRtOJSAIKi1JLSojyFavXiksSS0mLn/JRUdSsFIwMDHQX1pPyUSiBH3SM1JydfITy/KCdFvZYLAFBLAQIeAxQAAAAIAHRLdluO3E/MUgAAAFMAAAAIABgAAAAAAAEAAACkgQAAAABpbmRleC5weVVUBQADO6whaXV4CwABBPUBAAAEAAAAAFBLBQYAAAAAAQABAE4AAACUAAAAAAA=
+  environment:
+    variables:
+      ENV: test
+      LOG_LEVEL: debug
+  tags:
+    Environment: test
+    ManagedBy: infra-operator
+  deletionPolicy: Delete
+---
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: LambdaFunction
+metadata:
+  name: e2e-nodejs-function
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  functionName: e2e-nodejs-handler
+  runtime: nodejs20.x
+  handler: index.handler
+  role: arn:aws:iam::000000000000:role/lambda-role
+  timeout: 10
+  memorySize: 128
+  code:
+    zipFile: UEsDBBQAAAAIANxLdlvWeVkhYQAAAGQAAAAIABwAaW5kZXguanNVVAkAAwCtIWkArSFpdXgLAAEE9QEAAAQAAAAADckxCoNAEEbh3lP8nRGCiKVBmzSpvMPqTgiy7sjMrCiSu7uPr3t0bCym9c9FH0jQw+kZZzxop2gV+gFXgZyQJYm4oOYs6Zs9dWib5omJ/dmh/FAIjK/wijHPetES/1eR3VBLAQIeAxQAAAAIANxLdlvWeVkhYQAAAGQAAAAIABgAAAAAAAEAAACkgQAAAABpbmRleC5qc1VUBQADAK0haXV4CwABBPUBAAAEAAAAAFBLBQYAAAAAAQABAE4AAACjAAAAAAA=
+  tags:
+    Environment: test
+    Runtime: nodejs
+  deletionPolicy: Delete

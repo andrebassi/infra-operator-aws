@@ -1,0 +1,103 @@
+---
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: SecurityGroup
+metadata:
+  name: e2e-web-sg
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+
+  groupName: e2e-web-security-group
+  description: Security group for web servers - E2E test
+  vpcID: vpc-12345678  # Replace with actual VPC ID from networking fixture
+
+  # Allow HTTP and HTTPS inbound
+  ingressRules:
+    - ipProtocol: tcp
+      fromPort: 80
+      toPort: 80
+      cidrBlocks:
+        - 0.0.0.0/0
+      description: Allow HTTP from anywhere
+
+    - ipProtocol: tcp
+      fromPort: 443
+      toPort: 443
+      cidrBlocks:
+        - 0.0.0.0/0
+      description: Allow HTTPS from anywhere
+
+    - ipProtocol: tcp
+      fromPort: 22
+      toPort: 22
+      cidrBlocks:
+        - 10.0.0.0/8
+      description: Allow SSH from internal networks
+
+  # Allow all outbound traffic
+  egressRules:
+    - ipProtocol: "-1"
+      cidrBlocks:
+        - 0.0.0.0/0
+      description: Allow all outbound traffic
+
+  tags:
+    environment: test
+    purpose: e2e-testing
+    managed-by: infra-operator
+    tier: web
+
+  deletionPolicy: Delete
+
+---
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: SecurityGroup
+metadata:
+  name: e2e-database-sg
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+
+  groupName: e2e-database-security-group
+  description: Security group for database servers - E2E test
+  vpcID: vpc-12345678  # Replace with actual VPC ID
+
+  # Allow database access from web security group
+  ingressRules:
+    - ipProtocol: tcp
+      fromPort: 5432
+      toPort: 5432
+      sourceSecurityGroupID: sg-xxxxxx  # Reference to e2e-web-sg
+      description: Allow PostgreSQL from web tier
+
+    - ipProtocol: tcp
+      fromPort: 3306
+      toPort: 3306
+      sourceSecurityGroupID: sg-xxxxxx  # Reference to e2e-web-sg
+      description: Allow MySQL from web tier
+
+  # Restrictive egress - only HTTP/HTTPS
+  egressRules:
+    - ipProtocol: tcp
+      fromPort: 80
+      toPort: 80
+      cidrBlocks:
+        - 0.0.0.0/0
+      description: Allow HTTP outbound
+
+    - ipProtocol: tcp
+      fromPort: 443
+      toPort: 443
+      cidrBlocks:
+        - 0.0.0.0/0
+      description: Allow HTTPS outbound
+
+  tags:
+    environment: test
+    purpose: e2e-testing
+    managed-by: infra-operator
+    tier: database
+
+  deletionPolicy: Delete

@@ -1,0 +1,142 @@
+# Development values for infra-operator
+# Override default values for development/staging environments
+
+#==============================================================================
+# DEVELOPMENT CONFIGURATION
+#==============================================================================
+
+# Single replica for dev (no HA needed)
+replicaCount: 1
+
+image:
+  # Pull policy for faster development
+  pullPolicy: IfNotPresent
+  # Use development tag
+  tag: "dev"
+
+#==============================================================================
+# RECURSOS (Lower limits for dev)
+#==============================================================================
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+#==============================================================================
+# LOGGING (Debug level for development)
+#==============================================================================
+
+logging:
+  level: debug
+  development: true
+  encoder: console  # Human-readable logs
+  stacktraceLevel: warn
+
+#==============================================================================
+# CONFIGURAÇÃO AWS
+#==============================================================================
+
+aws:
+  defaultRegion: "us-east-1"
+  # Use IRSA for EKS dev cluster
+  irsa:
+    enabled: true
+    roleARN: "arn:aws:iam::123456789012:role/infra-operator-dev-role"
+
+#==============================================================================
+# DRIFT DETECTION (More frequent checks in dev)
+#==============================================================================
+
+driftDetection:
+  enabled: true
+  defaultCheckInterval: "2m"
+  defaultAutoHeal: true
+  jitter: 20
+
+#==============================================================================
+# Configurações do operador
+#==============================================================================
+
+operator:
+  leaderElection:
+    enabled: true
+
+  reconciliation:
+    maxConcurrentReconciles: 5
+    requeueAfter: "2m"
+    timeout: "5m"
+
+#==============================================================================
+# MONITORAMENTO (SERVIÇOMonitor enabled for dev MONITORAMENTO)
+#==============================================================================
+
+prometheus:
+  serviceMonitor:
+    enabled: true
+    namespace: monitoring
+    labels:
+      prometheus: dev
+    interval: 15s
+    scrapeTimeout: 10s
+
+#==============================================================================
+# WEBHOOKS (Optional in dev)
+#==============================================================================
+
+webhooks:
+  enabled: true
+  certManager:
+    enabled: true
+    createIssuer: true
+    issuerRef:
+      kind: Issuer
+      name: selfsigned-issuer
+  validating:
+    failurePolicy: Ignore  # Allow operations even if webhook fails
+
+#==============================================================================
+# ORÇAMENTO DE INTERRUPÇÃO DE POD (Disabled for dev)
+#==============================================================================
+
+podDisruptionBudget:
+  enabled: false
+
+#==============================================================================
+# POLÍTICA DE REDE (Disabled for easier debugging)
+#==============================================================================
+
+networkPolicy:
+  enabled: false
+
+#==============================================================================
+# CONTA DE SERVIÇO
+#==============================================================================
+
+serviceAccount:
+  create: true
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/infra-operator-dev-role"
+
+#==============================================================================
+# ANNOTATIONS
+#==============================================================================
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8080"
+  environment: development
+
+#==============================================================================
+# GLOBAL TAGS
+#==============================================================================
+
+globalTags:
+  managed-by: infra-operator
+  environment: development
+  cost-center: engineering
+  auto-delete: "true"
+  team: platform

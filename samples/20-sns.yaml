@@ -1,0 +1,10 @@
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: SNSTopic
+metadata:
+  name: test-topic
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  topicName: helm-test-notifications
+  displayName: "Helm Test Notifications"

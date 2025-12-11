@@ -1,0 +1,213 @@
+---
+# Simple A Record Example
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Route53RecordSet
+metadata:
+  name: example-a-record
+  namespace: default
+spec:
+  providerRef:
+    name: aws-provider
+  hostedZoneID: Z1234567890ABC
+  name: www.example.com
+  type: A
+  ttl: 300
+  resourceRecords:
+    - 192.0.2.1
+    - 192.0.2.2
+  deletionPolicy: Delete
+
+---
+# CNAME Record Example
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Route53RecordSet
+metadata:
+  name: example-cname-record
+  namespace: default
+spec:
+  providerRef:
+    name: aws-provider
+  hostedZoneID: Z1234567890ABC
+  name: blog.example.com
+  type: CNAME
+  ttl: 300
+  resourceRecords:
+    - www.example.com
+  deletionPolicy: Delete
+
+---
+# Alias Record Example (for Load Balancer)
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Route53RecordSet
+metadata:
+  name: example-alias-record
+  namespace: default
+spec:
+  providerRef:
+    name: aws-provider
+  hostedZoneID: Z1234567890ABC
+  name: api.example.com
+  type: A
+  aliasTarget:
+    hostedZoneID: Z215JYRZR1TBD5  # ELB hosted zone ID for us-east-1
+    dnsName: my-load-balancer-1234567890.us-east-1.elb.amazonaws.com
+    evaluateTargetHealth: true
+  deletionPolicy: Delete
+
+---
+# Weighted Routing Policy Example
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Route53RecordSet
+metadata:
+  name: example-weighted-record-1
+  namespace: default
+spec:
+  providerRef:
+    name: aws-provider
+  hostedZoneID: Z1234567890ABC
+  name: app.example.com
+  type: A
+  ttl: 60
+  resourceRecords:
+    - 192.0.2.10
+  setIdentifier: "server-1"
+  weight: 70
+  deletionPolicy: Delete
+
+---
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Route53RecordSet
+metadata:
+  name: example-weighted-record-2
+  namespace: default
+spec:
+  providerRef:
+    name: aws-provider
+  hostedZoneID: Z1234567890ABC
+  name: app.example.com
+  type: A
+  ttl: 60
+  resourceRecords:
+    - 192.0.2.20
+  setIdentifier: "server-2"
+  weight: 30
+  deletionPolicy: Delete
+
+---
+# Latency-Based Routing Example
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Route53RecordSet
+metadata:
+  name: example-latency-us-east
+  namespace: default
+spec:
+  providerRef:
+    name: aws-provider
+  hostedZoneID: Z1234567890ABC
+  name: global.example.com
+  type: A
+  ttl: 60
+  resourceRecords:
+    - 192.0.2.30
+  setIdentifier: "us-east-1-server"
+  region: us-east-1
+  deletionPolicy: Delete
+
+---
+# Geolocation Routing Example
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Route53RecordSet
+metadata:
+  name: example-geo-us
+  namespace: default
+spec:
+  providerRef:
+    name: aws-provider
+  hostedZoneID: Z1234567890ABC
+  name: geo.example.com
+  type: A
+  ttl: 300
+  resourceRecords:
+    - 192.0.2.40
+  setIdentifier: "us-servers"
+  geoLocation:
+    countryCode: US
+  deletionPolicy: Delete
+
+---
+# Failover Routing Example - Primary
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Route53RecordSet
+metadata:
+  name: example-failover-primary
+  namespace: default
+spec:
+  providerRef:
+    name: aws-provider
+  hostedZoneID: Z1234567890ABC
+  name: failover.example.com
+  type: A
+  ttl: 60
+  resourceRecords:
+    - 192.0.2.50
+  setIdentifier: "primary-server"
+  failover: PRIMARY
+  healthCheckID: 12345678-1234-1234-1234-123456789012
+  deletionPolicy: Delete
+
+---
+# Failover Routing Example - Secondary
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Route53RecordSet
+metadata:
+  name: example-failover-secondary
+  namespace: default
+spec:
+  providerRef:
+    name: aws-provider
+  hostedZoneID: Z1234567890ABC
+  name: failover.example.com
+  type: A
+  ttl: 60
+  resourceRecords:
+    - 192.0.2.60
+  setIdentifier: "secondary-server"
+  failover: SECONDARY
+  deletionPolicy: Delete
+
+---
+# MX Record Example
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Route53RecordSet
+metadata:
+  name: example-mx-record
+  namespace: default
+spec:
+  providerRef:
+    name: aws-provider
+  hostedZoneID: Z1234567890ABC
+  name: example.com
+  type: MX
+  ttl: 3600
+  resourceRecords:
+    - 10 mail1.example.com
+    - 20 mail2.example.com
+  deletionPolicy: Delete
+
+---
+# TXT Record Example (SPF)
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Route53RecordSet
+metadata:
+  name: example-txt-record
+  namespace: default
+spec:
+  providerRef:
+    name: aws-provider
+  hostedZoneID: Z1234567890ABC
+  name: example.com
+  type: TXT
+  ttl: 300
+  resourceRecords:
+    - '"v=spf1 include:_spf.google.com ~all"'
+  deletionPolicy: Delete

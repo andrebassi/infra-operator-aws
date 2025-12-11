@@ -1,0 +1,196 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "infra-operator.fullname" . }}
+  namespace: {{ include "infra-operator.namespace" . }}
+  labels:
+    {{- include "infra-operator.labels" . | nindent 4 }}
+    control-plane: controller-manager
+  {{- with .Values.deploymentAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "infra-operator.selectorLabels" . | nindent 6 }}
+      control-plane: controller-manager
+  {{- with .Values.updateStrategy }}
+  strategy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/default-container: manager
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "infra-operator.selectorLabels" . | nindent 8 }}
+        control-plane: controller-manager
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "infra-operator.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if .Values.priorityClassName }}
+      priorityClassName: {{ .Values.priorityClassName }}
+      {{- end }}
+      {{- if .Values.hostNetwork }}
+      hostNetwork: {{ .Values.hostNetwork }}
+      {{- end }}
+      {{- with .Values.dnsPolicy }}
+      dnsPolicy: {{ . }}
+      {{- end }}
+      {{- with .Values.dnsConfig }}
+      dnsConfig:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      {{- with .Values.initContainers }}
+      initContainers:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+      - name: manager
+        image: "{{ .Values.image.registry }}/{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        command:
+        - /infra.operator
+        args:
+        {{- if .Values.operator.leaderElection.enabled }}
+        - --leader-elect
+        {{- end }}
+        - --metrics-bind-address=:{{ .Values.operator.metrics.port }}
+        - --health-probe-bind-address=:{{ .Values.operator.health.port }}
+        env:
+        # Webhook configuration
+        - name: ENABLE_WEBHOOKS
+          value: "{{ .Values.webhooks.enabled }}"
+        # CONFIGURAÇÃO AWS
+        - name: AWS_REGION
+          value: {{ .Values.aws.defaultRegion | quote }}
+        {{- if .Values.aws.irsa.enabled }}
+        - name: AWS_ROLE_ARN
+          value: {{ .Values.aws.irsa.roleARN | quote }}
+        - name: AWS_WEB_IDENTITY_TOKEN_FILE
+          value: /var/run/secrets/eks.amazonaws.com/serviceaccount/token
+        {{- end }}
+        {{- if .Values.aws.staticCredentials.enabled }}
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.aws.staticCredentials.secretName }}
+              key: {{ .Values.aws.staticCredentials.accessKeyIDKey }}
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.aws.staticCredentials.secretName }}
+              key: {{ .Values.aws.staticCredentials.secretAccessKeyKey }}
+        {{- end }}
+        {{- if .Values.aws.assumeRole.enabled }}
+        - name: AWS_ASSUME_ROLE_ARN
+          value: {{ .Values.aws.assumeRole.roleARN | quote }}
+        - name: AWS_ASSUME_ROLE_SESSION_NAME
+          value: {{ .Values.aws.assumeRole.sessionName | quote }}
+        {{- if .Values.aws.assumeRole.externalID }}
+        - name: AWS_ASSUME_ROLE_EXTERNAL_ID
+          value: {{ .Values.aws.assumeRole.externalID | quote }}
+        {{- end }}
+        {{- end }}
+        {{- if .Values.aws.localstack.enabled }}
+        - name: AWS_ENDPOINT_URL
+          value: {{ .Values.aws.localstack.endpoint | quote }}
+        {{- end }}
+        # Drift detection configuration
+        - name: DRIFT_DETECTION_ENABLED
+          value: "{{ .Values.driftDetection.enabled }}"
+        - name: DRIFT_CHECK_INTERVAL
+          value: {{ .Values.driftDetection.defaultCheckInterval | quote }}
+        - name: DRIFT_AUTO_HEAL
+          value: "{{ .Values.driftDetection.defaultAutoHeal }}"
+        # Global tags
+        {{- if .Values.globalTags }}
+        - name: GLOBAL_TAGS
+          value: {{ .Values.globalTags | toJson | quote }}
+        {{- end }}
+        # Additional environment variables
+        {{- with .Values.env }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- with .Values.envFrom }}
+        envFrom:
+          {{- toYaml . | nindent 8 }}
+        {{- end }}
+        ports:
+        - name: metrics
+          containerPort: {{ .Values.operator.metrics.port }}
+          protocol: TCP
+        - name: health
+          containerPort: {{ .Values.operator.health.port }}
+          protocol: TCP
+        {{- if .Values.operator.webhooks.enabled }}
+        - name: webhook
+          containerPort: {{ .Values.operator.webhooks.port }}
+          protocol: TCP
+        {{- end }}
+        livenessProbe:
+          {{- toYaml .Values.livenessProbe | nindent 10 }}
+        readinessProbe:
+          {{- toYaml .Values.readinessProbe | nindent 10 }}
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+        securityContext:
+          {{- toYaml .Values.securityContext | nindent 10 }}
+        volumeMounts:
+        {{- if .Values.webhooks.enabled }}
+        - name: cert
+          mountPath: /tmp/k8s-webhook-server/serving-certs
+          readOnly: true
+        {{- end }}
+        - name: tmp
+          mountPath: /tmp
+        {{- with .Values.extraVolumeMounts }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- with .Values.lifecycle }}
+        lifecycle:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+      {{- with .Values.sidecars }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+      volumes:
+      {{- if .Values.webhooks.enabled }}
+      - name: cert
+        secret:
+          secretName: {{ include "infra-operator.webhookCertName" . }}
+          defaultMode: 420
+      {{- end }}
+      - name: tmp
+        emptyDir: {}
+      {{- with .Values.extraVolumes }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

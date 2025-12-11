@@ -1,0 +1,760 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: setupekses.aws-infra-operator.runner.codes
+spec:
+  group: aws-infra-operator.runner.codes
+  names:
+    kind: SetupEKS
+    listKind: SetupEKSList
+    plural: setupekses
+    shortNames:
+    - seks
+    - setupeks
+    singular: setupeks
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - description: EKS Cluster Name
+      jsonPath: .status.cluster.name
+      name: Cluster
+      type: string
+    - description: Kubernetes Version
+      jsonPath: .spec.kubernetesVersion
+      name: Version
+      type: string
+    - description: VPC ID
+      jsonPath: .status.vpc.id
+      name: VPC
+      type: string
+    - description: Current phase
+      jsonPath: .status.phase
+      name: Phase
+      type: string
+    - description: Setup ready
+      jsonPath: .status.ready
+      name: Ready
+      type: boolean
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          SetupEKS é o Schema para a API setupeks
+          Cria toda a infraestrutura AWS necessária para um cluster EKS funcional:
+          VPC, Subnets, NAT Gateway, IAM Roles, Security Groups, EKS Cluster e Node Groups
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              SetupEKSSpec define o estado desejado do SetupEKS
+              Um SetupEKS cria toda a infraestrutura necessária para um cluster EKS:
+              VPC, Subnets (públicas e privadas), Internet Gateway, NAT Gateway,
+              Route Tables, Security Groups, IAM Roles, EKS Cluster e Node Groups
+            properties:
+              accessEntries:
+                description: AccessEntries configura acesso ao cluster via IAM
+                items:
+                  description: EKSAccessEntry define uma entrada de acesso ao cluster
+                  properties:
+                    accessPolicies:
+                      description: AccessPolicies são políticas de acesso EKS
+                      items:
+                        type: string
+                      type: array
+                    kubernetesGroups:
+                      description: KubernetesGroups são grupos Kubernetes para o principal
+                      items:
+                        type: string
+                      type: array
+                    principalARN:
+                      description: PrincipalARN é o ARN do IAM principal (user, role,
+                        etc)
+                      type: string
+                    type:
+                      default: STANDARD
+                      description: Type é o tipo de acesso
+                      enum:
+                      - STANDARD
+                      - EC2_LINUX
+                      - EC2_WINDOWS
+                      - FARGATE_LINUX
+                      type: string
+                  required:
+                  - principalARN
+                  type: object
+                type: array
+              addons:
+                description: Addons lista de add-ons EKS a serem instalados
+                items:
+                  description: EKSAddonConfig define um add-on EKS
+                  properties:
+                    configurationValues:
+                      description: ConfigurationValues são valores de configuração
+                        em JSON
+                      type: string
+                    name:
+                      description: Name é o nome do add-on (vpc-cni, coredns, kube-proxy,
+                        aws-ebs-csi-driver, etc)
+                      type: string
+                    resolveConflicts:
+                      default: OVERWRITE
+                      description: ResolveConflicts define como resolver conflitos
+                      enum:
+                      - OVERWRITE
+                      - NONE
+                      - PRESERVE
+                      type: string
+                    serviceAccountRoleARN:
+                      description: ServiceAccountRoleARN é o ARN do IAM role para
+                        o service account
+                      type: string
+                    version:
+                      description: Version é a versão do add-on (usa latest se não
+                        especificado)
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
+              availabilityZones:
+                description: AvailabilityZones lista as AZs onde criar subnets (mínimo
+                  2 para EKS)
+                items:
+                  type: string
+                maxItems: 6
+                minItems: 2
+                type: array
+              clusterLogging:
+                description: ClusterLogging habilita logs do cluster no CloudWatch
+                properties:
+                  apiServer:
+                    description: APIServer habilita logs do API server
+                    type: boolean
+                  audit:
+                    description: Audit habilita logs de auditoria
+                    type: boolean
+                  authenticator:
+                    description: Authenticator habilita logs do authenticator
+                    type: boolean
+                  controllerManager:
+                    description: ControllerManager habilita logs do controller manager
+                    type: boolean
+                  scheduler:
+                    description: Scheduler habilita logs do scheduler
+                    type: boolean
+                type: object
+              clusterName:
+                description: ClusterName é o nome do cluster EKS (usa metadata.name
+                  se não especificado)
+                type: string
+              defaultNodePool:
+                description: DefaultNodePool configuração padrão aplicada a todos
+                  os node pools
+                properties:
+                  amiType:
+                    description: AMIType padrão
+                    type: string
+                  capacityType:
+                    description: CapacityType padrão
+                    type: string
+                  diskSize:
+                    description: DiskSize padrão em GB
+                    format: int32
+                    type: integer
+                  labels:
+                    additionalProperties:
+                      type: string
+                    description: Labels padrão
+                    type: object
+                  tags:
+                    additionalProperties:
+                      type: string
+                    description: Tags padrão
+                    type: object
+                type: object
+              deletionPolicy:
+                default: Delete
+                description: DeletionPolicy define o comportamento ao deletar o CR
+                enum:
+                - Delete
+                - Retain
+                type: string
+              enableIRSA:
+                default: true
+                description: EnableIRSA habilita IAM Roles for Service Accounts
+                type: boolean
+              encryptionConfig:
+                description: EncryptionConfig configuração de criptografia com KMS
+                properties:
+                  enabled:
+                    default: false
+                    description: Enabled habilita criptografia de secrets
+                    type: boolean
+                  kmsKeyARN:
+                    description: KMSKeyARN é o ARN da chave KMS (cria uma nova se
+                      não especificado)
+                    type: string
+                type: object
+              endpointAccess:
+                description: EndpointAccess define o acesso ao endpoint da API do
+                  cluster
+                properties:
+                  privateAccess:
+                    default: true
+                    description: PrivateAccess habilita acesso privado (dentro da
+                      VPC)
+                    type: boolean
+                  publicAccess:
+                    default: true
+                    description: PublicAccess habilita acesso público ao endpoint
+                    type: boolean
+                  publicAccessCIDRs:
+                    description: PublicAccessCIDRs limita acesso público a CIDRs específicos
+                    items:
+                      type: string
+                    type: array
+                type: object
+              existingSubnetIDs:
+                description: |-
+                  ExistingSubnetIDs permite usar subnets existentes
+                  Deve ter pelo menos 2 subnets em AZs diferentes
+                items:
+                  type: string
+                type: array
+              existingVpcID:
+                description: ExistingVpcID permite usar uma VPC existente ao invés
+                  de criar nova
+                type: string
+              installDefaultAddons:
+                default: true
+                description: InstallDefaultAddons instala add-ons essenciais (vpc-cni,
+                  coredns, kube-proxy)
+                type: boolean
+              kubernetesVersion:
+                default: "1.29"
+                description: 'KubernetesVersion é a versão do Kubernetes (ex: 1.28,
+                  1.29, 1.30)'
+                pattern: ^[0-9]+\.[0-9]+$
+                type: string
+              natGatewayMode:
+                default: Single
+                description: NATGatewayMode define como criar NAT Gateways
+                enum:
+                - Single
+                - HighAvailability
+                - None
+                type: string
+              nodePools:
+                description: NodePools define os grupos de nós do cluster
+                items:
+                  description: NodePoolConfig define um grupo de nós
+                  properties:
+                    amiType:
+                      default: AL2_x86_64
+                      description: AMIType é o tipo de AMI (AL2_x86_64, AL2_ARM_64,
+                        BOTTLEROCKET_x86_64, etc)
+                      enum:
+                      - AL2_x86_64
+                      - AL2_x86_64_GPU
+                      - AL2_ARM_64
+                      - BOTTLEROCKET_x86_64
+                      - BOTTLEROCKET_ARM_64
+                      - CUSTOM
+                      type: string
+                    capacityType:
+                      default: ON_DEMAND
+                      description: CapacityType é o tipo de capacidade (ON_DEMAND
+                        ou SPOT)
+                      enum:
+                      - ON_DEMAND
+                      - SPOT
+                      type: string
+                    diskSize:
+                      default: 50
+                      description: DiskSize é o tamanho do disco em GB
+                      format: int32
+                      maximum: 16384
+                      minimum: 20
+                      type: integer
+                    instanceTypes:
+                      description: 'InstanceTypes são os tipos de instância EC2 (ex:
+                        t3.medium, m5.large)'
+                      items:
+                        type: string
+                      minItems: 1
+                      type: array
+                    labels:
+                      additionalProperties:
+                        type: string
+                      description: Labels são labels Kubernetes aplicados aos nós
+                      type: object
+                    name:
+                      description: Name é o nome do node pool
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    scalingConfig:
+                      description: ScalingConfig define a configuração de escala
+                      properties:
+                        desiredSize:
+                          default: 2
+                          description: DesiredSize é o número desejado de nós
+                          format: int32
+                          minimum: 0
+                          type: integer
+                        maxSize:
+                          default: 3
+                          description: MaxSize é o número máximo de nós
+                          format: int32
+                          minimum: 1
+                          type: integer
+                        minSize:
+                          default: 1
+                          description: MinSize é o número mínimo de nós
+                          format: int32
+                          minimum: 0
+                          type: integer
+                      type: object
+                    subnetSelector:
+                      default: private
+                      description: SubnetSelector define em quais subnets criar os
+                        nós
+                      enum:
+                      - private
+                      - public
+                      - all
+                      type: string
+                    tags:
+                      additionalProperties:
+                        type: string
+                      description: Tags específicas deste node pool
+                      type: object
+                    taints:
+                      description: Taints são taints aplicados aos nós
+                      items:
+                        description: NodeTaintConfig define um taint
+                        properties:
+                          effect:
+                            description: Effect é o efeito do taint
+                            enum:
+                            - NO_SCHEDULE
+                            - NO_EXECUTE
+                            - PREFER_NO_SCHEDULE
+                            type: string
+                          key:
+                            description: Key é a chave do taint
+                            type: string
+                          value:
+                            description: Value é o valor do taint
+                            type: string
+                        required:
+                        - effect
+                        - key
+                        type: object
+                      type: array
+                    updateConfig:
+                      description: UpdateConfig configuração de atualização dos nós
+                      properties:
+                        maxUnavailable:
+                          description: MaxUnavailable é o número máximo de nós indisponíveis
+                            durante update
+                          format: int32
+                          type: integer
+                        maxUnavailablePercentage:
+                          description: MaxUnavailablePercentage é a porcentagem máxima
+                            de nós indisponíveis
+                          format: int32
+                          type: integer
+                      type: object
+                  required:
+                  - instanceTypes
+                  - name
+                  type: object
+                minItems: 1
+                type: array
+              privateSubnetCIDRs:
+                description: |-
+                  PrivateSubnetCIDRs são os CIDRs das subnets privadas (1 por AZ)
+                  Se não especificado, calcula automaticamente baseado no VpcCIDR
+                items:
+                  type: string
+                type: array
+              providerRef:
+                description: ProviderRef referencia o AWSProvider para autenticação
+                properties:
+                  name:
+                    description: Name of the AWSProvider
+                    type: string
+                  namespace:
+                    description: Namespace of the AWSProvider (if different from current
+                      namespace)
+                    type: string
+                required:
+                - name
+                type: object
+              publicSubnetCIDRs:
+                description: |-
+                  PublicSubnetCIDRs são os CIDRs das subnets públicas (1 por AZ)
+                  Se não especificado, calcula automaticamente baseado no VpcCIDR
+                items:
+                  type: string
+                type: array
+              tags:
+                additionalProperties:
+                  type: string
+                description: Tags são tags adicionais aplicadas a todos os recursos
+                type: object
+              vpcCIDR:
+                description: 'VpcCIDR é o bloco CIDR da VPC (ex: 10.0.0.0/16)'
+                pattern: ^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$
+                type: string
+            required:
+            - nodePools
+            - providerRef
+            - vpcCIDR
+            type: object
+          status:
+            description: SetupEKSStatus define o estado observado do SetupEKS
+            properties:
+              addons:
+                description: Addons informações dos add-ons instalados
+                items:
+                  description: AddonStatusInfo contém informações de um add-on
+                  properties:
+                    name:
+                      description: Name é o nome do add-on
+                      type: string
+                    status:
+                      description: Status é o status (CREATING, ACTIVE, CREATE_FAILED,
+                        UPDATING, DELETING, DELETE_FAILED)
+                      type: string
+                    version:
+                      description: Version é a versão instalada
+                      type: string
+                  type: object
+                type: array
+              cluster:
+                description: Cluster informações do cluster EKS
+                properties:
+                  arn:
+                    description: ARN é o ARN do cluster
+                    type: string
+                  certificateAuthority:
+                    description: CertificateAuthority é o CA do cluster (base64)
+                    type: string
+                  createdAt:
+                    description: CreatedAt é quando o cluster foi criado
+                    type: string
+                  endpoint:
+                    description: Endpoint é o endpoint da API do cluster
+                    type: string
+                  name:
+                    description: Name é o nome do cluster
+                    type: string
+                  platformVersion:
+                    description: PlatformVersion é a versão da plataforma EKS
+                    type: string
+                  status:
+                    description: Status é o status do cluster (CREATING, ACTIVE, DELETING,
+                      FAILED, UPDATING)
+                    type: string
+                  version:
+                    description: Version é a versão do Kubernetes
+                    type: string
+                type: object
+              clusterRole:
+                description: ClusterRole informações do IAM role do cluster
+                properties:
+                  arn:
+                    description: ARN é o ARN do role
+                    type: string
+                  name:
+                    description: Name é o nome do role
+                    type: string
+                type: object
+              clusterSecurityGroup:
+                description: ClusterSecurityGroup informações do SG do cluster
+                properties:
+                  id:
+                    description: ID é o ID do Security Group na AWS
+                    type: string
+                  name:
+                    description: Name é o nome do Security Group
+                    type: string
+                type: object
+              conditions:
+                description: Conditions são as condições do recurso
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              internetGateway:
+                description: InternetGateway informações do Internet Gateway
+                properties:
+                  id:
+                    description: ID é o ID do Internet Gateway na AWS
+                    type: string
+                  state:
+                    description: State é o estado do IGW
+                    type: string
+                type: object
+              kubeconfigCommand:
+                description: KubeconfigCommand comando para obter kubeconfig
+                type: string
+              lastSyncTime:
+                description: LastSyncTime é o timestamp da última sincronização
+                format: date-time
+                type: string
+              message:
+                description: Message contém mensagem de status ou erro
+                type: string
+              natGateways:
+                description: NATGateways informações dos NAT Gateways
+                items:
+                  description: NATGatewayStatusInfo contém informações de status do
+                    NAT Gateway
+                  properties:
+                    allocationID:
+                      description: AllocationID é o ID do Elastic IP
+                      type: string
+                    elasticIP:
+                      description: ElasticIP é o IP elástico associado
+                      type: string
+                    id:
+                      description: ID é o ID do NAT Gateway na AWS
+                      type: string
+                    state:
+                      description: State é o estado do NAT Gateway
+                      type: string
+                    subnetID:
+                      description: SubnetID é a subnet onde o NAT está
+                      type: string
+                  type: object
+                type: array
+              nodePools:
+                description: NodePools informações dos node groups
+                items:
+                  description: NodePoolStatusInfo contém informações de um node group
+                  properties:
+                    arn:
+                      description: ARN é o ARN do node group
+                      type: string
+                    capacityType:
+                      description: CapacityType é ON_DEMAND ou SPOT
+                      type: string
+                    desiredSize:
+                      description: DesiredSize é o número desejado de nós
+                      format: int32
+                      type: integer
+                    instanceTypes:
+                      description: InstanceTypes são os tipos de instância
+                      items:
+                        type: string
+                      type: array
+                    maxSize:
+                      description: MaxSize é o número máximo de nós
+                      format: int32
+                      type: integer
+                    minSize:
+                      description: MinSize é o número mínimo de nós
+                      format: int32
+                      type: integer
+                    name:
+                      description: Name é o nome do node group
+                      type: string
+                    status:
+                      description: Status é o status (CREATING, ACTIVE, UPDATING,
+                        DELETING, CREATE_FAILED, DELETE_FAILED)
+                      type: string
+                    subnets:
+                      description: Subnets são as subnets onde os nós estão
+                      items:
+                        type: string
+                      type: array
+                  type: object
+                type: array
+              nodeRole:
+                description: NodeRole informações do IAM role dos nós
+                properties:
+                  arn:
+                    description: ARN é o ARN do role
+                    type: string
+                  name:
+                    description: Name é o nome do role
+                    type: string
+                type: object
+              nodeSecurityGroup:
+                description: NodeSecurityGroup informações do SG dos nós
+                properties:
+                  id:
+                    description: ID é o ID do Security Group na AWS
+                    type: string
+                  name:
+                    description: Name é o nome do Security Group
+                    type: string
+                type: object
+              oidcIssuerURL:
+                description: OIDCIssuerURL é a URL do OIDC provider para IRSA
+                type: string
+              phase:
+                description: Phase indica a fase atual do setup
+                type: string
+              privateSubnets:
+                description: PrivateSubnets informações das subnets privadas
+                items:
+                  description: SubnetStatusInfo contém informações de status de uma
+                    subnet
+                  properties:
+                    availabilityZone:
+                      description: AvailabilityZone é a AZ da subnet
+                      type: string
+                    cidr:
+                      description: CIDR é o bloco CIDR da subnet
+                      type: string
+                    id:
+                      description: ID é o ID da subnet na AWS
+                      type: string
+                    state:
+                      description: State é o estado da subnet
+                      type: string
+                    type:
+                      description: Type é o tipo da subnet (public/private)
+                      type: string
+                  type: object
+                type: array
+              publicSubnets:
+                description: PublicSubnets informações das subnets públicas
+                items:
+                  description: SubnetStatusInfo contém informações de status de uma
+                    subnet
+                  properties:
+                    availabilityZone:
+                      description: AvailabilityZone é a AZ da subnet
+                      type: string
+                    cidr:
+                      description: CIDR é o bloco CIDR da subnet
+                      type: string
+                    id:
+                      description: ID é o ID da subnet na AWS
+                      type: string
+                    state:
+                      description: State é o estado da subnet
+                      type: string
+                    type:
+                      description: Type é o tipo da subnet (public/private)
+                      type: string
+                  type: object
+                type: array
+              ready:
+                description: Ready indica se todo o setup está pronto
+                type: boolean
+              routeTables:
+                description: RouteTables informações das Route Tables
+                items:
+                  description: RouteTableStatusInfo contém informações de status da
+                    Route Table
+                  properties:
+                    associatedSubnets:
+                      description: AssociatedSubnets são as subnets associadas
+                      items:
+                        type: string
+                      type: array
+                    id:
+                      description: ID é o ID da Route Table na AWS
+                      type: string
+                    type:
+                      description: Type é o tipo (public/private)
+                      type: string
+                  type: object
+                type: array
+              vpc:
+                description: VPC informações da VPC criada
+                properties:
+                  cidr:
+                    description: CIDR é o bloco CIDR da VPC
+                    type: string
+                  id:
+                    description: VPCID é o ID da VPC na AWS
+                    type: string
+                  state:
+                    description: State é o estado da VPC
+                    type: string
+                type: object
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

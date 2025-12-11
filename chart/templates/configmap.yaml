@@ -1,0 +1,20 @@
+{{- if .Values.configMap.create }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.configMap.name | default (include "infra-operator.fullname" .) }}
+  labels:
+    {{- include "infra-operator.labels" . | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- with .Values.configMap.data }}
+data:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- with .Values.configMap.binaryData }}
+binaryData:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}

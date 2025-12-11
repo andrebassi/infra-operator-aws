@@ -1,0 +1,151 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: routetables.aws-infra-operator.runner.codes
+spec:
+  group: aws-infra-operator.runner.codes
+  names:
+    kind: RouteTable
+    listKind: RouteTableList
+    plural: routetables
+    shortNames:
+    - rt
+    singular: routetable
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.routeTableID
+      name: RT-ID
+      type: string
+    - jsonPath: .status.vpcID
+      name: VPC-ID
+      type: string
+    - jsonPath: .status.associatedSubnets[*]
+      name: Subnets
+      type: integer
+    - jsonPath: .status.ready
+      name: Ready
+      type: boolean
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: RouteTable is the Schema for the routetables API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: RouteTableSpec defines the desired state of RouteTable
+            properties:
+              deletionPolicy:
+                default: Delete
+                description: DeletionPolicy
+                enum:
+                - Delete
+                - Retain
+                type: string
+              providerRef:
+                description: ProviderRef references the AWSProvider to use
+                properties:
+                  name:
+                    description: Name of the AWSProvider
+                    type: string
+                  namespace:
+                    description: Namespace of the AWSProvider (if different from current
+                      namespace)
+                    type: string
+                required:
+                - name
+                type: object
+              routes:
+                description: Routes to add to the route table
+                items:
+                  description: Route defines a route in the route table
+                  properties:
+                    destinationCidrBlock:
+                      description: DestinationCidrBlock is the IPv4 CIDR block destination
+                      type: string
+                    gatewayID:
+                      description: GatewayID is the ID of an internet gateway or virtual
+                        private gateway
+                      type: string
+                    instanceID:
+                      description: InstanceID is the ID of a NAT instance
+                      type: string
+                    natGatewayID:
+                      description: NatGatewayID is the ID of a NAT gateway
+                      type: string
+                    networkInterfaceID:
+                      description: NetworkInterfaceID is the ID of a network interface
+                      type: string
+                    vpcPeeringConnectionID:
+                      description: VpcPeeringConnectionID is the ID of a VPC peering
+                        connection
+                      type: string
+                  type: object
+                type: array
+              subnetAssociations:
+                description: SubnetAssociations are the subnets to associate with
+                  this route table
+                items:
+                  type: string
+                type: array
+              tags:
+                additionalProperties:
+                  type: string
+                description: Tags to apply to the route table
+                type: object
+              vpcID:
+                description: VpcID is the ID of the VPC
+                type: string
+            required:
+            - providerRef
+            - vpcID
+            type: object
+          status:
+            description: RouteTableStatus defines the observed state of RouteTable
+            properties:
+              associatedSubnets:
+                description: AssociatedSubnets lists the associated subnet IDs
+                items:
+                  type: string
+                type: array
+              lastSyncTime:
+                description: LastSyncTime
+                format: date-time
+                type: string
+              ready:
+                description: Ready indicates if the route table is ready
+                type: boolean
+              routeTableID:
+                description: RouteTableID is the ID of the route table
+                type: string
+              vpcID:
+                description: VpcID is the ID of the VPC
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

@@ -1,0 +1,202 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: eksclusters.aws-infra-operator.runner.codes
+spec:
+  group: aws-infra-operator.runner.codes
+  names:
+    kind: EKSCluster
+    listKind: EKSClusterList
+    plural: eksclusters
+    shortNames:
+    - eks
+    singular: ekscluster
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.clusterName
+      name: Cluster
+      type: string
+    - jsonPath: .status.version
+      name: Version
+      type: string
+    - jsonPath: .status.status
+      name: Status
+      type: string
+    - jsonPath: .status.endpoint
+      name: Endpoint
+      type: string
+    - jsonPath: .status.ready
+      name: Ready
+      type: boolean
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: EKSCluster is the Schema for the eksclusters API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: EKSClusterSpec defines the desired state of EKSCluster
+            properties:
+              clusterName:
+                description: ClusterName is the name of the EKS cluster
+                maxLength: 100
+                minLength: 1
+                type: string
+              deletionPolicy:
+                default: Delete
+                description: DeletionPolicy
+                enum:
+                - Delete
+                - Retain
+                type: string
+              encryption:
+                description: Encryption configuration
+                properties:
+                  providerKeyARN:
+                    description: Provider KMS key ARN
+                    type: string
+                  resources:
+                    description: Resources to encrypt
+                    items:
+                      type: string
+                    type: array
+                type: object
+              logging:
+                description: Logging configuration
+                properties:
+                  clusterLogging:
+                    description: ClusterLogging enables specific log types
+                    items:
+                      description: EKSLogType represents EKS log types
+                      enum:
+                      - api
+                      - audit
+                      - authenticator
+                      - controllerManager
+                      - scheduler
+                      type: string
+                    type: array
+                type: object
+              providerRef:
+                description: ProviderRef references the AWSProvider to use
+                properties:
+                  name:
+                    description: Name of the AWSProvider
+                    type: string
+                  namespace:
+                    description: Namespace of the AWSProvider (if different from current
+                      namespace)
+                    type: string
+                required:
+                - name
+                type: object
+              roleARN:
+                description: RoleARN is the IAM role ARN for the EKS cluster
+                type: string
+              tags:
+                additionalProperties:
+                  type: string
+                description: Tags to apply to the cluster
+                type: object
+              version:
+                description: Version is the Kubernetes version
+                pattern: ^1\.(2[4-9]|[3-9][0-9])$
+                type: string
+              vpcConfig:
+                description: VpcConfig defines the VPC configuration
+                properties:
+                  endpointPrivateAccess:
+                    default: false
+                    description: EndpointPrivateAccess enables private API endpoint
+                    type: boolean
+                  endpointPublicAccess:
+                    default: true
+                    description: EndpointPublicAccess enables public API endpoint
+                    type: boolean
+                  publicAccessCidrs:
+                    description: PublicAccessCidrs are CIDR blocks allowed for public
+                      access
+                    items:
+                      type: string
+                    type: array
+                  securityGroupIDs:
+                    description: SecurityGroupIDs are additional security groups
+                    items:
+                      type: string
+                    type: array
+                  subnetIDs:
+                    description: SubnetIDs are the subnet IDs for the cluster
+                    items:
+                      type: string
+                    minItems: 2
+                    type: array
+                required:
+                - subnetIDs
+                type: object
+            required:
+            - clusterName
+            - providerRef
+            - roleARN
+            - version
+            - vpcConfig
+            type: object
+          status:
+            description: EKSClusterStatus defines the observed state of EKSCluster
+            properties:
+              arn:
+                description: ARN of the cluster
+                type: string
+              certificateAuthority:
+                description: CertificateAuthority contains the CA data
+                type: string
+              clusterName:
+                description: ClusterName is the name of the cluster
+                type: string
+              endpoint:
+                description: Endpoint is the API server endpoint
+                type: string
+              lastSyncTime:
+                description: LastSyncTime
+                format: date-time
+                type: string
+              platformVersion:
+                description: PlatformVersion is the EKS platform version
+                type: string
+              ready:
+                description: Ready indicates if the cluster is ready
+                type: boolean
+              status:
+                description: Status of the cluster
+                type: string
+              version:
+                description: Version is the current Kubernetes version
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

@@ -1,0 +1,225 @@
+# ServiceMonitor for Prometheus Operator
+# This resource tells Prometheus to scrape metrics from the Infra Operator
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: infra-operator-metrics
+  namespace: iop-system
+  labels:
+    app: infra-operator
+    control-plane: controller-manager
+spec:
+  # Selector to match the controller manager service
+  selector:
+    matchLabels:
+      control-plane: controller-manager
+
+  # Endpoints to scrape
+  endpoints:
+  - port: metrics
+    # Scrape interval - adjust based on your needs
+    interval: 30s
+    # Scrape timeout
+    scrapeTimeout: 10s
+    # HTTP path to scrape metrics from
+    path: /metrics
+    # Use HTTP (default)
+    scheme: http
+    # Optional: Add relabeling rules
+    relabelings:
+    - sourceLabels: [__meta_kubernetes_pod_name]
+      targetLabel: pod
+    - sourceLabels: [__meta_kubernetes_pod_node_name]
+      targetLabel: node
+    - sourceLabels: [__meta_kubernetes_namespace]
+      targetLabel: namespace
+    # Optional: Metric relabeling (filter/modify metrics)
+    metricRelabelings:
+    # Example: Drop metrics you don't need
+    # - sourceLabels: [__name__]
+    #   regex: 'workqueue_.*'
+    #   action: drop
+
+  # Namespace selector - monitor only this namespace
+  namespaceSelector:
+    matchNames:
+    - iop-system
+
+---
+# PodMonitor (alternative to ServiceMonitor)
+# Use this if you don't have a Service and want to scrape pods directly
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: infra-operator-pods
+  namespace: iop-system
+  labels:
+    app: infra-operator
+    control-plane: controller-manager
+spec:
+  # Selector to match the controller manager pods
+  selector:
+    matchLabels:
+      control-plane: controller-manager
+
+  # Scrape configuration
+  podMetricsEndpoints:
+  - port: metrics
+    interval: 30s
+    scrapeTimeout: 10s
+    path: /metrics
+    relabelings:
+    - sourceLabels: [__meta_kubernetes_pod_name]
+      targetLabel: pod
+    - sourceLabels: [__meta_kubernetes_pod_node_name]
+      targetLabel: node
+
+  # Namespace selector
+  namespaceSelector:
+    matchNames:
+    - iop-system
+
+---
+# PrometheusRule for alerting
+# Define alerts based on metrics
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: infra-operator-alerts
+  namespace: iop-system
+  labels:
+    app: infra-operator
+    prometheus: kube-prometheus
+spec:
+  groups:
+  - name: infra-operator
+    interval: 30s
+    rules:
+
+    # Alert: High reconciliation error rate
+    - alert: InfraOperatorHighErrorRate
+      expr: |
+        (
+          sum(rate(infra_operator_reconcile_errors_total[5m]))
+          /
+          sum(rate(infra_operator_reconcile_total[5m]))
+        ) > 0.1
+      for: 5m
+      labels:
+        severity: warning
+        component: infra-operator
+      annotations:
+        summary: "High reconciliation error rate"
+        description: "Infra Operator reconciliation error rate is {{ $value | humanizePercentage }} (threshold: 10%)"
+
+    # Alert: Reconciliation taking too long
+    - alert: InfraOperatorSlowReconciliation
+      expr: |
+        histogram_quantile(0.95,
+          sum(rate(infra_operator_reconcile_duration_seconds_bucket[5m])) by (le, resource_type)
+        ) > 30
+      for: 10m
+      labels:
+        severity: warning
+        component: infra-operator
+      annotations:
+        summary: "Slow reconciliation for {{ $labels.resource_type }}"
+        description: "95th percentile reconciliation duration is {{ $value }}s for {{ $labels.resource_type }}"
+
+    # Alert: AWS API errors
+    - alert: InfraOperatorAWSAPIErrors
+      expr: |
+        sum(rate(infra_operator_aws_api_errors_total[5m])) by (service, operation) > 1
+      for: 5m
+      labels:
+        severity: warning
+        component: infra-operator
+      annotations:
+        summary: "AWS API errors for {{ $labels.service }}.{{ $labels.operation }}"
+        description: "{{ $labels.service }}.{{ $labels.operation }} error rate: {{ $value }} errors/sec"
+
+    # Alert: AWS API throttling
+    - alert: InfraOperatorAWSAPIThrottled
+      expr: |
+        sum(rate(infra_operator_aws_api_throttles_total[5m])) by (service, operation) > 0.1
+      for: 5m
+      labels:
+        severity: warning
+        component: infra-operator
+      annotations:
+        summary: "AWS API throttling for {{ $labels.service }}.{{ $labels.operation }}"
+        description: "{{ $labels.service }}.{{ $labels.operation }} throttling rate: {{ $value }} throttles/sec"
+
+    # Alert: Drift detected
+    - alert: InfraOperatorDriftDetected
+      expr: |
+        sum(increase(infra_operator_drift_detected_total{severity="critical"}[10m])) by (resource_type) > 0
+      for: 5m
+      labels:
+        severity: critical
+        component: infra-operator
+      annotations:
+        summary: "Critical drift detected for {{ $labels.resource_type }}"
+        description: "{{ $value }} critical drift(s) detected for {{ $labels.resource_type }} in the last 10 minutes"
+
+    # Alert: Drift healing failures
+    - alert: InfraOperatorDriftHealingFailed
+      expr: |
+        sum(rate(infra_operator_drift_healing_failures_total[5m])) by (resource_type) > 0
+      for: 5m
+      labels:
+        severity: warning
+        component: infra-operator
+      annotations:
+        summary: "Drift healing failures for {{ $labels.resource_type }}"
+        description: "Drift healing failing for {{ $labels.resource_type }} at {{ $value }} failures/sec"
+
+    # Alert: Resources stuck in NotReady
+    - alert: InfraOperatorResourcesNotReady
+      expr: |
+        sum(infra_operator_resources_total{status="notready"}) by (resource_type) > 5
+      for: 15m
+      labels:
+        severity: warning
+        component: infra-operator
+      annotations:
+        summary: "Multiple {{ $labels.resource_type }} resources not ready"
+        description: "{{ $value }} {{ $labels.resource_type }} resources have been in NotReady state for >15 minutes"
+
+    # Alert: Provider not ready
+    - alert: InfraOperatorProviderNotReady
+      expr: |
+        infra_operator_provider_ready == 0
+      for: 5m
+      labels:
+        severity: critical
+        component: infra-operator
+      annotations:
+        summary: "AWS Provider {{ $labels.provider_name }} not ready"
+        description: "AWS Provider {{ $labels.provider_name }} in region {{ $labels.region }} has been not ready for >5 minutes"
+
+    # Alert: Finalizer taking too long
+    - alert: InfraOperatorSlowFinalizer
+      expr: |
+        histogram_quantile(0.95,
+          sum(rate(infra_operator_finalizer_duration_seconds_bucket[5m])) by (le, resource_type)
+        ) > 60
+      for: 10m
+      labels:
+        severity: warning
+        component: infra-operator
+      annotations:
+        summary: "Slow finalizer for {{ $labels.resource_type }}"
+        description: "95th percentile finalizer duration is {{ $value }}s for {{ $labels.resource_type }}"
+
+    # Alert: No reconciliations happening (operator down?)
+    - alert: InfraOperatorNoReconciliations
+      expr: |
+        sum(rate(infra_operator_reconcile_total[5m])) == 0
+      for: 10m
+      labels:
+        severity: critical
+        component: infra-operator
+      annotations:
+        summary: "No reconciliations happening"
+        description: "Infra Operator has not performed any reconciliations in the last 10 minutes - operator may be down"

@@ -1,0 +1,74 @@
+{
+  "version.label": {
+    "message": "Próxima",
+    "description": "The label for version current"
+  },
+  "sidebar.docsSidebar.category.Getting Started": {
+    "message": "Primeiros Passos",
+    "description": "The label for category Getting Started in sidebar docsSidebar"
+  },
+  "sidebar.docsSidebar.category.AWS Services": {
+    "message": "Serviços AWS",
+    "description": "The label for category AWS Services in sidebar docsSidebar"
+  },
+  "sidebar.docsSidebar.category.Networking": {
+    "message": "Rede",
+    "description": "The label for category Networking in sidebar docsSidebar"
+  },
+  "sidebar.docsSidebar.category.Compute": {
+    "message": "Computação",
+    "description": "The label for category Compute in sidebar docsSidebar"
+  },
+  "sidebar.docsSidebar.category.Database": {
+    "message": "Banco de Dados",
+    "description": "The label for category Database in sidebar docsSidebar"
+  },
+  "sidebar.docsSidebar.category.Storage": {
+    "message": "Armazenamento",
+    "description": "The label for category Storage in sidebar docsSidebar"
+  },
+  "sidebar.docsSidebar.category.Security": {
+    "message": "Segurança",
+    "description": "The label for category Security in sidebar docsSidebar"
+  },
+  "sidebar.docsSidebar.category.Messaging": {
+    "message": "Mensageria",
+    "description": "The label for category Messaging in sidebar docsSidebar"
+  },
+  "sidebar.docsSidebar.category.DNS": {
+    "message": "DNS",
+    "description": "The label for category DNS in sidebar docsSidebar"
+  },
+  "sidebar.docsSidebar.category.CDN": {
+    "message": "CDN",
+    "description": "The label for category CDN in sidebar docsSidebar"
+  },
+  "sidebar.docsSidebar.category.API": {
+    "message": "API",
+    "description": "The label for category API in sidebar docsSidebar"
+  },
+  "sidebar.docsSidebar.category.Container": {
+    "message": "Container",
+    "description": "The label for category Container in sidebar docsSidebar"
+  },
+  "sidebar.docsSidebar.category.Caching": {
+    "message": "Cache",
+    "description": "The label for category Caching in sidebar docsSidebar"
+  },
+  "sidebar.docsSidebar.category.Features": {
+    "message": "Recursos",
+    "description": "The label for category Features in sidebar docsSidebar"
+  },
+  "sidebar.docsSidebar.category.API Reference": {
+    "message": "Referência da API",
+    "description": "The label for category API Reference in sidebar docsSidebar"
+  },
+  "sidebar.docsSidebar.category.Guides": {
+    "message": "Guias",
+    "description": "The label for category Guides in sidebar docsSidebar"
+  },
+  "sidebar.docsSidebar.category.Advanced": {
+    "message": "Avançado",
+    "description": "The label for category Advanced in sidebar docsSidebar"
+  }
+}

@@ -1,0 +1,13 @@
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: NLB
+metadata:
+  name: test-nlb
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  loadBalancerName: helm-test-nlb
+  scheme: internet-facing
+  subnets:
+    - subnet-example1
+  ipAddressType: ipv4

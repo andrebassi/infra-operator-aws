@@ -1,0 +1,11 @@
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: SQSQueue
+metadata:
+  name: test-queue
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  queueName: helm-test-queue
+  messageRetentionPeriod: 345600
+  visibilityTimeout: 30

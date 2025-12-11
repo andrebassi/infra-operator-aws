@@ -1,0 +1,13 @@
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: DynamoDBTable
+metadata:
+  name: test-table
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  tableName: helm-test-users
+  hashKey:
+    name: userID
+    type: S
+  billingMode: PAY_PER_REQUEST

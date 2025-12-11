@@ -1,0 +1,11 @@
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: InternetGateway
+metadata:
+  name: test-igw
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  vpcID: "vpc-6eb2ede03d16229c9"
+  tags:
+    Name: helm-test-igw

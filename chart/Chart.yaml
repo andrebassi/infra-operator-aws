@@ -1,0 +1,24 @@
+apiVersion: v2
+name: infra-operator
+description: A production-ready Kubernetes operator for managing AWS infrastructure resources
+type: application
+version: 1.2.0
+appVersion: "1.2.0"
+keywords:
+  - aws
+  - infrastructure
+  - operator
+  - kubernetes
+  - kubebuilder
+  - gitops
+  - clean-architecture
+home: https://github.com/andrebassi/infra-operator-aws
+sources:
+  - https://github.com/andrebassi/infra-operator-aws
+maintainers:
+  - name: Andre Bassi
+    email: andre@example.com
+icon: https://raw.githubusercontent.com/kubernetes/kubernetes/master/logo/logo.png
+annotations:
+  category: Infrastructure
+  licenses: Apache-2.0

@@ -1,0 +1,19 @@
+# Test file for CLI mode
+# Usage: ./infra-operator plan -f samples/cli-test.yaml
+---
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: ComputeStack
+metadata:
+  name: cli-test-stack
+spec:
+  providerRef:
+    name: localstack
+  vpcCIDR: "10.100.0.0/16"
+  bastionInstance:
+    enabled: true
+    instanceType: t3.micro
+    userData: |
+      #!/bin/bash
+      echo "Hello from CLI mode!"
+      yum install -y neofetch
+      neofetch > /home/ec2-user/cli-mode.txt

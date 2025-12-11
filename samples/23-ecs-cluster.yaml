@@ -1,0 +1,11 @@
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: ECSCluster
+metadata:
+  name: test-ecs
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  clusterName: helm-test-ecs
+  tags:
+    Name: helm-test-ecs

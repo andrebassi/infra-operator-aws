@@ -1,0 +1,152 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 700">
+  <defs>
+    <style>
+      .bg { fill: #0f172a; }
+      .start-box { fill: #326ce5; stroke: #4a8df8; stroke-width: 2; }
+      .process-box { fill: #1e293b; stroke: #475569; stroke-width: 2; }
+      .decision-box { fill: #7c3aed; stroke: #a78bfa; stroke-width: 2; }
+      .success-box { fill: #22c55e; stroke: #4ade80; stroke-width: 2; }
+      .error-box { fill: #ef4444; stroke: #f87171; stroke-width: 2; }
+      .requeue-box { fill: #f59e0b; stroke: #fbbf24; stroke-width: 2; }
+      .aws-box { fill: #ff9900; stroke: #ffb84d; stroke-width: 2; }
+      .finalizer-box { fill: #ec4899; stroke: #f472b6; stroke-width: 2; }
+      .text-title { font-family: 'Segoe UI', Arial, sans-serif; font-size: 11px; font-weight: 600; fill: #fff; }
+      .text-label { font-family: 'Segoe UI', Arial, sans-serif; font-size: 10px; fill: #fff; }
+      .text-small { font-family: 'Segoe UI', Arial, sans-serif; font-size: 9px; fill: #94a3b8; }
+      .arrow { stroke: #60a5fa; stroke-width: 2; fill: none; marker-end: url(#arrow-blue); }
+      .arrow-yes { stroke: #4ade80; stroke-width: 2; fill: none; marker-end: url(#arrow-green); }
+      .arrow-no { stroke: #f87171; stroke-width: 2; fill: none; marker-end: url(#arrow-red); }
+      .step-circle { fill: #3b82f6; stroke: #60a5fa; stroke-width: 2; }
+      .step-num { font-family: 'Segoe UI', Arial, sans-serif; font-size: 9px; font-weight: 700; fill: #fff; }
+      .label-yes { font-family: 'Segoe UI', Arial, sans-serif; font-size: 8px; fill: #4ade80; }
+      .label-no { font-family: 'Segoe UI', Arial, sans-serif; font-size: 8px; fill: #f87171; }
+    </style>
+    <marker id="arrow-blue" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#60a5fa"/>
+    </marker>
+    <marker id="arrow-green" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#4ade80"/>
+    </marker>
+    <marker id="arrow-red" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#f87171"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect class="bg" width="1100" height="700" rx="12"/>
+
+  <!-- Title -->
+  <text x="550" y="28" text-anchor="middle" style="font-family: 'Segoe UI', Arial; font-size: 16px; font-weight: 700; fill: #f1f5f9;">S3Bucket Reconciliation Flow</text>
+
+  <!-- Step 1: Fetch S3Bucket CR -->
+  <rect class="start-box" x="460" y="45" width="180" height="40" rx="8"/>
+  <circle class="step-circle" cx="475" cy="65" r="11"/>
+  <text class="step-num" x="475" y="69" text-anchor="middle">1</text>
+  <text class="text-title" x="550" y="62" text-anchor="middle">Fetch S3Bucket CR</text>
+  <text class="text-small" x="550" y="76" text-anchor="middle">Get resource from K8s API</text>
+
+  <!-- Step 2: Get AWSProvider -->
+  <rect class="process-box" x="460" y="105" width="180" height="40" rx="8"/>
+  <circle class="step-circle" cx="475" cy="125" r="11"/>
+  <text class="step-num" x="475" y="129" text-anchor="middle">2</text>
+  <text class="text-title" x="550" y="122" text-anchor="middle">Get AWSProvider</text>
+  <text class="text-small" x="550" y="136" text-anchor="middle">Build aws.Config</text>
+
+  <!-- Step 3: Decision - Being deleted? -->
+  <polygon class="decision-box" points="550,165 620,200 550,235 480,200"/>
+  <circle class="step-circle" cx="510" cy="178" r="11"/>
+  <text class="step-num" x="510" y="182" text-anchor="middle">3</text>
+  <text class="text-title" x="550" y="198" text-anchor="middle">Deleting?</text>
+
+  <!-- Step 3a: Deletion branch - Has finalizer? -->
+  <polygon class="decision-box" points="200,200 270,235 200,270 130,235"/>
+  <text class="text-title" x="200" y="233" text-anchor="middle">Finalizer?</text>
+
+  <!-- Step 3b: Cleanup based on policy -->
+  <rect class="finalizer-box" x="60" y="290" width="140" height="50" rx="8"/>
+  <text class="text-title" x="130" y="310" text-anchor="middle">Execute Cleanup</text>
+  <text class="text-small" x="130" y="325" text-anchor="middle">Based on deletionPolicy</text>
+
+  <!-- Step 3c: Remove finalizer -->
+  <rect class="finalizer-box" x="60" y="360" width="140" height="40" rx="8"/>
+  <text class="text-title" x="130" y="378" text-anchor="middle">Remove Finalizer</text>
+  <text class="text-small" x="130" y="392" text-anchor="middle">Return (done)</text>
+
+  <!-- Step 4: Add finalizer -->
+  <rect class="process-box" x="460" y="260" width="180" height="40" rx="8"/>
+  <circle class="step-circle" cx="475" cy="280" r="11"/>
+  <text class="step-num" x="475" y="284" text-anchor="middle">4</text>
+  <text class="text-title" x="550" y="277" text-anchor="middle">Add Finalizer</text>
+  <text class="text-small" x="550" y="291" text-anchor="middle">If not exists</text>
+
+  <!-- Step 5: Check if bucket exists -->
+  <rect class="aws-box" x="460" y="320" width="180" height="40" rx="8"/>
+  <circle class="step-circle" cx="475" cy="340" r="11"/>
+  <text class="step-num" x="475" y="344" text-anchor="middle">5</text>
+  <text class="text-title" x="550" y="337" text-anchor="middle">HeadBucket</text>
+  <text class="text-small" x="550" y="351" text-anchor="middle">Check if bucket exists</text>
+
+  <!-- Step 6: Decision - Exists? -->
+  <polygon class="decision-box" points="550,380 620,415 550,450 480,415"/>
+  <circle class="step-circle" cx="510" cy="393" r="11"/>
+  <text class="step-num" x="510" y="397" text-anchor="middle">6</text>
+  <text class="text-title" x="550" y="413" text-anchor="middle">Exists?</text>
+
+  <!-- Step 6a: Create bucket -->
+  <rect class="aws-box" x="700" y="395" width="160" height="50" rx="8"/>
+  <text class="text-title" x="780" y="415" text-anchor="middle">CreateBucket</text>
+  <text class="text-small" x="780" y="430" text-anchor="middle">LocationConstraint</text>
+  <text class="text-small" x="780" y="442" text-anchor="middle">if region != us-east-1</text>
+
+  <!-- Step 7: Configure bucket -->
+  <rect class="aws-box" x="420" y="475" width="260" height="90" rx="8"/>
+  <circle class="step-circle" cx="435" cy="495" r="11"/>
+  <text class="step-num" x="435" y="499" text-anchor="middle">7</text>
+  <text class="text-title" x="550" y="495" text-anchor="middle">Configure Bucket</text>
+  <text class="text-small" x="550" y="512" text-anchor="middle">PutBucketVersioning</text>
+  <text class="text-small" x="550" y="524" text-anchor="middle">PutBucketEncryption</text>
+  <text class="text-small" x="550" y="536" text-anchor="middle">PutBucketLifecycleConfiguration</text>
+  <text class="text-small" x="550" y="548" text-anchor="middle">PutBucketCors • PutPublicAccessBlock • Tags</text>
+
+  <!-- Step 8: Update status -->
+  <rect class="success-box" x="460" y="585" width="180" height="55" rx="8"/>
+  <circle class="step-circle" cx="475" cy="605" r="11"/>
+  <text class="step-num" x="475" y="609" text-anchor="middle">8</text>
+  <text class="text-title" x="550" y="605" text-anchor="middle">Update Status</text>
+  <text class="text-small" x="550" y="620" text-anchor="middle">ready = true</text>
+  <text class="text-small" x="550" y="632" text-anchor="middle">arn, region, bucketDomainName</text>
+
+  <!-- Step 9: Requeue -->
+  <rect class="requeue-box" x="460" y="660" width="180" height="30" rx="6"/>
+  <circle class="step-circle" cx="475" cy="675" r="11"/>
+  <text class="step-num" x="475" y="679" text-anchor="middle">9</text>
+  <text class="text-label" x="550" y="680" text-anchor="middle">Requeue after 5 min</text>
+
+  <!-- Arrows - Main flow -->
+  <path class="arrow" d="M 550 85 L 550 105"/>
+  <path class="arrow" d="M 550 145 L 550 165"/>
+  <path class="arrow-no" d="M 550 235 L 550 260"/>
+  <text class="label-no" x="560" y="250">NO</text>
+  <path class="arrow" d="M 550 300 L 550 320"/>
+  <path class="arrow" d="M 550 360 L 550 380"/>
+  <path class="arrow-yes" d="M 550 450 L 550 475"/>
+  <text class="label-yes" x="560" y="465">YES</text>
+  <path class="arrow" d="M 550 565 L 550 585"/>
+  <path class="arrow" d="M 550 640 L 550 660"/>
+
+  <!-- Arrows - Deletion branch -->
+  <path class="arrow-yes" d="M 480 200 L 270 200 L 270 235"/>
+  <text class="label-yes" x="360" y="192">YES</text>
+  <path class="arrow-yes" d="M 200 270 L 130 270 L 130 290"/>
+  <text class="label-yes" x="145" y="282">YES</text>
+  <path class="arrow" d="M 130 340 L 130 360"/>
+
+  <!-- Arrow - Create bucket joins config -->
+  <path class="arrow-no" d="M 620 415 L 700 415"/>
+  <text class="label-no" x="650" y="407">NO</text>
+  <path class="arrow" d="M 780 445 L 780 510 L 680 510"/>
+
+  <!-- Skip deletion if no finalizer -->
+  <path class="arrow-no" d="M 130 235 L 60 235 L 60 180 L 480 180 L 480 200"/>
+  <text class="label-no" x="75" y="227">NO</text>
+</svg>

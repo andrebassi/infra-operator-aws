@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500">
+  <defs>
+    <style>
+      .vpc-box { fill: #e1f5ff; stroke: #0066cc; stroke-width: 3; }
+      .az-box { fill: #fff4e6; stroke: #ff9800; stroke-width: 2; }
+      .public-subnet { fill: #c8e6c9; stroke: #4caf50; stroke-width: 2; }
+      .private-subnet { fill: #ffcdd2; stroke: #f44336; stroke-width: 2; }
+      .igw-box { fill: #bbdefb; stroke: #2196f3; stroke-width: 2; }
+      .nat-box { fill: #d1c4e9; stroke: #673ab7; stroke-width: 2; }
+      .internet-circle { fill: #90caf9; stroke: #1976d2; stroke-width: 2; }
+      .text-title { font-family: Arial, sans-serif; font-size: 14px; font-weight: bold; fill: #333; }
+      .text-label { font-family: Arial, sans-serif; font-size: 11px; fill: #333; }
+      .text-small { font-family: Arial, sans-serif; font-size: 10px; fill: #666; }
+      .arrow { stroke: #60a5fa; stroke-width: 2; fill: none; marker-end: url(#arrowhead); }
+      .arrow-dashed { stroke: #60a5fa; stroke-width: 2; fill: none; stroke-dasharray: 5,5; marker-end: url(#arrowhead); }
+    </style>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#60a5fa"/>
+    </marker>
+  </defs>
+
+  <!-- VPC Container -->
+  <rect class="vpc-box" x="50" y="80" width="700" height="380" rx="10"/>
+  <text class="text-title" x="70" y="105">VPC: 10.0.0.0/16</text>
+
+  <!-- AZ 1 -->
+  <rect class="az-box" x="80" y="130" width="280" height="300" rx="8"/>
+  <text class="text-label" x="100" y="155">Availability Zone: us-east-1a</text>
+
+  <!-- Public Subnet AZ1 -->
+  <rect class="public-subnet" x="100" y="175" width="240" height="60" rx="5"/>
+  <text class="text-label" x="160" y="200">Public Subnet</text>
+  <text class="text-small" x="175" y="220">10.0.1.0/24</text>
+
+  <!-- Private Subnet AZ1 -->
+  <rect class="private-subnet" x="100" y="350" width="240" height="60" rx="5"/>
+  <text class="text-label" x="160" y="375">Private Subnet</text>
+  <text class="text-small" x="170" y="395">10.0.10.0/24</text>
+
+  <!-- NAT Gateway AZ1 -->
+  <rect class="nat-box" x="150" y="260" width="140" height="40" rx="5"/>
+  <text class="text-label" x="175" y="285">NAT Gateway</text>
+
+  <!-- AZ 2 -->
+  <rect class="az-box" x="440" y="130" width="280" height="300" rx="8"/>
+  <text class="text-label" x="460" y="155">Availability Zone: us-east-1b</text>
+
+  <!-- Public Subnet AZ2 -->
+  <rect class="public-subnet" x="460" y="175" width="240" height="60" rx="5"/>
+  <text class="text-label" x="520" y="200">Public Subnet</text>
+  <text class="text-small" x="535" y="220">10.0.2.0/24</text>
+
+  <!-- Private Subnet AZ2 -->
+  <rect class="private-subnet" x="460" y="350" width="240" height="60" rx="5"/>
+  <text class="text-label" x="520" y="375">Private Subnet</text>
+  <text class="text-small" x="530" y="395">10.0.11.0/24</text>
+
+  <!-- NAT Gateway AZ2 -->
+  <rect class="nat-box" x="510" y="260" width="140" height="40" rx="5"/>
+  <text class="text-label" x="535" y="285">NAT Gateway</text>
+
+  <!-- Internet Gateway -->
+  <rect class="igw-box" x="330" y="90" width="140" height="35" rx="5"/>
+  <text class="text-label" x="350" y="113">Internet Gateway</text>
+
+  <!-- Internet -->
+  <circle class="internet-circle" cx="400" cy="40" r="30"/>
+  <text class="text-label" x="375" y="45">Internet</text>
+
+  <!-- Arrows -->
+  <line class="arrow" x1="400" y1="70" x2="400" y2="88"/>
+  <line class="arrow" x1="350" y1="125" x2="220" y2="173"/>
+  <line class="arrow" x1="450" y1="125" x2="580" y2="173"/>
+  <line class="arrow" x1="220" y1="235" x2="220" y2="258"/>
+  <line class="arrow" x1="580" y1="235" x2="580" y2="258"/>
+  <line class="arrow-dashed" x1="220" y1="300" x2="220" y2="348"/>
+  <line class="arrow-dashed" x1="580" y1="300" x2="580" y2="348"/>
+</svg>

@@ -1,0 +1,78 @@
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: S3Bucket
+metadata:
+  name: my-app-bucket
+  namespace: default
+spec:
+  providerRef:
+    name: aws-provider-irsa
+  bucketName: my-company-app-data-bucket
+  acl: private
+
+  # Enable versioning
+  versioning:
+    enabled: true
+
+  # Server-side encryption with AES256
+  encryption:
+    algorithm: AES256
+
+  # Block all public access
+  publicAccessBlock:
+    blockPublicAcls: true
+    ignorePublicAcls: true
+    blockPublicPolicy: true
+    restrictPublicBuckets: true
+
+  # Lifecycle rules
+  lifecycleRules:
+  - id: archive-old-files
+    enabled: true
+    prefix: logs/
+    transitions:
+    - days: 30
+      storageClass: STANDARD_IA
+    - days: 90
+      storageClass: GLACIER
+    expiration:
+      days: 365
+
+  # CORS configuration
+  corsRules:
+  - allowedOrigins:
+    - https://example.com
+    allowedMethods:
+    - GET
+    - PUT
+    - POST
+    allowedHeaders:
+    - "*"
+    maxAgeSeconds: 3600
+
+  # Tags
+  tags:
+    application: my-app
+    team: platform
+    cost-center: engineering
+
+  # Retention policy
+  deletionPolicy: Retain
+---
+# Simple bucket example
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: S3Bucket
+metadata:
+  name: simple-bucket
+  namespace: default
+spec:
+  providerRef:
+    name: aws-provider-irsa
+  bucketName: my-simple-bucket-12345
+  encryption:
+    algorithm: AES256
+  publicAccessBlock:
+    blockPublicAcls: true
+    ignorePublicAcls: true
+    blockPublicPolicy: true
+    restrictPublicBuckets: true
+  deletionPolicy: Delete

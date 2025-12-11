@@ -1,0 +1,11 @@
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: APIGateway
+metadata:
+  name: test-api
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  name: helm-test-api
+  description: "Helm test API Gateway"
+  protocolType: HTTP

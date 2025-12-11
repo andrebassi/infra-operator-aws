@@ -1,0 +1,32 @@
+{{- if .Values.prometheus.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "infra-operator.fullname" . }}
+  namespace: {{ .Values.prometheus.serviceMonitor.namespace | default (include "infra-operator.namespace" .) }}
+  labels:
+    {{- include "infra-operator.labels" . | nindent 4 }}
+    {{- with .Values.prometheus.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: {{ .Values.prometheus.serviceMonitor.interval }}
+    scrapeTimeout: {{ .Values.prometheus.serviceMonitor.scrapeTimeout }}
+    {{- with .Values.prometheus.serviceMonitor.metricRelabelings }}
+    metricRelabelings:
+      {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- with .Values.prometheus.serviceMonitor.relabelings }}
+    relabelings:
+      {{- toYaml . | nindent 4 }}
+    {{- end }}
+  selector:
+    matchLabels:
+      {{- include "infra-operator.selectorLabels" . | nindent 6 }}
+  namespaceSelector:
+    matchNames:
+    - {{ include "infra-operator.namespace" . }}
+{{- end }}

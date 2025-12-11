@@ -1,0 +1,18 @@
+{{- if .Values.priorityClass.create }}
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: {{ .Values.priorityClass.name | default (include "infra-operator.fullname" .) }}
+  labels:
+    {{- include "infra-operator.labels" . | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+value: {{ .Values.priorityClass.value }}
+globalDefault: {{ .Values.priorityClass.globalDefault }}
+description: {{ .Values.priorityClass.description | quote }}
+{{- if .Values.priorityClass.preemptionPolicy }}
+preemptionPolicy: {{ .Values.priorityClass.preemptionPolicy }}
+{{- end }}
+{{- end }}

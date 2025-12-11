@@ -1,0 +1,102 @@
+# Development values for infra-operator
+# Override default values for development/testing environments
+
+# Single replica for development
+replicaCount: 1
+
+image:
+  # Use local images or latest for development
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+# Leader election not needed for single replica
+leaderElection:
+  enabled: false
+
+# Lower resource requirements for dev
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+# Disable high availability features
+affinity: {}
+priorityClassName: ""
+
+# Disable Prometheus MONITORAMENTO in dev
+prometheus:
+  serviceMonitor:
+    enabled: false
+
+# Disable WEBHOOKS for faster iteration
+webhooks:
+  enabled: false
+
+# Don't keep CRDs in development (easier cleanup)
+crds:
+  keep: false
+
+# Development logging (human-readable)
+logging:
+  level: debug
+  development: true
+  encoder: console
+  stacktraceLevel: warn
+
+# CONFIGURAÇÃO AWS for LocalStack or static credentials
+aws:
+  defaultRegion: "us-east-1"
+
+  # Disable IRSA in development
+  irsa:
+    enabled: false
+
+  # Use static credentials for LocalStack
+  staticCredentials:
+    enabled: true
+    secretName: aws-credentials
+
+# Disable drift detection in development
+driftDetection:
+  enabled: false
+
+# Fast updates in development
+updateStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxUnavailable: 1
+    maxSurge: 0
+
+# Disable PDB in development
+podDisruptionBudget:
+  enabled: false
+
+# Disable POLÍTICA DE REDE in development
+networkPolicy:
+  enabled: false
+
+# Development tags
+globalTags:
+  managed-by: infra-operator
+  environment: development
+  developer: local
+
+# Environment variables for LocalStack
+env:
+  - name: AWS_ENDPOINT_URL
+    value: "http://localstack.localstack.svc.cluster.local:4566"
+  - name: AWS_SDK_LOAD_CONFIG
+    value: "1"
+  - name: AWS_ACCESS_KEY_ID
+    value: "test"
+  - name: AWS_SECRET_ACCESS_KEY
+    value: "test"
+
+# Fast shutdown
+terminationGracePeriodSeconds: 5
+
+# No lifecycle hooks in development
+lifecycle: {}

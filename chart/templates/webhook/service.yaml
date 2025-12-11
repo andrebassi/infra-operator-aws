@@ -1,0 +1,23 @@
+{{- if .Values.webhooks.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "infra-operator.webhookServiceName" . }}
+  namespace: {{ include "infra-operator.namespace" . }}
+  labels:
+    {{- include "infra-operator.labels" . | nindent 4 }}
+  {{- with .Values.webhooks.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.webhooks.service.type }}
+  ports:
+  - name: https
+    port: {{ .Values.webhooks.service.port }}
+    targetPort: webhook
+    protocol: TCP
+  selector:
+    {{- include "infra-operator.selectorLabels" . | nindent 4 }}
+    control-plane: controller-manager
+{{- end }}

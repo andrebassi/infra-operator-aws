@@ -1,0 +1,950 @@
+{
+    "swagger": "2.0",
+    "info": {
+        "description": "API REST para gerenciamento de infraestrutura AWS\nSuporta criação, atualização e deleção de recursos AWS via HTTP",
+        "title": "Infra Operator AWS API",
+        "contact": {
+            "name": "André Bassi",
+            "url": "https://github.com/andrebassi/infra-operator-aws"
+        },
+        "license": {
+            "name": "Apache 2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.html"
+        },
+        "version": "1.0.1"
+    },
+    "host": "localhost:8080",
+    "basePath": "/api/v1",
+    "paths": {
+        "/apply": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Cria ou atualiza recursos AWS conforme especificado",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "operations"
+                ],
+                "summary": "Aplicar recursos",
+                "parameters": [
+                    {
+                        "description": "Recursos para aplicar",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.ApplyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.ApplyResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.APIResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/config/aws": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Retorna a configuração AWS atual (sem expor secrets)",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "config"
+                ],
+                "summary": "Obter configuração AWS atual",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.AWSConfigResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Configura as credenciais AWS para a API. Existem 3 formas de autenticar:\n\n**1. Credenciais diretas (Access Key + Secret Key):**\n```json\n{\n\"region\": \"us-east-1\",\n\"accessKeyId\": \"AKIAIOSFODNN7EXAMPLE\",\n\"secretAccessKey\": \"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\"\n}\n```\n\n**2. Profile do AWS CLI (~/.aws/credentials):**\n```json\n{\n\"region\": \"us-east-1\",\n\"profile\": \"my-profile\"\n}\n```\n\n**3. LocalStack ou endpoint customizado:**\n```json\n{\n\"region\": \"us-east-1\",\n\"endpoint\": \"http://localhost:4566\",\n\"accessKeyId\": \"test\",\n\"secretAccessKey\": \"test\"\n}\n```\n\n**4. Credenciais temporárias (STS):**\n```json\n{\n\"region\": \"us-east-1\",\n\"accessKeyId\": \"ASIAXXX...\",\n\"secretAccessKey\": \"xxx...\",\n\"sessionToken\": \"FwoGZXIvYXdzEBY...\"\n}\n```",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "config"
+                ],
+                "summary": "Configurar credenciais AWS",
+                "parameters": [
+                    {
+                        "description": "Configuração AWS",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.AWSConfigRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.AWSConfigResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.APIResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/delete": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Remove recursos AWS especificados",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "operations"
+                ],
+                "summary": "Deletar recursos",
+                "parameters": [
+                    {
+                        "description": "Recursos para deletar",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.DeleteRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.DeleteResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.APIResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/health": {
+            "get": {
+                "description": "Retorna o status de saúde da API",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "health"
+                ],
+                "summary": "Health check",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.HealthResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/plan": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Analisa os recursos e retorna o que será criado, atualizado ou deletado\n\n**Exemplo de request (VPC simples):**\n```json\n{\n\"resources\": [{\n\"apiVersion\": \"aws-infra-operator.runner.codes/v1alpha1\",\n\"kind\": \"VPC\",\n\"metadata\": {\"name\": \"minha-vpc\"},\n\"spec\": {\"cidrBlock\": \"10.0.0.0/16\"}\n}]\n}\n```\n\n**Exemplo ComputeStack (infraestrutura completa):**\n```json\n{\n\"resources\": [{\n\"apiVersion\": \"aws-infra-operator.runner.codes/v1alpha1\",\n\"kind\": \"ComputeStack\",\n\"metadata\": {\"name\": \"meu-ambiente\"},\n\"spec\": {\n\"vpcCIDR\": \"10.100.0.0/16\",\n\"bastionInstance\": {\n\"enabled\": true,\n\"instanceType\": \"t3.micro\"\n}\n}\n}]\n}\n```\n\n**Exemplo Subnet:**\n```json\n{\n\"resources\": [{\n\"apiVersion\": \"aws-infra-operator.runner.codes/v1alpha1\",\n\"kind\": \"Subnet\",\n\"metadata\": {\"name\": \"public-subnet-1\"},\n\"spec\": {\"vpcId\": \"vpc-0abc123def456\", \"cidrBlock\": \"10.0.1.0/24\", \"availabilityZone\": \"us-east-1a\", \"mapPublicIpOnLaunch\": true}\n}]\n}\n```\n\n**Exemplo SecurityGroup:**\n```json\n{\n\"resources\": [{\n\"apiVersion\": \"aws-infra-operator.runner.codes/v1alpha1\",\n\"kind\": \"SecurityGroup\",\n\"metadata\": {\"name\": \"web-sg\"},\n\"spec\": {\"vpcId\": \"vpc-0abc123def456\", \"description\": \"Security group para web servers\", \"ingressRules\": [{\"protocol\": \"tcp\", \"fromPort\": 443, \"toPort\": 443, \"cidrIp\": \"0.0.0.0/0\"}]}\n}]\n}\n```\n\n**Exemplo EC2Instance:**\n```json\n{\n\"resources\": [{\n\"apiVersion\": \"aws-infra-operator.runner.codes/v1alpha1\",\n\"kind\": \"EC2Instance\",\n\"metadata\": {\"name\": \"web-server\"},\n\"spec\": {\"instanceName\": \"web-server-1\", \"instanceType\": \"t3.micro\", \"imageId\": \"ami-0c55b159cbfafe1f0\", \"subnetId\": \"subnet-0abc123\", \"securityGroupIds\": [\"sg-0abc123\"], \"keyName\": \"my-keypair\"}\n}]\n}\n```\n\n**Exemplo S3Bucket:**\n```json\n{\n\"resources\": [{\n\"apiVersion\": \"aws-infra-operator.runner.codes/v1alpha1\",\n\"kind\": \"S3Bucket\",\n\"metadata\": {\"name\": \"my-bucket\"},\n\"spec\": {\"bucketName\": \"my-company-data-bucket\", \"versioning\": true}\n}]\n}\n```\n\n**Exemplo RDSInstance:**\n```json\n{\n\"resources\": [{\n\"apiVersion\": \"aws-infra-operator.runner.codes/v1alpha1\",\n\"kind\": \"RDSInstance\",\n\"metadata\": {\"name\": \"app-postgres\"},\n\"spec\": {\"dbInstanceIdentifier\": \"app-postgres\", \"dbInstanceClass\": \"db.t3.micro\", \"engine\": \"postgres\", \"engineVersion\": \"15.4\", \"allocatedStorage\": 20, \"masterUsername\": \"admin\"}\n}]\n}\n```\n\n**Exemplo DynamoDBTable:**\n```json\n{\n\"resources\": [{\n\"apiVersion\": \"aws-infra-operator.runner.codes/v1alpha1\",\n\"kind\": \"DynamoDBTable\",\n\"metadata\": {\"name\": \"users-table\"},\n\"spec\": {\"tableName\": \"Users\", \"billingMode\": \"PAY_PER_REQUEST\"}\n}]\n}\n```\n\n**Exemplo SQSQueue:**\n```json\n{\n\"resources\": [{\n\"apiVersion\": \"aws-infra-operator.runner.codes/v1alpha1\",\n\"kind\": \"SQSQueue\",\n\"metadata\": {\"name\": \"orders-queue\"},\n\"spec\": {\"queueName\": \"orders-queue\", \"visibilityTimeout\": 30, \"fifoQueue\": false}\n}]\n}\n```\n\n**Exemplo SNSTopic:**\n```json\n{\n\"resources\": [{\n\"apiVersion\": \"aws-infra-operator.runner.codes/v1alpha1\",\n\"kind\": \"SNSTopic\",\n\"metadata\": {\"name\": \"app-notifications\"},\n\"spec\": {\"topicName\": \"app-notifications\", \"displayName\": \"App Notifications\"}\n}]\n}\n```\n\n**Exemplo LambdaFunction:**\n```json\n{\n\"resources\": [{\n\"apiVersion\": \"aws-infra-operator.runner.codes/v1alpha1\",\n\"kind\": \"LambdaFunction\",\n\"metadata\": {\"name\": \"process-orders\"},\n\"spec\": {\"functionName\": \"process-orders\", \"runtime\": \"nodejs18.x\", \"handler\": \"index.handler\", \"role\": \"arn:aws:iam::123456789:role/lambda-role\", \"memorySize\": 256, \"timeout\": 30}\n}]\n}\n```\n\n**Exemplo EKSCluster:**\n```json\n{\n\"resources\": [{\n\"apiVersion\": \"aws-infra-operator.runner.codes/v1alpha1\",\n\"kind\": \"EKSCluster\",\n\"metadata\": {\"name\": \"production\"},\n\"spec\": {\"name\": \"production\", \"version\": \"1.28\", \"roleArn\": \"arn:aws:iam::123456789:role/eks-cluster-role\"}\n}]\n}\n```\n\n**Exemplo IAMRole:**\n```json\n{\n\"resources\": [{\n\"apiVersion\": \"aws-infra-operator.runner.codes/v1alpha1\",\n\"kind\": \"IAMRole\",\n\"metadata\": {\"name\": \"lambda-execution-role\"},\n\"spec\": {\"roleName\": \"lambda-execution-role\", \"assumeRolePolicyDocument\": \"{\\\"Version\\\":\\\"2012-10-17\\\",\\\"Statement\\\":[{\\\"Effect\\\":\\\"Allow\\\",\\\"Principal\\\":{\\\"Service\\\":\\\"lambda.amazonaws.com\\\"},\\\"Action\\\":\\\"sts:AssumeRole\\\"}]}\", \"managedPolicyArns\": [\"arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole\"]}\n}]\n}\n```",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "operations"
+                ],
+                "summary": "Gerar plano de execução",
+                "parameters": [
+                    {
+                        "description": "Recursos para planejar",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.PlanRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.PlanResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.APIResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/resources": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Lista todos os recursos do estado local",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "resources"
+                ],
+                "summary": "Listar recursos",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Filtrar por tipo (ex: VPC, ComputeStack)",
+                        "name": "kind",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.GetResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.APIResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Remove recursos AWS especificados",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "operations"
+                ],
+                "summary": "Deletar recursos",
+                "parameters": [
+                    {
+                        "description": "Recursos para deletar",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.DeleteRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.DeleteResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.APIResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/resources/{kind}": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Lista recursos de um tipo específico",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "resources"
+                ],
+                "summary": "Listar recursos por tipo",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Tipo do recurso (ex: VPC, ComputeStack, EC2Instance)",
+                        "name": "kind",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.GetResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.APIResponse"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "api.APIError": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "details": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.APIResponse": {
+            "type": "object",
+            "properties": {
+                "data": {},
+                "error": {
+                    "$ref": "#/definitions/api.APIError"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "api.AWSConfigRequest": {
+            "description": "Request para configurar credenciais AWS",
+            "type": "object",
+            "properties": {
+                "accessKeyId": {
+                    "description": "Access Key ID da AWS",
+                    "type": "string",
+                    "example": "AKIAIOSFODNN7EXAMPLE"
+                },
+                "endpoint": {
+                    "description": "Endpoint customizado (opcional, para LocalStack ou outros)",
+                    "type": "string",
+                    "example": "http://localhost:4566"
+                },
+                "profile": {
+                    "description": "Profile do AWS CLI (opcional, usa credenciais do ~/.aws/credentials)",
+                    "type": "string",
+                    "example": "default"
+                },
+                "region": {
+                    "description": "Região AWS (ex: us-east-1, sa-east-1)",
+                    "type": "string",
+                    "example": "us-east-1"
+                },
+                "secretAccessKey": {
+                    "description": "Secret Access Key da AWS",
+                    "type": "string",
+                    "example": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+                },
+                "sessionToken": {
+                    "description": "Session Token (opcional, para credenciais temporárias)",
+                    "type": "string",
+                    "example": ""
+                }
+            }
+        },
+        "api.AWSConfigResponse": {
+            "type": "object",
+            "properties": {
+                "configured": {
+                    "description": "Indica se as credenciais foram configuradas",
+                    "type": "boolean"
+                },
+                "endpoint": {
+                    "description": "Endpoint customizado (se configurado)",
+                    "type": "string"
+                },
+                "message": {
+                    "description": "Mensagem de status",
+                    "type": "string"
+                },
+                "profile": {
+                    "description": "Profile usado (se configurado)",
+                    "type": "string"
+                },
+                "region": {
+                    "description": "Região configurada",
+                    "type": "string"
+                }
+            }
+        },
+        "api.ApplyRequest": {
+            "type": "object",
+            "properties": {
+                "dryRun": {
+                    "type": "boolean"
+                },
+                "resources": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/core.Resource"
+                    }
+                },
+                "yaml": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.ApplyResponse": {
+            "type": "object",
+            "properties": {
+                "created": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.ResourceResponse"
+                    }
+                },
+                "failed": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.ResourceResponse"
+                    }
+                },
+                "skipped": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.ResourceResponse"
+                    }
+                },
+                "summary": {
+                    "$ref": "#/definitions/api.ApplySummary"
+                },
+                "updated": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.ResourceResponse"
+                    }
+                }
+            }
+        },
+        "api.ApplySummary": {
+            "type": "object",
+            "properties": {
+                "created": {
+                    "type": "integer"
+                },
+                "failed": {
+                    "type": "integer"
+                },
+                "skipped": {
+                    "type": "integer"
+                },
+                "updated": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.DeleteRequest": {
+            "type": "object",
+            "properties": {
+                "dryRun": {
+                    "type": "boolean"
+                },
+                "resources": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/core.Resource"
+                    }
+                },
+                "yaml": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.DeleteResponse": {
+            "type": "object",
+            "properties": {
+                "deleted": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.ResourceResponse"
+                    }
+                },
+                "failed": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.ResourceResponse"
+                    }
+                },
+                "skipped": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.ResourceResponse"
+                    }
+                },
+                "summary": {
+                    "$ref": "#/definitions/api.DeleteSummary"
+                }
+            }
+        },
+        "api.DeleteSummary": {
+            "type": "object",
+            "properties": {
+                "deleted": {
+                    "type": "integer"
+                },
+                "failed": {
+                    "type": "integer"
+                },
+                "skipped": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.GetResponse": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer"
+                },
+                "resources": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.ResourceStateResponse"
+                    }
+                }
+            }
+        },
+        "api.HealthResponse": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "type": "string"
+                },
+                "timestamp": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.PlanItemResponse": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string"
+                },
+                "changes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "namespace": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.PlanRequest": {
+            "description": "Request para gerar plano de execução",
+            "type": "object",
+            "properties": {
+                "resources": {
+                    "description": "Lista de recursos AWS para planejar\nExample: [{\"apiVersion\":\"aws-infra-operator.runner.codes/v1alpha1\",\"kind\":\"VPC\",\"metadata\":{\"name\":\"my-vpc\"},\"spec\":{\"cidrBlock\":\"10.0.0.0/16\"}}]",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/core.Resource"
+                    }
+                },
+                "yaml": {
+                    "description": "YAML dos recursos (alternativa a resources)",
+                    "type": "string",
+                    "example": "apiVersion: aws-infra-operator.runner.codes/v1alpha1\nkind: VPC\nmetadata:\n  name: my-vpc\nspec:\n  cidrBlock: 10.0.0.0/16"
+                }
+            }
+        },
+        "api.PlanResponse": {
+            "type": "object",
+            "properties": {
+                "noChange": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.PlanItemResponse"
+                    }
+                },
+                "summary": {
+                    "$ref": "#/definitions/api.PlanSummary"
+                },
+                "toCreate": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.PlanItemResponse"
+                    }
+                },
+                "toDelete": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.PlanItemResponse"
+                    }
+                },
+                "toUpdate": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.PlanItemResponse"
+                    }
+                }
+            }
+        },
+        "api.PlanSummary": {
+            "type": "object",
+            "properties": {
+                "create": {
+                    "type": "integer"
+                },
+                "delete": {
+                    "type": "integer"
+                },
+                "noChange": {
+                    "type": "integer"
+                },
+                "update": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.ResourceResponse": {
+            "type": "object",
+            "properties": {
+                "awsResources": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "error": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "namespace": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.ResourceStateResponse": {
+            "type": "object",
+            "properties": {
+                "apiVersion": {
+                    "type": "string"
+                },
+                "awsResources": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "namespace": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "core.Metadata": {
+            "type": "object",
+            "properties": {
+                "annotations": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "labels": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "name": {
+                    "type": "string"
+                },
+                "namespace": {
+                    "type": "string"
+                }
+            }
+        },
+        "core.Resource": {
+            "type": "object",
+            "properties": {
+                "apiVersion": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "$ref": "#/definitions/core.Metadata"
+                },
+                "spec": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "status": {
+                    "type": "object",
+                    "additionalProperties": true
+                }
+            }
+        }
+    },
+    "securityDefinitions": {
+        "ApiKeyAuth": {
+            "type": "apiKey",
+            "name": "X-API-Key",
+            "in": "header"
+        },
+        "BearerAuth": {
+            "description": "Bearer token (prefixo \"Bearer \" + API Key)",
+            "type": "apiKey",
+            "name": "Authorization",
+            "in": "header"
+        }
+    }
+}

@@ -1,0 +1,116 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: internetgateways.aws-infra-operator.runner.codes
+spec:
+  group: aws-infra-operator.runner.codes
+  names:
+    kind: InternetGateway
+    listKind: InternetGatewayList
+    plural: internetgateways
+    shortNames:
+    - igw
+    singular: internetgateway
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.internetGatewayID
+      name: IGW-ID
+      type: string
+    - jsonPath: .status.vpcID
+      name: VPC-ID
+      type: string
+    - jsonPath: .status.state
+      name: State
+      type: string
+    - jsonPath: .status.ready
+      name: Ready
+      type: boolean
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: InternetGateway is the Schema for the internetgateways API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: InternetGatewaySpec defines the desired state of InternetGateway
+            properties:
+              deletionPolicy:
+                default: Delete
+                description: DeletionPolicy
+                enum:
+                - Delete
+                - Retain
+                type: string
+              providerRef:
+                description: ProviderRef references the AWSProvider to use
+                properties:
+                  name:
+                    description: Name of the AWSProvider
+                    type: string
+                  namespace:
+                    description: Namespace of the AWSProvider (if different from current
+                      namespace)
+                    type: string
+                required:
+                - name
+                type: object
+              tags:
+                additionalProperties:
+                  type: string
+                description: Tags to apply to the internet gateway
+                type: object
+              vpcID:
+                description: VpcID is the ID of the VPC to attach to
+                type: string
+            required:
+            - providerRef
+            - vpcID
+            type: object
+          status:
+            description: InternetGatewayStatus defines the observed state of InternetGateway
+            properties:
+              internetGatewayID:
+                description: InternetGatewayID is the ID of the internet gateway
+                type: string
+              lastSyncTime:
+                description: LastSyncTime
+                format: date-time
+                type: string
+              ready:
+                description: Ready indicates if the internet gateway is ready
+                type: boolean
+              state:
+                description: State is the attachment state
+                type: string
+              vpcID:
+                description: VpcID is the ID of the attached VPC
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

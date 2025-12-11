@@ -1,0 +1,15 @@
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Route53RecordSet
+metadata:
+  name: test-record
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  hostedZoneID: REPLACE_WITH_ZONE_ID  # Get from Route53HostedZone status
+  name: www.example.com
+  type: A
+  ttl: 300
+  resourceRecords:
+    - "192.0.2.1"
+    - "192.0.2.2"

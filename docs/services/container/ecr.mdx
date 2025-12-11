@@ -1,0 +1,1494 @@
+---
+title: 'ECR Repository - Registro de Containers'
+description: 'Registro privado de imagens Docker gerenciado pela AWS'
+icon: 'docker'
+---
+
+Crie e gerencie registros privados de imagens Docker (containers) na AWS com segurança, scanning de vulnerabilidades e políticas de ciclo de vida automáticas.
+
+## Pré-requisito: Configuração do AWSProvider
+
+Antes de criar qualquer recurso AWS, você precisa configurar um **AWSProvider** que gerencia as credenciais e autenticação com a AWS.
+
+<CodeGroup>
+```yaml IRSA
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: AWSProvider
+metadata:
+  name: production-aws
+  namespace: default
+spec:
+  region: us-east-1
+  roleARN: arn:aws:iam::123456789012:role/infra-operator-role
+  defaultTags:
+    managed-by: infra-operator
+    environment: production
+```
+
+```yaml Credenciais Estáticas
+apiVersion: v1
+kind: Secret
+metadata:
+  name: aws-credentials
+  namespace: default
+type: Opaque
+stringData:
+  access-key-id: test
+  secret-access-key: test
+---
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: AWSProvider
+metadata:
+  name: localstack
+  namespace: default
+spec:
+  region: us-east-1
+  accessKeyIDRef:
+    name: aws-credentials
+    key: access-key-id
+  secretAccessKeyRef:
+    name: aws-credentials
+    key: secret-access-key
+  defaultTags:
+    managed-by: infra-operator
+    environment: test
+```
+
+```bash Verificar Status
+kubectl get awsprovider
+kubectl describe awsprovider production-aws
+```
+</CodeGroup>
+
+<Warning>
+  Para produção, sempre use **IRSA** (IAM Roles for Service Accounts) ao invés de credenciais estáticas.
+</Warning>
+
+### Criar IAM Role para IRSA
+
+Para usar IRSA em produção, você precisa criar uma IAM Role com as permissões necessárias:
+
+<CodeGroup>
+```json Trust Policy (trust-policy.json)
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::123456789012:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B71EXAMPLE"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "oidc.eks.us-east-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B71EXAMPLE:sub": "system:serviceaccount:infra-operator-system:infra-operator-controller-manager",
+          "oidc.eks.us-east-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B71EXAMPLE:aud": "sts.amazonaws.com"
+        }
+      }
+    }
+  ]
+}
+```
+
+```json IAM Policy - ECR (ecr-policy.json)
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ecr:CreateRepository",
+        "ecr:DeleteRepository",
+        "ecr:DescribeRepositories",
+        "ecr:PutImageScanningConfiguration",
+        "ecr:PutImageTagMutability",
+        "ecr:PutLifecyclePolicy",
+        "ecr:GetLifecyclePolicy",
+        "ecr:TagResource",
+        "ecr:UntagResource",
+        "ecr:ListTagsForResource"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+```bash Criar Role com AWS CLI
+# 1. Obter OIDC Provider do cluster EKS
+export CLUSTER_NAME=my-cluster
+export AWS_REGION=us-east-1
+export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+
+OIDC_PROVIDER=$(aws eks describe-cluster \
+  --name $CLUSTER_NAME \
+  --region $AWS_REGION \
+  --query "cluster.identity.oidc.issuer" \
+  --output text | sed -e "s/^https:\/\///")
+
+# 2. Atualizar trust-policy.json com valores corretos
+cat > trust-policy.json <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::${AWS_ACCOUNT_ID}:oidc-provider/${OIDC_PROVIDER}"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "${OIDC_PROVIDER}:sub": "system:serviceaccount:infra-operator-system:infra-operator-controller-manager",
+          "${OIDC_PROVIDER}:aud": "sts.amazonaws.com"
+        }
+      }
+    }
+  ]
+}
+EOF
+
+# 3. Criar IAM Role
+aws iam create-role \
+  --role-name infra-operator-ecr-role \
+  --assume-role-policy-document file://trust-policy.json \
+  --description "Role for Infra Operator ECR management"
+
+# 4. Criar e anexar policy
+aws iam put-role-policy \
+  --role-name infra-operator-ecr-role \
+  --policy-name ECRManagement \
+  --policy-document file://ecr-policy.json
+
+# 5. Obter ARN da Role
+aws iam get-role \
+  --role-name infra-operator-ecr-role \
+  --query 'Role.Arn' \
+  --output text
+```
+
+```bash Anotar ServiceAccount do Operator
+# Adicionar annotation ao ServiceAccount do operator
+kubectl annotate serviceaccount infra-operator-controller-manager \
+  -n infra-operator-system \
+  eks.amazonaws.com/role-arn=arn:aws:iam::123456789012:role/infra-operator-ecr-role
+```
+</CodeGroup>
+
+<Note>
+  Substitua `123456789012` pelo seu AWS Account ID e `EXAMPLED539D4633E53DE1B71EXAMPLE` pelo ID do seu OIDC provider.
+</Note>
+
+## Visão Geral
+
+Amazon ECR (Elastic Container Registry) é um serviço de registro de containers docker privado, completamente gerenciado, que facilita armazenar, gerenciar e fazer deploy de imagens Docker/container images. Integra-se perfeitamente com ECS, EKS, Lambda e CI/CD pipelines.
+
+**Características:**
+- **Registro Privado Seguro**: Armazenar imagens Docker privadas na AWS
+- **Sem Gerenciamento de Infraestrutura**: Totalmente gerenciado pela AWS
+- **Alta Disponibilidade**: Replicado automaticamente em múltiplas AZs
+- **Integração com IAM**: Controle granular de acesso com IAM policies
+- **Image Scanning**: Detectar vulnerabilidades em imagens automaticamente
+- **Encryption at Rest**: Criptografia AES-256 ou KMS personalizadas
+- **Image Tag Mutability**: Impedir overwrite de tags (recomendado para produção)
+- **Lifecycle Policies**: Deletar imagens antigas automaticamente
+- **Cross-Account Access**: Compartilhar imagens com outras contas AWS
+- **Repository Policies**: Controle de acesso granular por repository
+- **Audit Integration**: Auditoria de todas as operações
+- **Replication Rules**: Replicar imagens entre regiões
+- **Cost Effective**: Pague apenas pelo armazenamento usado
+- **Docker Push/Pull Native**: Comandos docker standard funcionam nativamente
+
+**Status**: ⚠️ Requer LocalStack Pro ou AWS Real
+
+## Início Rápido
+
+<CodeGroup>
+```yaml ECR Repository Básico
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: ECRRepository
+metadata:
+  name: e2e-app-images
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  repositoryName: e2e-app-images
+  imageTagMutability: MUTABLE
+  scanOnPush: true
+  encryptionConfiguration:
+    encryptionType: AES256
+  tags:
+    environment: test
+    managed-by: infra-operator
+    purpose: e2e-testing
+  deletionPolicy: Delete
+```
+
+```yaml ECR Repository com Lifecycle Policy
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: ECRRepository
+metadata:
+  name: e2e-production-images
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  repositoryName: e2e-production-images
+  imageTagMutability: IMMUTABLE
+  scanOnPush: true
+  encryptionConfiguration:
+    encryptionType: AES256
+  lifecyclePolicy:
+    policyText: |
+      {
+        "rules": [
+          {
+            "rulePriority": 1,
+            "description": "Keep last 10 images",
+            "selection": {
+              "tagStatus": "any",
+              "countType": "imageCountMoreThan",
+              "countNumber": 10
+            },
+            "action": {
+              "type": "expire"
+            }
+          }
+        ]
+      }
+  tags:
+    environment: production
+    managed-by: infra-operator
+    purpose: e2e-testing
+  deletionPolicy: Delete
+```
+
+```yaml ECR Repository Completo
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: ECRRepository
+metadata:
+  name: app-backend
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  # Nome do repository (prefixo opcional)
+  repositoryName: app/backend
+
+  # Mutabilidade de tags (IMMUTABLE recomendado para produção)
+  imageTagMutability: IMMUTABLE
+
+  # Scanning de vulnerabilidades
+  scanOnPush: true
+
+  # Encryption com KMS (opcional)
+  encryptionConfiguration:
+    encryptionType: KMS
+    kmsKey: alias/ecr-encryption
+
+  # Política de ciclo de vida
+  lifecyclePolicy:
+    policyText: |
+      {
+        "rules": [{
+          "rulePriority": 1,
+          "description": "Manter últimas 10 imagens",
+          "selection": {
+            "tagStatus": "any",
+            "countType": "imageCountMoreThan",
+            "countNumber": 10
+          },
+          "action": {
+            "type": "expire"
+          }
+        }]
+      }
+
+  # Tags para organização
+  tags:
+    Environment: production
+    Application: backend
+    ManagedBy: infra-operator
+
+  # Manter repository se CR for deletado
+  deletionPolicy: Retain
+```
+
+```bash Aplicar
+kubectl apply -f ecr-repository.yaml
+```
+
+```bash Verificar Status
+kubectl get ecrrepositories
+kubectl describe ecrrepository e2e-app-images
+kubectl get ecrrepository e2e-app-images -o yaml
+```
+</CodeGroup>
+
+## Referência de Configuração
+
+### Campos Obrigatórios
+
+<ParamField path="spec.providerRef" type="object" required>
+  Referência ao recurso AWSProvider para autenticação
+
+  <Expandable title="properties">
+    <ParamField path="name" type="string" required>
+      Nome do recurso AWSProvider
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="spec.repositoryName" type="string" required>
+  Nome do repository ECR. Pode incluir prefixo com `/` (ex: `app/backend`)
+
+  **Regras:**
+  - 2 a 256 caracteres
+  - Letras minúsculas, números, hífens, underscores, barras (`/`)
+  - Deve começar com letra ou número
+  - Sem espaços
+
+  ```yaml
+  repositoryName: myapp/backend
+  # ou sem prefixo
+  repositoryName: my-backend-service
+  ```
+</ParamField>
+
+### Campos Opcionais - Scanning
+
+<ParamField path="spec.scanOnPush" type="boolean" default="false">
+  Habilita scanning automático de vulnerabilidades quando imagem é enviada
+
+  ```yaml
+  scanOnPush: true
+  ```
+
+  **Opções:**
+  - `true`: Scan automático (recomendado em produção)
+  - `false`: Scan manual apenas (padrão)
+
+  **Detalhes:**
+  - Usa database de vulnerabilidades da AWS
+  - Detecta CVEs (Common Vulnerabilities and Exposures)
+  - Resultados disponíveis em DescribeImages
+  - Sem custo adicional para scanning
+</ParamField>
+
+### Campos Opcionais - Mutabilidade de Tags
+
+<ParamField path="spec.imageTagMutability" type="string" default="MUTABLE">
+  Permitir sobrescrita de tags de imagem
+
+  **Opções:**
+  - `MUTABLE`: Tags podem ser sobrescritas (padrão, menos seguro)
+  - `IMMUTABLE`: Tags não podem ser sobrescritas (recomendado para produção)
+
+  ```yaml
+  imageTagMutability: IMMUTABLE
+  ```
+
+  **Recomendação:** Use IMMUTABLE em produção para garantir que tags versionadas não sejam sobrescritas acidentalmente
+</ParamField>
+
+### Campos Opcionais - Encryption
+
+<ParamField path="spec.encryptionConfiguration" type="object">
+  Configuração de criptografia para imagens armazenadas
+
+  ```yaml
+  encryptionConfiguration:
+    encryptionType: KMS
+    kmsKey: arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012
+  ```
+
+  **Opções de encryptionType:**
+  - `AES256`: Criptografia gerenciada pela AWS (padrão, sem custo adicional)
+  - `KMS`: Criptografia com AWS KMS (requer CMK, custo adicional)
+
+  **Se usar KMS:**
+  - `kmsKey`: ARN ou alias da chave KMS
+  - Exemplo: `arn:aws:kms:us-east-1:123456789012:key/12345678...`
+  - Ou alias: `alias/ecr-encryption`
+  - A chave KMS DEVE existir e ter permissões para ECR
+</ParamField>
+
+### Campos Opcionais - Lifecycle Policy
+
+<ParamField path="spec.lifecyclePolicy" type="object">
+  Política para gerenciar imagens automaticamente (deletar antigas)
+
+  ```yaml
+  lifecyclePolicy:
+    policyText: |
+      {
+        "rules": [
+          {
+            "rulePriority": 1,
+            "description": "Manter últimas 10 imagens",
+            "selection": {
+              "tagStatus": "any",
+              "countType": "imageCountMoreThan",
+              "countNumber": 10
+            },
+            "action": {
+              "type": "expire"
+            }
+          },
+          {
+            "rulePriority": 2,
+            "description": "Expirar imagens sem tag após 30 dias",
+            "selection": {
+              "tagStatus": "untagged",
+              "countType": "sinceImagePushed",
+              "countUnit": "days",
+              "countNumber": 30
+            },
+            "action": {
+              "type": "expire"
+            }
+          }
+        ]
+      }
+  ```
+
+  <Expandable title="properties">
+    <ParamField path="policyText" type="string" required>
+      Documento JSON da política de ciclo de vida
+    </ParamField>
+  </Expandable>
+
+  **Estrutura:**
+  - `rules[]`: Array de regras de ciclo de vida
+  - `rulePriority`: Ordem de execução (menor primeiro)
+  - `description`: Descrição da regra
+  - `selection`: Critério para qual imagem a regra se aplica
+  - `action`: O que fazer (somente `expire` suportado)
+
+  **Selection - tagStatus:**
+  - `tagged`: Aplica apenas a imagens com tags
+  - `untagged`: Aplica apenas a imagens sem tags
+  - `any`: Aplica a todas as imagens
+
+  **Selection - countType:**
+  - `imageCountMoreThan`: Se há mais de N imagens
+  - `sinceImagePushed`: Se foram enviadas há mais de N dias/meses/anos
+
+  **Selection - countUnit:** (para sinceImagePushed)
+  - `days`
+  - `months`
+  - `years`
+</ParamField>
+
+### Campos Opcionais - Policies e Controle
+
+<ParamField path="spec.repositoryPolicyText" type="string">
+  Política JSON para controle de acesso ao repository (similar a bucket policies)
+
+  ```yaml
+  repositoryPolicyText: |
+    {
+      "Version": "2012-10-17",
+      "Statement": [
+        {
+          "Effect": "Allow",
+          "Principal": {
+            "AWS": "arn:aws:iam::123456789012:role/ECS-Task-Execution-Role"
+          },
+          "Action": [
+            "ecr:GetDownloadUrlForLayer",
+            "ecr:BatchGetImage"
+          ]
+        }
+      ]
+    }
+  ```
+
+  **Ações ECR comuns:**
+  - `ecr:GetDownloadUrlForLayer`: Baixar camadas da imagem
+  - `ecr:BatchGetImage`: Baixar imagens (pull)
+  - `ecr:PutImage`: Enviar imagens (push)
+  - `ecr:InitiateLayerUpload`: Iniciar upload de camada
+  - `ecr:UploadLayerPart`: Upload parcial de camada
+  - `ecr:CompleteLayerUpload`: Completar upload de camada
+
+  **Uso:** Cross-account access, restrições por IP, etc
+</ParamField>
+
+### Campos Opcionais - Tags e Deleção
+
+<ParamField path="spec.tags" type="object">
+  Pares chave-valor para organização e billing
+
+  ```yaml
+  tags:
+    Environment: production
+    Application: backend
+    Team: platform
+    CostCenter: engineering
+    ManagedBy: infra-operator
+  ```
+</ParamField>
+
+<ParamField path="spec.deletionPolicy" type="string" default="Delete">
+  O que acontece com o repository quando o CR é deletado
+
+  **Opções:**
+  - `Delete`: Repository é deletado da AWS (⚠️ CUIDADO: imagens serão perdidas)
+  - `Retain`: Repository permanece na AWS mas não gerenciado
+  - `Orphan`: Remover apenas gerenciamento
+
+  ```yaml
+  deletionPolicy: Retain
+  ```
+
+  **Recomendação:** Use `Retain` em produção para evitar perda acidental de imagens
+</ParamField>
+
+## Campos de Status
+
+Após o ECR Repository ser criado, os seguintes campos de status são populados:
+
+<ResponseField name="status.ready" type="boolean">
+  `true` quando o repository está criado e pronto para uso
+</ResponseField>
+
+<ResponseField name="status.repositoryArn" type="string">
+  ARN completo do repository ECR
+
+  ```
+  arn:aws:ecr:us-east-1:123456789012:repository/app/backend
+  ```
+</ResponseField>
+
+<ResponseField name="status.repositoryUri" type="string">
+  URI do repository para `docker push/pull`
+
+  ```
+  123456789012.dkr.ecr.us-east-1.amazonaws.com/app/backend
+  ```
+</ResponseField>
+
+<ResponseField name="status.registryId" type="string">
+  ID do registry AWS onde o repository existe (geralmente o ID da conta)
+</ResponseField>
+
+<ResponseField name="status.imageCount" type="integer">
+  Número de imagens armazenadas no repository
+</ResponseField>
+
+<ResponseField name="status.createdAt" type="string">
+  Data/hora de criação do repository (formato ISO 8601)
+</ResponseField>
+
+<ResponseField name="status.lastSyncTime" type="string">
+  Timestamp da última sincronização com a AWS (formato ISO 8601)
+</ResponseField>
+
+<ResponseField name="status.message" type="string">
+  Mensagem de status adicional (erros, avisos, etc)
+</ResponseField>
+
+## Exemplos
+
+### ECR Repository Básico
+
+Repository simples para começar:
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: ECRRepository
+metadata:
+  name: my-app
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  repositoryName: my-company/my-app
+
+  # Básica: sem scanning, tags mutáveis
+  imageTagMutability: MUTABLE
+  scanOnPush: false
+
+  encryptionConfiguration:
+    encryptionType: AES256
+
+  tags:
+    Environment: development
+    Application: my-app
+
+  deletionPolicy: Delete
+```
+
+### ECR Repository com Scan Automático
+
+Repository que detecta vulnerabilidades automaticamente:
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: ECRRepository
+metadata:
+  name: secure-backend
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  repositoryName: app/backend-service
+
+  # Escanear cada push
+  scanOnPush: true
+
+  # Tags não podem ser sobrescritas
+  imageTagMutability: IMMUTABLE
+
+  # Encryption padrão
+  encryptionConfiguration:
+    encryptionType: AES256
+
+  tags:
+    Environment: production
+    Application: backend
+    SecurityScanned: "true"
+
+  deletionPolicy: Retain
+```
+
+### ECR Repository com Lifecycle Policy
+
+Repository com cleanup automático de imagens antigas:
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: ECRRepository
+metadata:
+  name: continuous-build
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  repositoryName: ci-cd/app-builder
+
+  scanOnPush: true
+  imageTagMutability: IMMUTABLE
+
+  encryptionConfiguration:
+    encryptionType: AES256
+
+  # Cleanup automático
+  lifecyclePolicy:
+    policyText: |
+      {
+        "rules": [
+          {
+            "rulePriority": 1,
+            "description": "Manter últimas 30 imagens com tag",
+            "selection": {
+              "tagStatus": "tagged",
+              "countType": "imageCountMoreThan",
+              "countNumber": 30
+            },
+            "action": {
+              "type": "expire"
+            }
+          },
+          {
+            "rulePriority": 2,
+            "description": "Deletar imagens sem tag após 7 dias",
+            "selection": {
+              "tagStatus": "untagged",
+              "countType": "sinceImagePushed",
+              "countUnit": "days",
+              "countNumber": 7
+            },
+            "action": {
+              "type": "expire"
+            }
+          }
+        ]
+      }
+
+  tags:
+    Environment: development
+    Type: build-cache
+
+  deletionPolicy: Delete
+```
+
+### ECR Repository com Encryption KMS
+
+Repository com criptografia customizada via KMS:
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: ECRRepository
+metadata:
+  name: encrypted-production
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  repositoryName: app/production-images
+
+  scanOnPush: true
+  imageTagMutability: IMMUTABLE
+
+  # Encryption com KMS customizada
+  encryptionConfiguration:
+    encryptionType: KMS
+    kmsKey: arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012
+
+  lifecyclePolicy:
+    policyText: |
+      {
+        "rules": [{
+          "rulePriority": 1,
+          "description": "Manter últimas 20 imagens",
+          "selection": {
+            "tagStatus": "any",
+            "countType": "imageCountMoreThan",
+            "countNumber": 20
+          },
+          "action": {"type": "expire"}
+        }]
+      }
+
+  tags:
+    Environment: production
+    Compliance: required
+    DataClassification: confidential
+
+  deletionPolicy: Retain
+```
+
+### ECR Repository com Cross-Account Access
+
+Repository compartilhado com outra conta AWS:
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: ECRRepository
+metadata:
+  name: shared-images
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  repositoryName: shared/base-images
+
+  scanOnPush: true
+  imageTagMutability: IMMUTABLE
+
+  encryptionConfiguration:
+    encryptionType: AES256
+
+  # Política para permitir cross-account access
+  repositoryPolicyText: |
+    {
+      "Version": "2012-10-17",
+      "Statement": [
+        {
+          "Sid": "AllowPullFromOtherAccount",
+          "Effect": "Allow",
+          "Principal": {
+            "AWS": "arn:aws:iam::999888777666:role/ECS-Task-Execution-Role"
+          },
+          "Action": [
+            "ecr:GetDownloadUrlForLayer",
+            "ecr:BatchGetImage",
+            "ecr:DescribeImages"
+          ]
+        },
+        {
+          "Sid": "AllowPushFromCI",
+          "Effect": "Allow",
+          "Principal": {
+            "AWS": "arn:aws:iam::123456789012:role/GitLab-Runner"
+          },
+          "Action": [
+            "ecr:PutImage",
+            "ecr:InitiateLayerUpload",
+            "ecr:UploadLayerPart",
+            "ecr:CompleteLayerUpload"
+          ]
+        }
+      ]
+    }
+
+  lifecyclePolicy:
+    policyText: |
+      {
+        "rules": [{
+          "rulePriority": 1,
+          "description": "Manter últimas 50 imagens",
+          "selection": {
+            "tagStatus": "any",
+            "countType": "imageCountMoreThan",
+            "countNumber": 50
+          },
+          "action": {"type": "expire"}
+        }]
+      }
+
+  tags:
+    Environment: shared
+    Type: base-images
+
+  deletionPolicy: Retain
+```
+
+## Verificação
+
+### Verificar Status via kubectl
+
+```bash
+# Listar todos os repositories
+kubectl get ecrrepositories
+
+# Obter informações detalhadas
+kubectl get ecrrepository secure-backend -o yaml
+
+# Acompanhar criação em tempo real
+kubectl get ecrrepository secure-backend -w
+
+# Ver eventos e status
+kubectl describe ecrrepository secure-backend
+```
+
+### Verificar na AWS
+
+<Tabs>
+  <Tab title="AWS CLI">
+    ```bash
+    # Listar repositories
+    aws ecr describe-repositories
+
+    # Obter detalhes específicos
+    aws ecr describe-repositories \
+      --repository-names app/backend-service
+
+    # Ver imagens no repository
+    aws ecr describe-images \
+      --repository-name app/backend-service
+
+    # Ver detalhes de uma imagem
+    aws ecr describe-images \
+      --repository-name app/backend-service \
+      --image-ids imageTag=latest
+
+    # Ver scanning findings
+    aws ecr describe-image-scan-findings \
+      --repository-name app/backend-service \
+      --image-id imageTag=latest
+
+    # Ver lifecycle policy
+    aws ecr get-lifecycle-policy \
+      --repository-name app/backend-service
+
+    # Ver repository policy
+    aws ecr get-repository-policy \
+      --repository-name app/backend-service
+
+    # Obter token de autenticação para docker
+    aws ecr get-authorization-token
+
+    # Listar todas as imagens com tags
+    aws ecr list-images \
+      --repository-name app/backend-service
+    ```
+  </Tab>
+
+  <Tab title="Docker CLI">
+    ```bash
+    # Fazer login no ECR
+    aws ecr get-authorization-token --output text --query 'authorizationData[].authorizationToken' | base64 -d | cut -d: -f2 | docker login --username AWS --password-stdin 123456789012.dkr.ecr.us-east-1.amazonaws.com
+
+    # Ou usando script helper (mais fácil)
+    aws ecr get-authorization-token --output text --query 'authorizationData[].authorizationToken' | base64 -d | docker login --username AWS --password-stdin https://123456789012.dkr.ecr.us-east-1.amazonaws.com
+
+    # Tagging de imagem local
+    docker tag my-app:v1.0.0 123456789012.dkr.ecr.us-east-1.amazonaws.com/app/backend:v1.0.0
+
+    # Push para ECR
+    docker push 123456789012.dkr.ecr.us-east-1.amazonaws.com/app/backend:v1.0.0
+
+    # Pull de ECR
+    docker pull 123456789012.dkr.ecr.us-east-1.amazonaws.com/app/backend:v1.0.0
+
+    # Listar imagens locais
+    docker images | grep ecr
+    ```
+  </Tab>
+
+  <Tab title="LocalStack">
+    ```bash
+    # Para testes com LocalStack
+    export AWS_ENDPOINT_URL=http://localhost:4566
+
+    aws ecr describe-repositories
+
+    aws ecr list-images \
+      --repository-name app/backend-service
+
+    # Docker login para LocalStack
+    aws ecr get-authorization-token | jq -r '.authorizationData[0].authorizationToken' | base64 -d | cut -d: -f2 | docker login --username AWS --password-stdin localhost:4566
+    ```
+  </Tab>
+</Tabs>
+
+### Saída Esperada
+
+```yaml
+status:
+  repositoryArn: arn:aws:ecr:us-east-1:123456789012:repository/app/backend-service
+  repositoryUri: 123456789012.dkr.ecr.us-east-1.amazonaws.com/app/backend-service
+  registryId: "123456789012"
+  creationDate: "2025-11-22T20:15:30Z"
+  imageTagMutability: IMMUTABLE
+  encryptionType: AES256
+  imageScanningConfiguration:
+    scanOnPush: true
+  ready: true
+  lastSyncTime: "2025-11-22T20:15:45Z"
+```
+
+## Resolução de Problemas
+
+<AccordionGroup>
+  <Accordion title="Docker push denied: requested access to the resource is denied">
+    **Sintomas:** Erro ao fazer push de imagem Docker
+
+    **Causas comuns:**
+    1. Não autenticado no ECR (falta docker login)
+    2. Credenciais AWS expiradas
+    3. IAM permissions insuficientes
+    4. Repository não existe
+
+    **Soluções:**
+    ```bash
+    # Verificar se repository existe
+    aws ecr describe-repositories --repository-names app/backend
+
+    # Re-fazer authentication
+    aws ecr get-authorization-token --output text --query 'authorizationData[].authorizationToken' | base64 -d | cut -d: -f2 | docker login --username AWS --password-stdin 123456789012.dkr.ecr.us-east-1.amazonaws.com
+
+    # Verificar credenciais AWS
+    aws sts get-caller-identity
+
+    # Verificar IAM policy tem ecr:PutImage
+    aws iam get-user-policy --user-name <username> --policy-name <policy>
+
+    # Tag a imagem corretamente
+    docker tag myapp:latest 123456789012.dkr.ecr.us-east-1.amazonaws.com/app/backend:latest
+
+    # Tentar push novamente
+    docker push 123456789012.dkr.ecr.us-east-1.amazonaws.com/app/backend:latest
+
+    # Se ainda falhar, forçar logout e login
+    docker logout 123456789012.dkr.ecr.us-east-1.amazonaws.com
+    aws ecr get-authorization-token --output text --query 'authorizationData[].authorizationToken' | base64 -d | cut -d: -f2 | docker login --username AWS --password-stdin https://123456789012.dkr.ecr.us-east-1.amazonaws.com
+    ```
+  </Accordion>
+
+  <Accordion title="Image scan encontra vulnerabilidades críticas (CVE)">
+    **Sintomas:** Scan findings mostram vulnerabilidades HIGH ou CRITICAL
+
+    **Causa:** Dependências da imagem têm CVEs conhecidas
+
+    **Soluções:**
+    ```bash
+    # Ver detalhes das vulnerabilidades
+    aws ecr describe-image-scan-findings \
+      --repository-name app/backend \
+      --image-id imageTag=v1.0.0 \
+      --output table
+
+    # Opções de remedição:
+    # 1. Atualizar dependências no Dockerfile
+    # 2. Usar base image mais recente
+    # 3. Remover dependências desnecessárias
+
+    # Exemplo Dockerfile melhorado
+    # FROM node:20-alpine (usar latest alpine)
+    # RUN npm ci --only=production (não instalar dev deps)
+    # RUN npm audit fix (corrigir vulnerabilidades)
+
+    # Reconstruir imagem
+    docker build -t app/backend:v1.0.1 .
+
+    # Fazer scan novamente
+    aws ecr describe-image-scan-findings \
+      --repository-name app/backend \
+      --image-id imageTag=v1.0.1
+
+    # Ignorar vulnerabilidades se necessário (com documentação)
+    # Mas sempre preferir corrigir!
+    ```
+  </Accordion>
+
+  <Accordion title="Lifecycle policy deletando imagens erradas">
+    **Sintomas:** Imagens importantes são deletadas pela lifecycle policy
+
+    **Causas:**
+    1. Regra de prioridade errada
+    2. Seleção muito ampla (tagStatus: any)
+    3. Count number muito baixo
+
+    **Soluções:**
+    ```bash
+    # Ver policy atual
+    aws ecr get-lifecycle-policy \
+      --repository-name app/backend
+
+    # Testar policy antes de aplicar (dry-run conceitual)
+    # Revisar qual imagem seria deletada
+
+    # Exemplo: policy mais conservadora
+    lifecyclePolicy:
+      policyText: |
+        {
+          "rules": [
+            {
+              "rulePriority": 1,
+              "description": "Manter todas as tagged",
+              "selection": {
+                "tagStatus": "tagged",
+                "countType": "imageCountMoreThan",
+                "countNumber": 100
+              },
+              "action": {"type": "expire"}
+            },
+            {
+              "rulePriority": 2,
+              "description": "Deletar untagged antigos",
+              "selection": {
+                "tagStatus": "untagged",
+                "countType": "sinceImagePushed",
+                "countUnit": "days",
+                "countNumber": 30
+              },
+              "action": {"type": "expire"}
+            }
+          ]
+        }
+
+    # Atualizar policy
+    kubectl patch ecrrepository app-backend \
+      --type merge \
+      -p '{"spec":{"lifecyclePolicy":"..."}}'
+
+    # Verificar imagens antes e depois
+    aws ecr list-images --repository-name app/backend
+    ```
+  </Accordion>
+
+  <Accordion title="Cross-account access negado">
+    **Sintomas:** Erro ao tentar pull de imagem de outra conta AWS
+
+    **Causa:** Repository policy não permite acesso da outra conta
+
+    **Soluções:**
+    ```bash
+    # Obter ARN da role da outra conta
+    # Exemplo: arn:aws:iam::999888777666:role/ECS-Task-Role
+
+    # Atualizar repository policy
+    kubectl patch ecrrepository shared-images \
+      --type merge \
+      -p '{
+        "spec": {
+          "repositoryPolicyText": "{
+            \"Version\": \"2012-10-17\",
+            \"Statement\": [{
+              \"Effect\": \"Allow\",
+              \"Principal\": {
+                \"AWS\": \"arn:aws:iam::999888777666:role/ECS-Task-Role\"
+              },
+              \"Action\": [
+                \"ecr:GetDownloadUrlForLayer\",
+                \"ecr:BatchGetImage\"
+              ]
+            }]
+          }"
+        }
+      }'
+
+    # Verificar se policy foi aplicada
+    aws ecr get-repository-policy \
+      --repository-name shared/images
+
+    # Na outra conta, testar pull
+    # Certifique-se que a role tem permissão ecr na outra conta também
+    aws ecr get-authorization-token --endpoint-url https://ecr.us-east-1.amazonaws.com
+
+    # Se usar assume role, verificar trust relationship
+    aws iam get-role --role-name ECS-Task-Role
+    ```
+  </Accordion>
+
+  <Accordion title="Custos elevados de ECR">
+    **Sintomas:** Conta AWS com gastos inesperados em ECR
+
+    **Causas:**
+    1. Muitas imagens armazenadas
+    2. Tamanho de imagens muito grande
+    3. Versões antigas não deletadas
+    4. Replicação entre regiões ativa
+
+    **Soluções:**
+    ```bash
+    # Verificar espaço usado
+    aws ecr describe-repositories --repository-names app/backend
+
+    # Ver tamanho de todas as imagens
+    aws ecr describe-images \
+      --repository-name app/backend \
+      --query 'imageDetails[].{Tag:imageTags[0],Size:imageSizeBytes}' \
+      --output table
+
+    # Implementar lifecycle policy mais agressiva
+    lifecyclePolicy:
+      policyText: |
+        {
+          "rules": [{
+            "rulePriority": 1,
+            "description": "Manter apenas 10 imagens",
+            "selection": {
+              "tagStatus": "any",
+              "countType": "imageCountMoreThan",
+              "countNumber": 10
+            },
+            "action": {"type": "expire"}
+          }]
+        }
+
+    # Deletar imagens específicas grandes
+    aws ecr batch-delete-image \
+      --repository-name app/backend \
+      --image-ids imageTag=old-build-1234
+
+    # Otimizar tamanho da imagem no Dockerfile
+    # - Use multi-stage builds
+    # - Remove layers desnecessárias
+    # - Use alpine base images
+    # - Combine RUN commands
+
+    # Exemplo Dockerfile otimizado
+    # FROM golang:1.21 AS builder
+    # COPY . /src
+    # WORKDIR /src
+    # RUN go build -o app
+    #
+    # FROM alpine:3.18
+    # RUN apk add --no-cache ca-certificates
+    # COPY --from=builder /src/app /usr/local/bin/
+    # CMD ["app"]
+    ```
+  </Accordion>
+
+  <Accordion title="Repository travado em NotReady">
+    **Sintomas:** Repository permanece em NotReady após criação
+
+    **Causas:**
+    1. Permissões IAM insuficientes
+    2. KMS key não acessível (se usando encryption)
+    3. Problema de conectividade
+
+    **Soluções:**
+    ```bash
+    # Ver eventos detalhados
+    kubectl describe ecrrepository app-backend
+
+    # Ver logs do operator
+    kubectl logs -n infra-operator-system \
+      deploy/infra-operator-controller-manager \
+      --tail=100 | grep -i ecr
+
+    # Verificar AWSProvider está ready
+    kubectl get awsprovider
+    kubectl describe awsprovider production-aws
+
+    # Se usando KMS, verificar se existe
+    aws kms describe-key --key-id alias/ecr-encryption
+
+    # Se usando KMS, verificar trust policy
+    aws kms get-key-policy --key-id alias/ecr-encryption --policy-name default
+
+    # Forçar sincronização
+    kubectl annotate ecrrepository app-backend \
+      force-sync="$(date +%s)" --overwrite
+
+    # Último recurso: deletar e recriar
+    kubectl patch ecrrepository app-backend \
+      --type merge \
+      -p '{"spec":{"deletionPolicy":"Retain"}}'
+
+    kubectl delete ecrrepository app-backend
+
+    # Depois recriar
+    kubectl apply -f ecr-repository.yaml
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Melhores Práticas
+
+<CardGroup cols={2}>
+  <Card title="Scan on Push Sempre Ativado" icon="shield-check">
+    - Detectar vulnerabilidades automaticamente
+    - Impedir deploy de imagens com CVEs críticas
+    - Monitorar scanning findings regularmente
+    - Corrigir dependências proativamente
+    - Sem custo adicional para scanning
+  </Card>
+
+  <Card title="IMMUTABLE Tags em Produção" icon="lock">
+    - Impedir overwrite de tags versionadas
+    - Garantir que v1.0.0 sempre é v1.0.0
+    - Evitar confusion de qual imagem está em produção
+    - Use tags semânticas (v1.0.0, v2.1.3)
+    - Mutable apenas para desenvolvimento
+  </Card>
+
+  <Card title="Lifecycle Policies para Cleanup" icon="trash">
+    - Deletar imagens antigas automaticamente
+    - Economizar espaço e custos
+    - Manter últimas N imagens sempre
+    - Deletar untagged após X dias
+    - Revisar regularmente se deletando correto
+  </Card>
+
+  <Card title="KMS Encryption em Produção" icon="lock-keyhole">
+    - Criptografia com chave customizada (não AWS-managed)
+    - Requisito para compliance (HIPAA, PCI-DSS)
+    - Controle de acesso via IAM
+    - Auditoria via CloudTrail
+    - Pequeno custo adicional, vale para produção
+  </Card>
+
+  <Card title="Repository Policies para Controle" icon="shield-halved">
+    - Cross-account access controlado
+    - Restrict pull/push por role/usuário
+    - Integração com CI/CD pipelines
+    - Auditoria de quem acessa o quê
+    - Princípio do mínimo privilégio
+  </Card>
+
+  <Card title="Tagging Consistente" icon="tags">
+    - Environment: dev/staging/prod
+    - Application ou projeto
+    - Team ou owner responsável
+    - CostCenter para alocação
+    - Facilita governança e billing
+  </Card>
+
+  <Card title="Naming Conventions" icon="heading">
+    - Padrão: `company/application-name`
+    - Exemplo: `mycompany/api-gateway`, `mycompany/worker-service`
+    - Use prefixo para organização
+    - Nomes descritivos, não genéricos
+    - Evite números como única diferença
+  </Card>
+
+  <Card title="Image Layer Caching" icon="database">
+    - Estruture Dockerfile para reutilizar camadas
+    - Comandos que mudam frequente no final
+    - Use multi-stage builds
+    - Combine RUN commands para menos layers
+    - Reduz tempo de build e tamanho de imagem
+  </Card>
+
+  <Card title="Monitorar Custos" icon="chart-line">
+    - ECR cobra por GB armazenado por mês
+    - ~$0.10/GB/mês (região us-east-1)
+    - Data transfer também tem custo
+    - Lifecycle policies economizam significante
+    - Use cost allocation tags
+  </Card>
+
+  <Card title="Integration com ECS/EKS" icon="network-wired">
+    - ECR nativo com ECS (mesma conta)
+    - EKS requer imagePullSecrets se cross-account
+    - CI/CD pode fazer push direto
+    - Usar IAM roles, não static credentials
+    - Deploy com tags versionadas
+  </Card>
+
+  <Card title="Replicação Cross-Region" icon="globe">
+    - Replicar imagens para múltiplas regiões
+    - Baixa latência em cada região
+    - DR (disaster recovery)
+    - Replicação automática baseada em regras
+    - Custo de storage em cada região
+  </Card>
+
+  <Card title="Compliance e Auditoria" icon="clipboard-check">
+    - Logging registra todos os acessos
+    - Scanning findings para compliance
+    - Imutable tags para audit trail
+    - Image manifest digest para versioning
+    - Tags e metadata para rastreamento
+  </Card>
+
+  <Card title="Otimização de Imagens" icon="bolt">
+    - Usar alpine base (20MB vs 100MB+)
+    - Remove layers desnecessárias
+    - Multi-stage builds (compile + runtime)
+    - Não incluir apt-cache, package manager
+    - Usar distroless images quando possível
+  </Card>
+</CardGroup>
+
+## Workflow CI/CD
+
+### Build → Tag → Push → Deploy
+
+**Pipeline típico:**
+
+```yaml
+# GitLab CI Example
+stages:
+  - build
+  - push
+  - deploy
+
+build:
+  stage: build
+  script:
+    - docker build -t app:rev1 .
+  artifacts:
+    reports:
+      dotenv: build.env
+
+push:
+  stage: push
+  script:
+    - aws ecr get-authorization-token | base64 -d | docker login --username AWS --password-stdin
+    - docker tag app:rev1 $ECR_REGISTRY/app/backend:rev1
+    - docker tag app:rev1 $ECR_REGISTRY/app/backend:latest
+    - docker push $ECR_REGISTRY/app/backend:rev1
+    - docker push $ECR_REGISTRY/app/backend:latest
+
+deploy:
+  stage: deploy
+  script:
+    - kubectl set image deployment/app app=$ECR_REGISTRY/app/backend:rev1
+```
+
+**Integration com GitHub Actions:**
+
+```yaml
+name: Build and Push to ECR
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        role-to-assume: arn:aws:iam::123456789012:role/github-actions-role
+        aws-region: us-east-1
+
+    - name: Login to ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v1
+
+    - name: Build and push
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        ECR_REPOSITORY: app/backend
+        IMAGE_TAG: ${{ github.sha }}
+      run: |
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+        docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+```
+
+**Scan results integration:**
+
+```bash
+# Aguardar scan completar após push
+aws ecr wait image-scan-complete \
+  --repository-name app/backend \
+  --image-id imageTag=latest
+
+# Verificar se há vulnerabilidades críticas
+FINDINGS=$(aws ecr describe-image-scan-findings \
+  --repository-name app/backend \
+  --image-id imageTag=latest \
+  --query 'imageScanFindings.findingSeverityCounts.CRITICAL')
+
+if [ "$FINDINGS" -gt 0 ]; then
+  echo "Critical vulnerabilities found!"
+  exit 1
+fi
+```
+
+## Recursos Relacionados
+
+<CardGroup cols={2}>
+  <Card
+    title="ECS - Elastic Container Service"
+    icon="box"
+    href="/services/compute/ecs"
+  >
+    Executar containers em cluster EC2 ou Fargate
+  </Card>
+
+  <Card
+    title="EKS - Elastic Kubernetes Service"
+    icon="kubernetes"
+    href="/services/compute/eks"
+  >
+    Kubernetes gerenciado na AWS
+  </Card>
+
+  <Card
+    title="Lambda Container"
+    icon="function"
+    href="/services/compute/lambda"
+  >
+    Executar containers serverless
+  </Card>
+
+  <Card
+    title="CodePipeline"
+    icon="arrows-repeat"
+    href="/services/devops/codepipeline"
+  >
+    Pipeline CI/CD na AWS
+  </Card>
+
+  <Card
+    title="KMS - Key Management Service"
+    icon="lock"
+    href="/services/security/kms"
+  >
+    Gerenciar chaves de criptografia
+  </Card>
+
+  <Card
+    title="IAM - Roles e Policies"
+    icon="shield-halved"
+    href="/services/security/iam"
+  >
+    Controle de acesso e permissões
+  </Card>
+
+</CardGroup>
+
+---

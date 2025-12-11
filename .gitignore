@@ -1,0 +1,66 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/
+testbin/
+manager
+infra-operator
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+cover.out
+
+# Go workspace file
+go.work
+
+# Dependency directories
+vendor/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Kubebuilder
+/config/crd/bases/*.yaml.bak
+
+# Temporary Files
+*.tmp
+*.log
+
+# macOS
+.DS_Store
+
+# Helm packages
+*.tgz
+chart/charts/
+
+# Docusaurus
+docs/docusaurus/node_modules/
+docs/docusaurus/.docusaurus/
+docs/docusaurus/build/
+
+# Keys and secrets
+.keys/
+
+# Local documentation
+CLAUDE.md
+PLAN.md
+
+# Task runner
+.task/
+
+# LocalStack data
+.localstack-data/
+
+# Environment files
+.env
+.env.local

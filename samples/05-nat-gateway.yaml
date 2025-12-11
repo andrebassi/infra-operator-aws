@@ -1,0 +1,12 @@
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: NATGateway
+metadata:
+  name: test-nat
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  subnetID: "subnet-7d3f1b2373b43aeaa"
+  allocationID: ""
+  tags:
+    Name: helm-test-nat

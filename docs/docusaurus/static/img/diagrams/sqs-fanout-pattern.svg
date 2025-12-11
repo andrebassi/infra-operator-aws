@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 250">
+  <defs>
+    <style>
+      .publisher-box { fill: #c8e6c9; stroke: #4caf50; stroke-width: 2; }
+      .sns-box { fill: #ffccbc; stroke: #ff5722; stroke-width: 2; }
+      .queue-box { fill: #ffecb3; stroke: #ffc107; stroke-width: 2; }
+      .consumer-box { fill: #bbdefb; stroke: #2196f3; stroke-width: 2; }
+      .text-label { font-family: Arial, sans-serif; font-size: 11px; fill: #333; }
+      .text-small { font-family: Arial, sans-serif; font-size: 9px; fill: #666; }
+      .arrow { stroke: #60a5fa; stroke-width: 2; fill: none; marker-end: url(#arrowhead); }
+    </style>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#60a5fa"/>
+    </marker>
+  </defs>
+
+  <!-- Publisher -->
+  <rect class="publisher-box" x="20" y="90" width="100" height="60" rx="8"/>
+  <text class="text-label" x="40" y="120">Publisher</text>
+  <text class="text-small" x="45" y="135">Service</text>
+
+  <!-- SNS Topic -->
+  <rect class="sns-box" x="180" y="80" width="120" height="80" rx="8"/>
+  <text class="text-label" x="205" y="115">SNS Topic</text>
+  <text class="text-small" x="200" y="135">orders-topic</text>
+
+  <!-- SQS Queues -->
+  <rect class="queue-box" x="370" y="20" width="130" height="50" rx="8"/>
+  <text class="text-label" x="395" y="45">SQS: Email</text>
+  <text class="text-small" x="390" y="60">notifications</text>
+
+  <rect class="queue-box" x="370" y="95" width="130" height="50" rx="8"/>
+  <text class="text-label" x="390" y="120">SQS: Analytics</text>
+  <text class="text-small" x="400" y="135">processing</text>
+
+  <rect class="queue-box" x="370" y="170" width="130" height="50" rx="8"/>
+  <text class="text-label" x="390" y="195">SQS: Inventory</text>
+  <text class="text-small" x="405" y="210">updates</text>
+
+  <!-- Consumers -->
+  <rect class="consumer-box" x="570" y="20" width="100" height="50" rx="8"/>
+  <text class="text-label" x="585" y="45">Email Svc</text>
+
+  <rect class="consumer-box" x="570" y="95" width="100" height="50" rx="8"/>
+  <text class="text-label" x="580" y="120">Analytics Svc</text>
+
+  <rect class="consumer-box" x="570" y="170" width="100" height="50" rx="8"/>
+  <text class="text-label" x="580" y="195">Inventory Svc</text>
+
+  <!-- Arrows -->
+  <line class="arrow" x1="120" y1="120" x2="178" y2="120"/>
+  <line class="arrow" x1="300" y1="100" x2="368" y2="45"/>
+  <line class="arrow" x1="300" y1="120" x2="368" y2="120"/>
+  <line class="arrow" x1="300" y1="140" x2="368" y2="195"/>
+  <line class="arrow" x1="500" y1="45" x2="568" y2="45"/>
+  <line class="arrow" x1="500" y1="120" x2="568" y2="120"/>
+  <line class="arrow" x1="500" y1="195" x2="568" y2="195"/>
+</svg>

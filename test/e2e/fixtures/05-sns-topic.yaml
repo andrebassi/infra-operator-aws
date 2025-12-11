@@ -1,0 +1,36 @@
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: SNSTopic
+metadata:
+  name: e2e-test-topic
+  namespace: default
+spec:
+  topicName: e2e-notifications
+  providerRef:
+    name: localstack
+  displayName: E2E Test Notifications
+  subscriptions:
+  - protocol: sqs
+    endpoint: arn:aws:sqs:us-east-1:000000000000:e2e-test-messages-queue
+  tags:
+    Environment: test
+    ManagedBy: infra-operator
+  deletionPolicy: Delete
+---
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: SNSTopic
+metadata:
+  name: e2e-fifo-topic
+  namespace: default
+spec:
+  topicName: e2e-notifications.fifo
+  providerRef:
+    name: localstack
+  fifoTopic: true
+  contentBasedDeduplication: true
+  subscriptions:
+  - protocol: sqs
+    endpoint: arn:aws:sqs:us-east-1:000000000000:e2e-test-fifo.fifo
+  tags:
+    Type: FIFO
+    Environment: test
+  deletionPolicy: Delete

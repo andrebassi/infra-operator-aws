@@ -1,0 +1,674 @@
+---
+title: 'Route Table - Tabela de Roteamento'
+description: 'Configure roteamento de tráfego na VPC'
+icon: 'route'
+---
+
+Configure tabelas de roteamento para controlar o fluxo de tráfego de rede nas subnets da VPC.
+
+## Pré-requisitos
+
+Antes de criar uma Route Table, você precisa:
+
+1. **AWSProvider** configurado
+2. **VPC** criada
+3. **Gateways** (Internet Gateway, NAT Gateway, etc.) se necessário
+
+## Visão Geral
+
+Uma Route Table contém um conjunto de regras (rotas) que determinam para onde o tráfego de rede da subnet é direcionado. Cada subnet deve estar associada a uma route table.
+
+**Componentes principais:**
+- 🛣️ **Rotas** - Regras de roteamento de tráfego
+- 🔗 **Associações** - Ligação com subnets
+- 🎯 **Destinos** - Internet Gateway, NAT Gateway, VPC Peering, etc.
+
+## Início Rápido
+
+<CodeGroup>
+```yaml Route Table Pública (Internet)
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: RouteTable
+metadata:
+  name: public-route-table
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+  vpcID: vpc-abc123
+  routes:
+    - destinationCidrBlock: "0.0.0.0/0"
+      gatewayID: igw-abc123  # Internet Gateway
+  subnetAssociations:
+    - subnet-public-1a
+    - subnet-public-1b
+  tags:
+    Name: public-route-table
+    Type: public
+  deletionPolicy: Delete
+```
+
+```yaml Route Table Privada (NAT)
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: RouteTable
+metadata:
+  name: private-route-table-1a
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+  vpcID: vpc-abc123
+  routes:
+    - destinationCidrBlock: "0.0.0.0/0"
+      natGatewayID: nat-abc123  # NAT Gateway
+  subnetAssociations:
+    - subnet-private-1a
+  tags:
+    Name: private-route-table-1a
+    Type: private
+    AZ: us-east-1a
+  deletionPolicy: Delete
+```
+
+```yaml Route Table com VPC Peering
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: RouteTable
+metadata:
+  name: peering-route-table
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+  vpcID: vpc-abc123
+  routes:
+    - destinationCidrBlock: "0.0.0.0/0"
+      gatewayID: igw-abc123
+    - destinationCidrBlock: "10.1.0.0/16"
+      vpcPeeringConnectionID: pcx-abc123  # VPC Peering
+  subnetAssociations:
+    - subnet-app-1a
+    - subnet-app-1b
+  tags:
+    Name: peering-route-table
+    Peering: vpc-staging
+  deletionPolicy: Delete
+```
+
+```bash Aplicar
+kubectl apply -f route-table.yaml
+```
+
+```bash Verificar Status
+kubectl get routetable
+kubectl describe routetable public-route-table
+```
+</CodeGroup>
+
+## Referência de Configuração
+
+### Campos Obrigatórios
+
+<ParamField path="spec.providerRef" type="object" required>
+  Referência ao recurso AWSProvider
+
+  <Expandable title="properties">
+    <ParamField path="name" type="string" required>
+      Nome do recurso AWSProvider
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="spec.vpcID" type="string" required>
+  ID da VPC onde a route table será criada
+
+  Exemplo: `vpc-abc123`
+</ParamField>
+
+### Campos Opcionais
+
+<ParamField path="spec.routes" type="array">
+  Lista de rotas a serem adicionadas
+
+  <Expandable title="properties">
+    <ParamField path="destinationCidrBlock" type="string" required>
+      CIDR de destino do tráfego
+
+      Exemplos:
+      - `0.0.0.0/0` - Rota padrão (todo tráfego)
+      - `10.1.0.0/16` - Rede específica
+    </ParamField>
+
+    <ParamField path="gatewayID" type="string">
+      ID do Internet Gateway
+
+      Use para rotas públicas. Exemplo: `igw-abc123`
+    </ParamField>
+
+    <ParamField path="natGatewayID" type="string">
+      ID do NAT Gateway
+
+      Use para rotas privadas com acesso à internet. Exemplo: `nat-abc123`
+    </ParamField>
+
+    <ParamField path="vpcPeeringConnectionID" type="string">
+      ID da conexão VPC Peering
+
+      Use para roteamento entre VPCs. Exemplo: `pcx-abc123`
+    </ParamField>
+
+    <ParamField path="transitGatewayID" type="string">
+      ID do Transit Gateway
+
+      Use para arquiteturas hub-and-spoke. Exemplo: `tgw-abc123`
+    </ParamField>
+  </Expandable>
+
+  <Note>
+    **Apenas um** dos campos de destino (gatewayID, natGatewayID, vpcPeeringConnectionID, transitGatewayID) deve ser especificado por rota.
+  </Note>
+</ParamField>
+
+<ParamField path="spec.subnetAssociations" type="array">
+  Lista de subnet IDs a associar com esta route table
+
+  Exemplo:
+  ```yaml
+  subnetAssociations:
+    - subnet-abc123
+    - subnet-def456
+  ```
+</ParamField>
+
+<ParamField path="spec.tags" type="object">
+  Tags personalizadas para a route table
+
+  Exemplo:
+  ```yaml
+  tags:
+    Name: my-route-table
+    Environment: production
+    Type: public
+  ```
+</ParamField>
+
+<ParamField path="spec.deletionPolicy" type="string" default="Delete">
+  Política de deleção do recurso
+
+  **Valores possíveis:**
+  - `Delete` - Deletar route table ao remover CR
+  - `Retain` - Manter route table ao remover CR
+</ParamField>
+
+## Status
+
+O status da route table é atualizado automaticamente:
+
+```yaml
+status:
+  ready: true
+  routeTableID: rtb-abc123
+  vpcID: vpc-abc123
+  associationIDs:
+    - rtbassoc-abc123
+    - rtbassoc-def456
+  lastSyncTime: "2025-01-23T10:30:00Z"
+```
+
+### Campos de Status
+
+<ResponseField name="ready" type="boolean">
+  Indica se a route table está pronta
+</ResponseField>
+
+<ResponseField name="routeTableID" type="string">
+  ID da route table criada na AWS
+</ResponseField>
+
+<ResponseField name="associationIDs" type="array">
+  IDs das associações com subnets
+</ResponseField>
+
+## Casos de Uso
+
+### 1. Arquitetura Multi-Tier (Público + Privado)
+
+```yaml
+# Route Table Pública
+---
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: RouteTable
+metadata:
+  name: public-rt
+spec:
+  providerRef:
+    name: prod-aws
+  vpcID: vpc-prod
+  routes:
+    - destinationCidrBlock: "0.0.0.0/0"
+      gatewayID: igw-prod
+  subnetAssociations:
+    - subnet-public-1a
+    - subnet-public-1b
+    - subnet-public-1c
+  tags:
+    Name: public-route-table
+    Tier: public
+
+# Route Table Privada - AZ 1a
+---
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: RouteTable
+metadata:
+  name: private-rt-1a
+spec:
+  providerRef:
+    name: prod-aws
+  vpcID: vpc-prod
+  routes:
+    - destinationCidrBlock: "0.0.0.0/0"
+      natGatewayID: nat-1a
+  subnetAssociations:
+    - subnet-private-1a
+  tags:
+    Name: private-route-table-1a
+    Tier: private
+    AZ: us-east-1a
+
+# Route Table Privada - AZ 1b
+---
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: RouteTable
+metadata:
+  name: private-rt-1b
+spec:
+  providerRef:
+    name: prod-aws
+  vpcID: vpc-prod
+  routes:
+    - destinationCidrBlock: "0.0.0.0/0"
+      natGatewayID: nat-1b
+  subnetAssociations:
+    - subnet-private-1b
+  tags:
+    Name: private-route-table-1b
+    Tier: private
+    AZ: us-east-1b
+```
+
+### 2. VPC Peering entre Ambientes
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: RouteTable
+metadata:
+  name: prod-to-staging-rt
+spec:
+  providerRef:
+    name: prod-aws
+  vpcID: vpc-prod
+  routes:
+    # Rota padrão para internet
+    - destinationCidrBlock: "0.0.0.0/0"
+      gatewayID: igw-prod
+    # Rota para VPC de staging
+    - destinationCidrBlock: "10.1.0.0/16"
+      vpcPeeringConnectionID: pcx-prod-staging
+    # Rota para VPC de shared services
+    - destinationCidrBlock: "10.2.0.0/16"
+      vpcPeeringConnectionID: pcx-prod-shared
+  subnetAssociations:
+    - subnet-app-1a
+    - subnet-app-1b
+  tags:
+    Name: prod-peering-route-table
+    Environment: production
+```
+
+### 3. Route Table Isolada (Sem Internet)
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: RouteTable
+metadata:
+  name: isolated-rt
+spec:
+  providerRef:
+    name: prod-aws
+  vpcID: vpc-prod
+  # Sem rotas = apenas tráfego local da VPC
+  routes: []
+  subnetAssociations:
+    - subnet-db-1a
+    - subnet-db-1b
+  tags:
+    Name: isolated-route-table
+    Tier: database
+    Internet: "false"
+```
+
+### 4. Transit Gateway Hub
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: RouteTable
+metadata:
+  name: tgw-spoke-rt
+spec:
+  providerRef:
+    name: prod-aws
+  vpcID: vpc-spoke
+  routes:
+    # Internet via NAT no hub
+    - destinationCidrBlock: "0.0.0.0/0"
+      transitGatewayID: tgw-abc123
+    # Outras VPCs via TGW
+    - destinationCidrBlock: "10.0.0.0/8"
+      transitGatewayID: tgw-abc123
+  subnetAssociations:
+    - subnet-app-1a
+    - subnet-app-1b
+  tags:
+    Name: transit-gateway-route-table
+    Architecture: hub-spoke
+```
+
+## Padrões de Roteamento
+
+### Subnet Pública
+
+Uma subnet pública tem rota `0.0.0.0/0` para um **Internet Gateway**:
+
+```yaml
+routes:
+  - destinationCidrBlock: "0.0.0.0/0"
+    gatewayID: igw-abc123
+```
+
+### Subnet Privada com Internet
+
+Uma subnet privada com acesso à internet usa **NAT Gateway**:
+
+```yaml
+routes:
+  - destinationCidrBlock: "0.0.0.0/0"
+    natGatewayID: nat-abc123
+```
+
+### Subnet Privada Isolada
+
+Uma subnet isolada **não tem** rota para `0.0.0.0/0`:
+
+```yaml
+routes: []  # Apenas tráfego local da VPC
+```
+
+## Operações Comuns
+
+### Adicionar Nova Rota
+
+```bash
+kubectl edit routetable my-route-table
+
+# Adicionar no spec.routes:
+# - destinationCidrBlock: "10.5.0.0/16"
+#   vpcPeeringConnectionID: pcx-new
+```
+
+### Associar Nova Subnet
+
+```bash
+kubectl patch routetable my-route-table \
+  --type merge \
+  -p '{"spec":{"subnetAssociations":["subnet-abc123","subnet-def456","subnet-new789"]}}'
+```
+
+### Verificar Rotas
+
+```bash
+# Ver todas as rotas
+kubectl get routetable my-route-table -o jsonpath='{.spec.routes}'
+
+# Ver associações
+kubectl get routetable my-route-table -o jsonpath='{.spec.subnetAssociations}'
+```
+
+### Migrar Subnet para Outra Route Table
+
+```bash
+# 1. Remover da route table antiga
+kubectl patch routetable old-rt \
+  --type json \
+  -p '[{"op": "remove", "path": "/spec/subnetAssociations/2"}]'
+
+# 2. Adicionar na route table nova
+kubectl patch routetable new-rt \
+  --type merge \
+  -p '{"spec":{"subnetAssociations":["subnet-xyz789"]}}'
+```
+
+## Troubleshooting
+
+### Route Table não cria rotas
+
+<AccordionGroup>
+  <Accordion title="Verificar Gateways">
+    ```bash
+    # Verificar se o Internet Gateway existe
+    aws ec2 describe-internet-gateways --internet-gateway-ids igw-abc123
+
+    # Verificar se o NAT Gateway existe e está available
+    aws ec2 describe-nat-gateways --nat-gateway-ids nat-abc123
+    ```
+  </Accordion>
+
+  <Accordion title="Verificar VPC Peering">
+    ```bash
+    # Verificar status do VPC Peering
+    aws ec2 describe-vpc-peering-connections \
+      --vpc-peering-connection-ids pcx-abc123
+    ```
+  </Accordion>
+
+  <Accordion title="Ver Logs do Operator">
+    ```bash
+    kubectl logs -n infra-operator-system \
+      -l control-plane=controller-manager \
+      | grep RouteTable
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Subnet não aparece nas associações
+
+```bash
+# Verificar se a subnet existe
+kubectl get subnet my-subnet
+
+# Verificar status do RouteTable
+kubectl describe routetable my-route-table
+
+# Ver eventos
+kubectl get events --field-selector involvedObject.name=my-route-table
+```
+
+### Conflito de rotas
+
+Se houver erro de conflito:
+
+```bash
+# Listar route tables da VPC
+aws ec2 describe-route-tables \
+  --filters "Name=vpc-id,Values=vpc-abc123"
+
+# Verificar rotas existentes
+aws ec2 describe-route-tables \
+  --route-table-ids rtb-abc123 \
+  --query 'RouteTables[*].Routes'
+```
+
+## Boas Práticas
+
+<CardGroup cols={2}>
+  <Card title="Uma Route Table por Tier" icon="layer-group">
+    Crie route tables separadas para public, private, e isolated tiers
+  </Card>
+
+  <Card title="NAT por AZ" icon="network-wired">
+    Use um NAT Gateway por AZ para alta disponibilidade
+  </Card>
+
+  <Card title="Tags Descritivas" icon="tag">
+    Use tags claras: Name, Type (public/private), AZ, Environment
+  </Card>
+
+  <Card title="Documente Rotas" icon="file-lines">
+    Adicione tags explicando o propósito de cada rota customizada
+  </Card>
+
+  <Card title="Minimize Rotas Públicas" icon="shield">
+    Apenas subnets com Load Balancers/Bastion devem ser públicas
+  </Card>
+
+  <Card title="Teste Conectividade" icon="check">
+    Valide rotas testando conectividade após mudanças
+  </Card>
+</CardGroup>
+
+## Exemplo Completo: VPC Multi-Tier
+
+```yaml
+# VPC
+---
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: VPC
+metadata:
+  name: prod-vpc
+spec:
+  providerRef:
+    name: prod-aws
+  cidrBlock: "10.0.0.0/16"
+  enableDnsSupport: true
+  enableDnsHostnames: true
+
+# Internet Gateway
+---
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: InternetGateway
+metadata:
+  name: prod-igw
+spec:
+  providerRef:
+    name: prod-aws
+  vpcID: vpc-prod
+
+# NAT Gateways
+---
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: NATGateway
+metadata:
+  name: nat-1a
+spec:
+  providerRef:
+    name: prod-aws
+  subnetID: subnet-public-1a
+
+---
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: NATGateway
+metadata:
+  name: nat-1b
+spec:
+  providerRef:
+    name: prod-aws
+  subnetID: subnet-public-1b
+
+# Route Tables
+---
+# Pública
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: RouteTable
+metadata:
+  name: public-rt
+spec:
+  providerRef:
+    name: prod-aws
+  vpcID: vpc-prod
+  routes:
+    - destinationCidrBlock: "0.0.0.0/0"
+      gatewayID: igw-prod
+  subnetAssociations:
+    - subnet-public-1a
+    - subnet-public-1b
+
+---
+# Privada AZ-1a
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: RouteTable
+metadata:
+  name: private-rt-1a
+spec:
+  providerRef:
+    name: prod-aws
+  vpcID: vpc-prod
+  routes:
+    - destinationCidrBlock: "0.0.0.0/0"
+      natGatewayID: nat-1a
+  subnetAssociations:
+    - subnet-private-1a
+
+---
+# Privada AZ-1b
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: RouteTable
+metadata:
+  name: private-rt-1b
+spec:
+  providerRef:
+    name: prod-aws
+  vpcID: vpc-prod
+  routes:
+    - destinationCidrBlock: "0.0.0.0/0"
+      natGatewayID: nat-1b
+  subnetAssociations:
+    - subnet-private-1b
+
+---
+# Database (isolada)
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: RouteTable
+metadata:
+  name: database-rt
+spec:
+  providerRef:
+    name: prod-aws
+  vpcID: vpc-prod
+  routes: []  # Sem internet
+  subnetAssociations:
+    - subnet-db-1a
+    - subnet-db-1b
+```
+
+## Recursos Relacionados
+
+<CardGroup cols={2}>
+  <Card title="VPC" icon="network-wired" href="/services/networking/vpc">
+    Crie a rede virtual para hospedar recursos
+  </Card>
+
+  <Card title="Subnet" icon="diagram-project" href="/services/networking/subnet">
+    Configure sub-redes dentro da VPC
+  </Card>
+
+  <Card title="Internet Gateway" icon="globe" href="/services/networking/internet-gateway">
+    Habilite acesso à internet pública
+  </Card>
+
+  <Card title="NAT Gateway" icon="router" href="/services/networking/nat-gateway">
+    Acesso à internet para subnets privadas
+  </Card>
+</CardGroup>
+
+## Referências
+
+- [AWS Route Tables Documentation](https://docs.aws.amazon.com/vpc/latest/userguide/VPC_Route_Tables.html)
+- [VPC Routing Best Practices](https://docs.aws.amazon.com/vpc/latest/userguide/route-table-options.html)

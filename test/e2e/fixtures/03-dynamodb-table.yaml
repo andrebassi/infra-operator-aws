@@ -1,0 +1,44 @@
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: DynamoDBTable
+metadata:
+  name: e2e-test-table
+  namespace: default
+spec:
+  tableName: e2e-test-users-table
+  providerRef:
+    name: localstack
+  billingMode: PAY_PER_REQUEST
+  hashKey:
+    name: UserID
+    type: "S"
+  rangeKey:
+    name: Timestamp
+    type: "N"
+  attributes:
+  - name: Email
+    type: "S"
+  globalSecondaryIndexes:
+  - indexName: EmailIndex
+    hashKey: Email
+    projectionType: ALL
+  streamEnabled: true
+  streamViewType: NEW_AND_OLD_IMAGES
+  tags:
+    Environment: test
+    ManagedBy: infra-operator
+  deletionPolicy: Delete
+---
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: DynamoDBTable
+metadata:
+  name: e2e-simple-table
+  namespace: default
+spec:
+  tableName: e2e-simple-table
+  providerRef:
+    name: localstack
+  billingMode: PAY_PER_REQUEST
+  hashKey:
+    name: ID
+    type: "S"
+  deletionPolicy: Delete

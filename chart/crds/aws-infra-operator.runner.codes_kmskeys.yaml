@@ -1,0 +1,214 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: kmskeys.aws-infra-operator.runner.codes
+spec:
+  group: aws-infra-operator.runner.codes
+  names:
+    kind: KMSKey
+    listKind: KMSKeyList
+    plural: kmskeys
+    shortNames:
+    - kms
+    singular: kmskey
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.keyId
+      name: KeyId
+      type: string
+    - jsonPath: .status.keyState
+      name: State
+      type: string
+    - jsonPath: .status.ready
+      name: Ready
+      type: boolean
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: KMSKey is the Schema for the kmskeys API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: KMSKeySpec defines the desired state of KMSKey
+            properties:
+              deletionPolicy:
+                default: Retain
+                description: DeletionPolicy
+                enum:
+                - Delete
+                - Retain
+                type: string
+              description:
+                description: Description
+                type: string
+              enableKeyRotation:
+                description: EnableKeyRotation (only for symmetric keys)
+                type: boolean
+              enabled:
+                default: true
+                description: Enabled
+                type: boolean
+              keyPolicy:
+                description: KeyPolicy in JSON format
+                type: string
+              keySpec:
+                default: SYMMETRIC_DEFAULT
+                description: KeySpec (SYMMETRIC_DEFAULT, RSA_2048, RSA_3072, RSA_4096,
+                  ECC_NIST_P256, etc)
+                type: string
+              keyUsage:
+                default: ENCRYPT_DECRYPT
+                description: KeyUsage (ENCRYPT_DECRYPT, SIGN_VERIFY, GENERATE_VERIFY_MAC)
+                enum:
+                - ENCRYPT_DECRYPT
+                - SIGN_VERIFY
+                - GENERATE_VERIFY_MAC
+                type: string
+              multiRegion:
+                description: MultiRegion
+                type: boolean
+              pendingWindowInDays:
+                default: 30
+                description: PendingWindowInDays for key deletion (7-30 days)
+                format: int32
+                maximum: 30
+                minimum: 7
+                type: integer
+              providerRef:
+                description: ProviderRef references the AWSProvider to use
+                properties:
+                  name:
+                    description: Name of the AWSProvider
+                    type: string
+                  namespace:
+                    description: Namespace of the AWSProvider (if different from current
+                      namespace)
+                    type: string
+                required:
+                - name
+                type: object
+              tags:
+                additionalProperties:
+                  type: string
+                description: Tags
+                type: object
+            required:
+            - providerRef
+            type: object
+          status:
+            description: KMSKeyStatus defines the observed state of KMSKey
+            properties:
+              arn:
+                description: Arn
+                type: string
+              conditions:
+                description: Conditions
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              creationDate:
+                description: CreationDate
+                format: date-time
+                type: string
+              deletionDate:
+                description: DeletionDate (if PendingDeletion)
+                format: date-time
+                type: string
+              keyId:
+                description: KeyId
+                type: string
+              keyManager:
+                description: KeyManager (AWS or CUSTOMER)
+                type: string
+              keyState:
+                description: KeyState (Enabled, Disabled, PendingDeletion, PendingImport,
+                  Unavailable)
+                type: string
+              lastSyncTime:
+                description: LastSyncTime
+                format: date-time
+                type: string
+              ready:
+                description: Ready
+                type: boolean
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

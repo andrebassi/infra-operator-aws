@@ -1,0 +1,224 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: ec2instances.aws-infra-operator.runner.codes
+spec:
+  group: aws-infra-operator.runner.codes
+  names:
+    kind: EC2Instance
+    listKind: EC2InstanceList
+    plural: ec2instances
+    singular: ec2instance
+    shortNames:
+    - ec2
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            required:
+            - providerRef
+            - instanceName
+            - instanceType
+            - imageID
+            properties:
+              providerRef:
+                type: object
+                required:
+                - name
+                properties:
+                  name:
+                    type: string
+                  namespace:
+                    type: string
+              instanceName:
+                type: string
+              instanceType:
+                type: string
+              imageID:
+                type: string
+              keyName:
+                type: string
+              subnetID:
+                type: string
+              securityGroupIDs:
+                type: array
+                items:
+                  type: string
+              iamInstanceProfile:
+                type: string
+              userData:
+                type: string
+              blockDeviceMappings:
+                type: array
+                items:
+                  type: object
+                  required:
+                  - deviceName
+                  properties:
+                    deviceName:
+                      type: string
+                    ebs:
+                      type: object
+                      required:
+                      - volumeSize
+                      properties:
+                        volumeSize:
+                          type: integer
+                        volumeType:
+                          type: string
+                          enum:
+                          - gp2
+                          - gp3
+                          - io1
+                          - io2
+                          - st1
+                          - sc1
+                          - standard
+                          default: gp3
+                        iops:
+                          type: integer
+                        deleteOnTermination:
+                          type: boolean
+                          default: true
+                        encrypted:
+                          type: boolean
+                        kmsKeyID:
+                          type: string
+              monitoring:
+                type: boolean
+              disableApiTermination:
+                type: boolean
+              ebsOptimized:
+                type: boolean
+              tags:
+                type: object
+                additionalProperties:
+                  type: string
+              deletionPolicy:
+                type: string
+                enum:
+                - Delete
+                - Retain
+                - Stop
+                default: Delete
+          status:
+            type: object
+            properties:
+              ready:
+                type: boolean
+              instanceID:
+                type: string
+              instanceState:
+                type: string
+              privateIP:
+                type: string
+              publicIP:
+                type: string
+              privateDNS:
+                type: string
+              publicDNS:
+                type: string
+              availabilityZone:
+                type: string
+              launchTime:
+                type: string
+                format: date-time
+              lastSyncTime:
+                type: string
+                format: date-time
+              conditions:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    type:
+                      type: string
+                    status:
+                      type: string
+                    reason:
+                      type: string
+                    message:
+                      type: string
+                    lastTransitionTime:
+                      type: string
+                      format: date-time
+    subresources:
+      status: {}
+    additionalPrinterColumns:
+    - name: Instance
+      type: string
+      jsonPath: .spec.instanceName
+    - name: Type
+      type: string
+      jsonPath: .spec.instanceType
+    - name: State
+      type: string
+      jsonPath: .status.instanceState
+    - name: InstanceID
+      type: string
+      jsonPath: .status.instanceID
+    - name: PrivateIP
+      type: string
+      jsonPath: .status.privateIP
+    - name: Ready
+      type: boolean
+      jsonPath: .status.ready
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp
+
+---
+# Test EC2 Instance 1: Simple t3.micro
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: EC2Instance
+metadata:
+  name: e2e-test-instance
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  instanceName: e2e-test-vm
+  instanceType: t3.micro
+  imageID: ami-12345678
+  tags:
+    environment: test
+    managed-by: infra-operator
+    purpose: e2e-testing
+  deletionPolicy: Delete
+
+---
+# Test EC2 Instance 2: With EBS volume
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: EC2Instance
+metadata:
+  name: e2e-storage-instance
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  instanceName: e2e-storage-vm
+  instanceType: t3.small
+  imageID: ami-87654321
+  blockDeviceMappings:
+  - deviceName: /dev/xvdf
+    ebs:
+      volumeSize: 100
+      volumeType: gp3
+      encrypted: true
+      deleteOnTermination: true
+  monitoring: true
+  ebsOptimized: true
+  tags:
+    environment: test
+    managed-by: infra-operator
+    storage: enabled
+    purpose: e2e-testing
+  deletionPolicy: Stop

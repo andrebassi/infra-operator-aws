@@ -1,0 +1,11 @@
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: ECRRepository
+metadata:
+  name: test-ecr
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  repositoryName: helm-test-repo
+  imageTagMutability: MUTABLE
+  scanOnPush: true

@@ -1,0 +1,249 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: rdsinstances.aws-infra-operator.runner.codes
+spec:
+  group: aws-infra-operator.runner.codes
+  names:
+    kind: RDSInstance
+    listKind: RDSInstanceList
+    plural: rdsinstances
+    shortNames:
+    - rds
+    singular: rdsinstance
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.dbInstanceIdentifier
+      name: Instance
+      type: string
+    - jsonPath: .spec.engine
+      name: Engine
+      type: string
+    - jsonPath: .spec.dbInstanceClass
+      name: Class
+      type: string
+    - jsonPath: .status.status
+      name: Status
+      type: string
+    - jsonPath: .status.ready
+      name: Ready
+      type: boolean
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: RDSInstance is the Schema for the rdsinstances API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: RDSInstanceSpec defines the desired state of RDSInstance
+            properties:
+              allocatedStorage:
+                description: AllocatedStorage in GB
+                format: int32
+                type: integer
+              backupRetentionPeriod:
+                description: BackupRetentionPeriod in days (0-35)
+                format: int32
+                type: integer
+              dbInstanceClass:
+                description: DBInstanceClass is the compute and memory capacity (db.t3.micro,
+                  etc)
+                type: string
+              dbInstanceIdentifier:
+                description: DBInstanceIdentifier is the DB instance identifier
+                type: string
+              dbName:
+                description: DBName is the name of the initial database
+                type: string
+              deletionPolicy:
+                description: DeletionPolicy determines what happens when CR is deleted
+                type: string
+              engine:
+                description: Engine is the database engine (mysql, postgres, mariadb,
+                  etc)
+                type: string
+              engineVersion:
+                description: EngineVersion is the version of the database engine
+                type: string
+              masterUserPassword:
+                description: MasterUserPassword - direct password (not recommended
+                  for production)
+                type: string
+              masterUserPasswordSecretRef:
+                description: MasterUserPasswordSecretRef references a secret containing
+                  the password
+                properties:
+                  key:
+                    type: string
+                  name:
+                    type: string
+                required:
+                - key
+                - name
+                type: object
+              masterUsername:
+                description: MasterUsername for the database
+                type: string
+              multiAZ:
+                description: MultiAZ specifies if this is a Multi-AZ deployment
+                type: boolean
+              port:
+                description: Port for the database
+                format: int32
+                type: integer
+              preferredBackupWindow:
+                description: PreferredBackupWindow in format hh24:mi-hh24:mi
+                type: string
+              providerRef:
+                description: ProviderReference references an AWSProvider resource
+                properties:
+                  name:
+                    description: Name of the AWSProvider
+                    type: string
+                  namespace:
+                    description: Namespace of the AWSProvider (if different from current
+                      namespace)
+                    type: string
+                required:
+                - name
+                type: object
+              publiclyAccessible:
+                description: PubliclyAccessible specifies if the DB is publicly accessible
+                type: boolean
+              skipFinalSnapshot:
+                description: SkipFinalSnapshot if true, skips final snapshot on deletion
+                type: boolean
+              storageEncrypted:
+                description: StorageEncrypted specifies if storage is encrypted
+                type: boolean
+              tags:
+                additionalProperties:
+                  type: string
+                description: Tags for the RDS instance
+                type: object
+            required:
+            - allocatedStorage
+            - dbInstanceClass
+            - dbInstanceIdentifier
+            - engine
+            - masterUsername
+            - providerRef
+            type: object
+          status:
+            description: RDSInstanceStatus defines the observed state of RDSInstance
+            properties:
+              allocatedStorage:
+                description: AllocatedStorage in GB
+                format: int32
+                type: integer
+              conditions:
+                description: Conditions represent the latest available observations
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              dbInstanceArn:
+                description: DBInstanceArn is the ARN of the RDS instance
+                type: string
+              endpoint:
+                description: Endpoint is the connection endpoint
+                type: string
+              engineVersion:
+                description: EngineVersion is the actual engine version running
+                type: string
+              lastSyncTime:
+                description: LastSyncTime is when the instance was last synced
+                format: date-time
+                type: string
+              port:
+                description: Port is the connection port
+                format: int32
+                type: integer
+              ready:
+                type: boolean
+              status:
+                description: Status is the current status (available, creating, modifying,
+                  etc)
+                type: string
+            required:
+            - ready
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

@@ -1,0 +1,26 @@
+05-vpc.yaml -> 01-vpc.yaml
+06-subnet.yaml -> 02-subnet.yaml  
+12-elastic-ip.yaml -> 03-elastic-ip.yaml
+08-internet-gateway.yaml -> 04-internet-gateway.yaml
+09-nat-gateway.yaml -> 05-nat-gateway.yaml
+11-route-table.yaml -> 06-route-table.yaml
+10-security-group.yaml -> 07-security-group.yaml
+08-alb.yaml -> 08-alb.yaml
+09-nlb.yaml -> 09-nlb.yaml
+10-iam-role.yaml -> 10-iam-role.yaml
+11-kms-key.yaml -> 11-kms-key.yaml
+12-secrets-manager.yaml -> 12-secrets-manager.yaml
+13-certificate.yaml -> 13-certificate.yaml
+14-s3.yaml -> 14-s3.yaml (MISSING - need to find)
+15-ecr-repository.yaml -> 15-ecr-repository.yaml
+16-dynamodb.yaml -> 16-dynamodb.yaml
+17-rds-instance.yaml -> 17-rds-instance.yaml
+18-elasticache.yaml -> 18-elasticache.yaml
+19-sqs.yaml -> 19-sqs.yaml
+20-sns.yaml -> 20-sns.yaml
+21-ec2-instance.yaml -> 21-ec2-instance.yaml
+22-lambda.yaml -> 22-lambda.yaml
+23-ecs-cluster.yaml -> 23-ecs-cluster.yaml
+24-eks-cluster.yaml -> 24-eks-cluster.yaml
+25-api-gateway.yaml -> 25-api-gateway.yaml
+26-cloudfront.yaml -> 26-cloudfront.yaml

@@ -1,0 +1,204 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: iamroles.aws-infra-operator.runner.codes
+spec:
+  group: aws-infra-operator.runner.codes
+  names:
+    kind: IAMRole
+    listKind: IAMRoleList
+    plural: iamroles
+    singular: iamrole
+    shortNames:
+    - role
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            required:
+            - providerRef
+            - roleName
+            - assumeRolePolicyDocument
+            properties:
+              providerRef:
+                type: object
+                required:
+                - name
+                properties:
+                  name:
+                    type: string
+                  namespace:
+                    type: string
+              roleName:
+                type: string
+                minLength: 1
+                maxLength: 64
+              description:
+                type: string
+                maxLength: 1000
+              assumeRolePolicyDocument:
+                type: string
+              managedPolicyArns:
+                type: array
+                items:
+                  type: string
+              inlinePolicy:
+                type: object
+                required:
+                - policyName
+                - policyDocument
+                properties:
+                  policyName:
+                    type: string
+                  policyDocument:
+                    type: string
+              maxSessionDuration:
+                type: integer
+                minimum: 3600
+                maximum: 43200
+              path:
+                type: string
+                default: "/"
+              permissionsBoundary:
+                type: string
+              tags:
+                type: object
+                additionalProperties:
+                  type: string
+              deletionPolicy:
+                type: string
+                enum:
+                - Delete
+                - Retain
+                - Orphan
+                default: Delete
+          status:
+            type: object
+            properties:
+              ready:
+                type: boolean
+              roleArn:
+                type: string
+              roleId:
+                type: string
+              createdAt:
+                type: string
+                format: date-time
+              lastSyncTime:
+                type: string
+                format: date-time
+              message:
+                type: string
+    subresources:
+      status: {}
+    additionalPrinterColumns:
+    - name: Role
+      type: string
+      jsonPath: .spec.roleName
+    - name: ARN
+      type: string
+      jsonPath: .status.roleArn
+    - name: Ready
+      type: boolean
+      jsonPath: .status.ready
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp
+
+---
+# Test IAM Role 1: EC2 Service Role
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: IAMRole
+metadata:
+  name: e2e-ec2-role
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  roleName: e2e-ec2-service-role
+  description: "IAM role for EC2 instances - E2E testing"
+  path: /e2e/
+  maxSessionDuration: 3600
+  assumeRolePolicyDocument: |
+    {
+      "Version": "2012-10-17",
+      "Statement": [
+        {
+          "Effect": "Allow",
+          "Principal": {
+            "Service": "ec2.amazonaws.com"
+          },
+          "Action": "sts:AssumeRole"
+        }
+      ]
+    }
+  managedPolicyArns:
+  - arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+  - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+  tags:
+    environment: test
+    managed-by: infra-operator
+    purpose: e2e-testing
+  deletionPolicy: Delete
+
+---
+# Test IAM Role 2: Lambda Execution Role with Inline Policy
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: IAMRole
+metadata:
+  name: e2e-lambda-role
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  roleName: e2e-lambda-execution-role
+  description: "Lambda execution role with custom inline policy - E2E testing"
+  path: /lambda/
+  maxSessionDuration: 7200
+  assumeRolePolicyDocument: |
+    {
+      "Version": "2012-10-17",
+      "Statement": [
+        {
+          "Effect": "Allow",
+          "Principal": {
+            "Service": "lambda.amazonaws.com"
+          },
+          "Action": "sts:AssumeRole"
+        }
+      ]
+    }
+  managedPolicyArns:
+  - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+  inlinePolicy:
+    policyName: CustomDynamoDBAccess
+    policyDocument: |
+      {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Action": [
+              "dynamodb:GetItem",
+              "dynamodb:PutItem",
+              "dynamodb:UpdateItem",
+              "dynamodb:Query"
+            ],
+            "Resource": "arn:aws:dynamodb:*:*:table/e2e-*"
+          }
+        ]
+      }
+  tags:
+    environment: test
+    managed-by: infra-operator
+    service: lambda
+    purpose: e2e-testing
+  deletionPolicy: Delete

@@ -1,0 +1,13 @@
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: S3Bucket
+metadata:
+  name: test-bucket
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  bucketName: helm-test-bucket
+  versioning:
+    enabled: true
+  encryption:
+    algorithm: AES256

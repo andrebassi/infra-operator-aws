@@ -1,0 +1,372 @@
+# =============================================================================
+# EC2 Instance Samples - Infra Operator AWS
+# =============================================================================
+# Este arquivo contém exemplos de criação de instâncias EC2 via Kubernetes
+# Documentação: docs/services/compute/ec2.mdx
+# =============================================================================
+
+---
+# -----------------------------------------------------------------------------
+# Exemplo 1: EC2 Básica para Testes
+# -----------------------------------------------------------------------------
+# Instância simples para testes com LocalStack ou AWS
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: EC2Instance
+metadata:
+  name: test-ec2-basic
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  instanceName: test-ec2-basic
+  imageID: ami-12345678
+  instanceType: t2.micro
+  tags:
+    Name: test-ec2-basic
+    Environment: test
+    ManagedBy: infra-operator
+
+---
+# -----------------------------------------------------------------------------
+# Exemplo 2: EC2 com Volume EBS e Console Output
+# -----------------------------------------------------------------------------
+# Instância com armazenamento personalizado e coleta de logs do console
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: EC2Instance
+metadata:
+  name: ec2-with-ebs
+  namespace: default
+spec:
+  providerRef:
+    name: aws-develop
+  instanceName: ec2-with-ebs
+  imageID: ami-0c02fb55956c7d316  # Amazon Linux 2
+  instanceType: t3.small
+
+  # Subnet e Security Groups
+  subnetID: subnet-xxxxxxxxx
+  securityGroupIDs:
+    - sg-xxxxxxxxx
+
+  # Habilita coleta de logs do console
+  enableConsoleOutput: true
+
+  # Configuração do volume EBS
+  blockDeviceMappings:
+    - deviceName: /dev/xvda
+      ebs:
+        volumeSize: 50
+        volumeType: gp3
+        encrypted: true
+        deleteOnTermination: true
+
+  # Otimização EBS para melhor performance de I/O
+  ebsOptimized: true
+
+  # Monitoramento detalhado do CloudWatch
+  monitoring: true
+
+  tags:
+    Name: ec2-with-ebs
+    Environment: development
+    ManagedBy: infra-operator
+    Storage: enabled
+
+  # Política: Para no delete ao invés de terminar
+  deletionPolicy: Stop
+
+---
+# -----------------------------------------------------------------------------
+# Exemplo 3: EC2 com KeyPair para SSH
+# -----------------------------------------------------------------------------
+# Instância com acesso SSH configurado via EC2KeyPair
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: EC2Instance
+metadata:
+  name: ec2-ssh-enabled
+  namespace: default
+spec:
+  providerRef:
+    name: aws-develop
+  instanceName: ec2-ssh-enabled
+  imageID: ami-0c02fb55956c7d316  # Amazon Linux 2
+  instanceType: t3.micro
+
+  # KeyPair criado via CRD EC2KeyPair
+  keyName: my-keypair
+
+  # Subnet pública para IP público
+  subnetID: subnet-public-xxxxxxxxx
+
+  # Security Group com porta 22 liberada
+  securityGroupIDs:
+    - sg-ssh-enabled-xxxxxxxxx
+
+  enableConsoleOutput: true
+
+  tags:
+    Name: ec2-ssh-enabled
+    Environment: development
+    Access: ssh
+    ManagedBy: infra-operator
+
+---
+# -----------------------------------------------------------------------------
+# Exemplo 4: EC2 com UserData (Instalação Apache)
+# -----------------------------------------------------------------------------
+# Instância que instala e configura Apache automaticamente no boot
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: EC2Instance
+metadata:
+  name: apache-webserver
+  namespace: default
+spec:
+  providerRef:
+    name: aws-production
+  instanceName: apache-webserver
+  imageID: ami-0c02fb55956c7d316  # Amazon Linux 2
+  instanceType: t3.small
+
+  subnetID: subnet-public-xxxxxxxxx
+  securityGroupIDs:
+    - sg-web-xxxxxxxxx  # Portas 80, 443 abertas
+
+  keyName: webserver-key
+
+  enableConsoleOutput: true
+
+  # Script de inicialização
+  userData: |
+    #!/bin/bash
+    set -e
+    exec > >(tee /var/log/user-data.log) 2>&1
+
+    # Update sistema
+    yum update -y
+
+    # Instalar Apache
+    yum install -y httpd
+
+    # Criar página inicial
+    cat > /var/www/html/index.html <<'EOF'
+    <!DOCTYPE html>
+    <html>
+    <head><title>Infra Operator Demo</title></head>
+    <body>
+      <h1>EC2 gerenciada pelo Infra Operator</h1>
+      <p>Esta instância foi criada via Kubernetes CRD</p>
+    </body>
+    </html>
+    EOF
+
+    # Iniciar Apache
+    systemctl enable httpd
+    systemctl start httpd
+
+  blockDeviceMappings:
+    - deviceName: /dev/xvda
+      ebs:
+        volumeSize: 30
+        volumeType: gp3
+        deleteOnTermination: true
+
+  tags:
+    Name: apache-webserver
+    Environment: production
+    Application: web
+    ManagedBy: infra-operator
+
+  deletionPolicy: Retain
+
+---
+# -----------------------------------------------------------------------------
+# Exemplo 5: Talos Linux - Control Plane / Worker
+# -----------------------------------------------------------------------------
+# Instância Talos Linux para cluster Kubernetes
+# Talos é um OS imutável projetado especificamente para K8s
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: EC2Instance
+metadata:
+  name: talos-linux-node
+  namespace: infra-operator
+spec:
+  providerRef:
+    name: aws-develop
+
+  # Nome da instância
+  instanceName: talos-linux-node
+
+  # AMI oficial do Talos Linux v1.11.5 (amd64) - us-east-1
+  # Para outras regiões: https://www.talos.dev/v1.11/talos-guides/install/cloud-platforms/aws/
+  imageID: ami-069bd0875ff9cae9c
+
+  # Mínimo recomendado: t3.medium (2 vCPU, 4GB RAM)
+  instanceType: t3.medium
+
+  # Subnet com acesso à internet (NAT ou pública)
+  subnetID: subnet-xxxxxxxxx
+
+  # Security Group com portas Talos/K8s:
+  # - 6443 (K8s API), 10250 (Kubelet)
+  # - 50000 (Talos API), 50001 (Trustd)
+  # - 51820/UDP (Wireguard CNI)
+  securityGroupIDs:
+    - sg-talos-xxxxxxxxx
+
+  # IMPORTANTE: Habilitar para debug de boot (Talos não tem SSH)
+  enableConsoleOutput: true
+
+  # Volume raiz - Talos requer mínimo 10GB
+  blockDeviceMappings:
+    - deviceName: /dev/xvda
+      ebs:
+        volumeSize: 20
+        volumeType: gp3
+        deleteOnTermination: true
+
+  tags:
+    Name: talos-linux-node
+    Environment: develop
+    OS: talos-linux
+    Version: v1.11.5
+    Role: worker
+    ManagedBy: infra-operator
+
+  deletionPolicy: Delete
+
+---
+# -----------------------------------------------------------------------------
+# Exemplo 6: EC2 com IAM Instance Profile
+# -----------------------------------------------------------------------------
+# Instância com credenciais AWS via IAM Role (sem armazenar access keys)
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: EC2Instance
+metadata:
+  name: ec2-with-iam-profile
+  namespace: default
+spec:
+  providerRef:
+    name: aws-production
+  instanceName: ec2-with-iam-profile
+  imageID: ami-0c02fb55956c7d316
+  instanceType: t3.medium
+
+  subnetID: subnet-private-xxxxxxxxx
+  securityGroupIDs:
+    - sg-app-xxxxxxxxx
+
+  # IAM Instance Profile para acessar S3, RDS, etc.
+  # O profile deve existir na AWS
+  iamInstanceProfile: app-server-profile
+
+  enableConsoleOutput: true
+
+  blockDeviceMappings:
+    - deviceName: /dev/xvda
+      ebs:
+        volumeSize: 100
+        volumeType: gp3
+        encrypted: true
+        deleteOnTermination: true
+
+  ebsOptimized: true
+  monitoring: true
+
+  # Previne terminação acidental via API
+  disableApiTermination: true
+
+  tags:
+    Name: ec2-with-iam-profile
+    Environment: production
+    Application: api-server
+    ManagedBy: infra-operator
+
+  deletionPolicy: Retain
+
+---
+# -----------------------------------------------------------------------------
+# Exemplo 7: Bastion Host (Jump Server)
+# -----------------------------------------------------------------------------
+# Instância para acesso SSH seguro a recursos em subnets privadas
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: EC2Instance
+metadata:
+  name: bastion-host
+  namespace: default
+spec:
+  providerRef:
+    name: aws-production
+  instanceName: bastion-host
+  imageID: ami-0c02fb55956c7d316  # Amazon Linux 2
+  instanceType: t3.micro  # Mínimo necessário
+
+  # Subnet pública para IP público
+  subnetID: subnet-public-xxxxxxxxx
+
+  # Security Group: apenas SSH do IP corporativo
+  securityGroupIDs:
+    - sg-bastion-xxxxxxxxx
+
+  keyName: bastion-key
+
+  enableConsoleOutput: true
+
+  # Script para hardening básico
+  userData: |
+    #!/bin/bash
+    set -e
+
+    # Update sistema
+    yum update -y
+
+    # Desabilitar autenticação por senha SSH
+    sed -i 's/^#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
+    sed -i 's/^PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
+    systemctl restart sshd
+
+    # Instalar ferramentas úteis
+    yum install -y git vim curl wget jq
+
+  blockDeviceMappings:
+    - deviceName: /dev/xvda
+      ebs:
+        volumeSize: 20
+        volumeType: gp3
+        deleteOnTermination: true
+
+  tags:
+    Name: bastion-host
+    Environment: production
+    Purpose: ssh-jump-host
+    ManagedBy: infra-operator
+
+  deletionPolicy: Delete
+
+# =============================================================================
+# Como usar os exemplos:
+# =============================================================================
+#
+# 1. Criar AWSProvider primeiro (veja samples/00-awsprovider.yaml)
+#
+# 2. Aplicar o exemplo desejado:
+#    kubectl apply -f samples/21-ec2-instance.yaml
+#
+# 3. Verificar status:
+#    kubectl get ec2instances
+#    kubectl describe ec2instance <nome>
+#
+# 4. Ver console output (se habilitado):
+#    kubectl get ec2instance <nome> -o jsonpath='{.status.consoleOutput}'
+#
+# 5. Conectar via SSH (se keyName configurado):
+#    # Extrair chave do Secret
+#    kubectl get secret <keypair>-ssh -o jsonpath='{.data.private-key}' | base64 -d > key.pem
+#    chmod 600 key.pem
+#
+#    # Obter IP público
+#    IP=$(kubectl get ec2instance <nome> -o jsonpath='{.status.publicIP}')
+#
+#    # Conectar
+#    ssh -i key.pem ec2-user@$IP
+#
+# =============================================================================

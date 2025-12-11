@@ -1,0 +1,1046 @@
+# =============================================================================
+# ComputeStack - Infraestrutura de Rede Completa em um Único Recurso
+# =============================================================================
+# O ComputeStack cria toda a infraestrutura de rede AWS de uma vez:
+# - VPC com CIDR configurável
+# - Subnets públicas e privadas (multi-AZ)
+# - Internet Gateway
+# - NAT Gateway(s) com Elastic IP
+# - Route Tables (pública e privadas)
+# - Security Groups padrão
+# =============================================================================
+
+---
+# -----------------------------------------------------------------------------
+# Exemplo 1: ComputeStack Básico (2 AZs, sem NAT)
+# -----------------------------------------------------------------------------
+# Ideal para ambientes de desenvolvimento ou testes
+# Apenas subnets públicas, sem custo de NAT Gateway
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: ComputeStack
+metadata:
+  name: dev-network
+  namespace: infra-operator
+spec:
+  providerRef:
+    name: aws-develop
+
+  # Bloco CIDR da VPC
+  vpcCIDR: "10.0.0.0/16"
+
+  # Nome opcional da VPC (usa metadata.name-vpc se não especificado)
+  vpcName: dev-vpc
+
+  # Availability Zones
+  availabilityZones:
+    - us-east-1a
+    - us-east-1b
+
+  # Subnets públicas (com auto-assign de IP público)
+  publicSubnets:
+    - cidr: "10.0.1.0/24"
+      availabilityZone: us-east-1a
+      name: dev-public-1a
+    - cidr: "10.0.2.0/24"
+      availabilityZone: us-east-1b
+      name: dev-public-1b
+
+  # DNS
+  enableDNSHostnames: true
+  enableDNSSupport: true
+
+  # Tags aplicadas a todos os recursos
+  tags:
+    Environment: development
+    Project: my-app
+    ManagedBy: infra-operator
+
+  # Deletar recursos quando CR for deletado
+  deletionPolicy: Delete
+
+---
+# -----------------------------------------------------------------------------
+# Exemplo 2: ComputeStack Produção (3 AZs, NAT HA)
+# -----------------------------------------------------------------------------
+# Configuração completa para produção com alta disponibilidade:
+# - 3 AZs para máxima resiliência
+# - NAT Gateway por AZ (HighAvailability: true)
+# - Subnets públicas e privadas
+# - Security Groups para web e SSH
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: ComputeStack
+metadata:
+  name: prod-network
+  namespace: infra-operator
+spec:
+  providerRef:
+    name: aws-production
+
+  vpcCIDR: "10.100.0.0/16"
+  vpcName: production-vpc
+
+  availabilityZones:
+    - us-east-1a
+    - us-east-1b
+    - us-east-1c
+
+  # Subnets públicas (para Load Balancers, Bastion, NAT Gateways)
+  publicSubnets:
+    - cidr: "10.100.1.0/24"
+      availabilityZone: us-east-1a
+      name: prod-public-1a
+      tags:
+        Tier: public
+    - cidr: "10.100.2.0/24"
+      availabilityZone: us-east-1b
+      name: prod-public-1b
+      tags:
+        Tier: public
+    - cidr: "10.100.3.0/24"
+      availabilityZone: us-east-1c
+      name: prod-public-1c
+      tags:
+        Tier: public
+
+  # Subnets privadas (para aplicações, bancos de dados)
+  privateSubnets:
+    - cidr: "10.100.10.0/24"
+      availabilityZone: us-east-1a
+      name: prod-private-1a
+      tags:
+        Tier: private
+    - cidr: "10.100.20.0/24"
+      availabilityZone: us-east-1b
+      name: prod-private-1b
+      tags:
+        Tier: private
+    - cidr: "10.100.30.0/24"
+      availabilityZone: us-east-1c
+      name: prod-private-1c
+      tags:
+        Tier: private
+
+  # NAT Gateway com alta disponibilidade (1 por AZ)
+  natGateway:
+    enabled: true
+    highAvailability: true  # Cria 1 NAT por AZ
+
+  # Security Groups padrão
+  defaultSecurityGroups:
+    # Security Group para SSH (bastion)
+    - name: ssh
+      description: Permite SSH de IPs específicos
+      ingressRules:
+        - protocol: tcp
+          port: 22
+          cidr: "10.0.0.0/8"  # Apenas IPs internos
+          description: SSH interno
+
+    # Security Group para aplicações web
+    - name: web
+      description: Permite HTTP e HTTPS
+      ingressRules:
+        - protocol: tcp
+          port: 80
+          cidr: "0.0.0.0/0"
+          description: HTTP
+        - protocol: tcp
+          port: 443
+          cidr: "0.0.0.0/0"
+          description: HTTPS
+      egressRules:
+        - protocol: "-1"
+          port: 0
+          toPort: 65535
+          cidr: "0.0.0.0/0"
+          description: All outbound
+
+  enableDNSHostnames: true
+  enableDNSSupport: true
+
+  tags:
+    Environment: production
+    Project: my-app
+    CostCenter: engineering
+    ManagedBy: infra-operator
+
+  # Retain para não deletar acidentalmente
+  deletionPolicy: Retain
+
+---
+# -----------------------------------------------------------------------------
+# Exemplo 3: ComputeStack com NAT Compartilhado (Economia)
+# -----------------------------------------------------------------------------
+# Configuração econômica: apenas 1 NAT Gateway compartilhado
+# Menor custo, mas single point of failure
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: ComputeStack
+metadata:
+  name: staging-network
+  namespace: infra-operator
+spec:
+  providerRef:
+    name: aws-staging
+
+  vpcCIDR: "10.50.0.0/16"
+
+  availabilityZones:
+    - us-east-1a
+    - us-east-1b
+
+  publicSubnets:
+    - cidr: "10.50.1.0/24"
+      availabilityZone: us-east-1a
+    - cidr: "10.50.2.0/24"
+      availabilityZone: us-east-1b
+
+  privateSubnets:
+    - cidr: "10.50.10.0/24"
+      availabilityZone: us-east-1a
+    - cidr: "10.50.20.0/24"
+      availabilityZone: us-east-1b
+
+  # NAT Gateway compartilhado (mais barato)
+  natGateway:
+    enabled: true
+    highAvailability: false  # Apenas 1 NAT Gateway
+
+  defaultSecurityGroups:
+    - name: allow-all-internal
+      description: Permite tráfego interno da VPC
+      ingressRules:
+        - protocol: "-1"
+          port: 0
+          toPort: 65535
+          cidr: "10.50.0.0/16"
+          description: All VPC internal
+
+  tags:
+    Environment: staging
+    ManagedBy: infra-operator
+
+  deletionPolicy: Delete
+
+---
+# -----------------------------------------------------------------------------
+# Exemplo 4: ComputeStack com Recursos Existentes
+# -----------------------------------------------------------------------------
+# Use este padrão quando você já tem infraestrutura AWS criada e quer
+# apenas referenciar esses recursos (sem criar novos)
+# Recursos existentes NÃO são deletados quando o CR é removido
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: ComputeStack
+metadata:
+  name: existing-infra
+  namespace: infra-operator
+spec:
+  providerRef:
+    name: aws-develop
+
+  # ============================================
+  # OPÇÃO 1: Usar VPC existente
+  # ============================================
+  # Se especificar existingVpcID, NÃO precisa de vpcCIDR
+  existingVpcID: "vpc-0abc123def456789"
+
+  # ============================================
+  # OPÇÃO 2: Usar Subnets existentes
+  # ============================================
+  # Se especificar existingSubnetIDs, NÃO precisa de publicSubnets/privateSubnets
+  existingSubnetIDs:
+    - "subnet-0abc123def456789a"  # public-1a
+    - "subnet-0abc123def456789b"  # public-1b
+    - "subnet-0abc123def456789c"  # private-1a
+
+  # ============================================
+  # OPÇÃO 3: Usar Internet Gateway existente
+  # ============================================
+  existingInternetGatewayID: "igw-0abc123def456789"
+
+  # ============================================
+  # OPÇÃO 4: Usar NAT Gateways existentes
+  # ============================================
+  existingNATGatewayIDs:
+    - "nat-0abc123def456789a"
+
+  # ============================================
+  # OPÇÃO 5: Usar Route Tables existentes
+  # ============================================
+  existingRouteTableIDs:
+    - "rtb-0abc123def456789a"  # public
+    - "rtb-0abc123def456789b"  # private
+
+  # ============================================
+  # OPÇÃO 6: Usar Security Groups existentes
+  # ============================================
+  existingSecurityGroupIDs:
+    - "sg-0abc123def456789a"  # web
+    - "sg-0abc123def456789b"  # ssh
+
+  # Tags (opcionais, não afetam recursos existentes)
+  tags:
+    Environment: production
+    ManagedBy: infra-operator
+
+  # IMPORTANTE: Retain é recomendado para recursos existentes
+  # pois você não quer deletá-los quando remover o CR
+  deletionPolicy: Retain
+
+---
+# -----------------------------------------------------------------------------
+# Exemplo 5: ComputeStack Híbrido (VPC existente + criar subnets)
+# -----------------------------------------------------------------------------
+# Cenário: Você tem uma VPC existente mas quer criar subnets novas
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: ComputeStack
+metadata:
+  name: hybrid-network
+  namespace: infra-operator
+spec:
+  providerRef:
+    name: aws-develop
+
+  # Usar VPC existente
+  existingVpcID: "vpc-0abc123def456789"
+
+  # Usar Internet Gateway existente
+  existingInternetGatewayID: "igw-0abc123def456789"
+
+  # Criar novas subnets dentro da VPC existente
+  publicSubnets:
+    - cidr: "10.0.100.0/24"
+      availabilityZone: us-east-1a
+      name: new-public-1a
+    - cidr: "10.0.101.0/24"
+      availabilityZone: us-east-1b
+      name: new-public-1b
+
+  privateSubnets:
+    - cidr: "10.0.200.0/24"
+      availabilityZone: us-east-1a
+      name: new-private-1a
+    - cidr: "10.0.201.0/24"
+      availabilityZone: us-east-1b
+      name: new-private-1b
+
+  # Criar NAT Gateway para as novas subnets privadas
+  natGateway:
+    enabled: true
+    highAvailability: false
+
+  # Criar Security Groups novos
+  defaultSecurityGroups:
+    - name: app
+      description: Security group para aplicações
+      ingressRules:
+        - protocol: tcp
+          port: 8080
+          cidr: "10.0.0.0/8"
+          description: App port
+
+  tags:
+    Environment: hybrid
+    ManagedBy: infra-operator
+
+  # Delete apenas remove recursos CRIADOS, não os existentes
+  deletionPolicy: Delete
+
+# =============================================================================
+# Como usar:
+# =============================================================================
+#
+# 1. Criar AWSProvider primeiro:
+#    kubectl apply -f samples/00-awsprovider.yaml
+#
+# 2. Aplicar o ComputeStack:
+#    kubectl apply -f samples/29-computestack.yaml
+#
+# 3. Acompanhar criação:
+#    kubectl get computestack -n infra-operator -w
+#
+#    # Output esperado:
+#    # NAME           VPC                   CIDR           PHASE               READY   AGE
+#    # dev-network    vpc-0abc123def456789  10.0.0.0/16    CreatingVPC         false   5s
+#    # dev-network    vpc-0abc123def456789  10.0.0.0/16    CreatingSubnets     false   10s
+#    # dev-network    vpc-0abc123def456789  10.0.0.0/16    Ready               true    30s
+#
+# 4. Ver detalhes completos:
+#    kubectl describe computestack dev-network -n infra-operator
+#
+# 5. Obter IDs dos recursos criados:
+#    # VPC ID
+#    kubectl get computestack dev-network -n infra-operator -o jsonpath='{.status.vpc.id}'
+#
+#    # Subnet IDs (públicas)
+#    kubectl get computestack dev-network -n infra-operator -o jsonpath='{.status.publicSubnets[*].id}'
+#
+#    # Security Group IDs
+#    kubectl get computestack dev-network -n infra-operator -o jsonpath='{.status.securityGroups[*].id}'
+#
+# 6. Usar subnets em outros recursos:
+#    # Exemplo: EC2 na subnet pública
+#    apiVersion: aws-infra-operator.runner.codes/v1alpha1
+#    kind: EC2Instance
+#    metadata:
+#      name: my-ec2
+#    spec:
+#      providerRef:
+#        name: aws-develop
+#      instanceName: my-ec2
+#      imageID: ami-12345678
+#      instanceType: t3.micro
+#      # Usar subnet do ComputeStack
+#      subnetID: $(kubectl get computestack dev-network -o jsonpath='{.status.publicSubnets[0].id}')
+#      # Usar Security Group do ComputeStack
+#      securityGroupIDs:
+#        - $(kubectl get computestack dev-network -o jsonpath='{.status.securityGroups[0].id}')
+#
+# 7. Deletar tudo:
+#    kubectl delete computestack dev-network -n infra-operator
+#    # Isso deleta: VPC, Subnets, IGW, NAT, Route Tables, Security Groups
+#
+# =============================================================================
+# Custo aproximado (us-east-1):
+# =============================================================================
+# - VPC: Gratuito
+# - Subnets: Gratuito
+# - Internet Gateway: Gratuito
+# - NAT Gateway: ~$0.045/hora + $0.045/GB de dados (~$32/mês por NAT)
+# - Elastic IP: Gratuito se anexado, $0.005/hora se não usado
+# - Route Tables: Gratuito
+# - Security Groups: Gratuito
+#
+# Exemplo de custos mensais:
+# - dev-network (sem NAT): ~$0
+# - staging-network (1 NAT): ~$32/mês
+# - prod-network (3 NATs HA): ~$96/mês
+# =============================================================================
+
+---
+# =============================================================================
+# Exemplo 6: ComputeStack com Bastion Instance (EC2 SSH)
+# =============================================================================
+# Cria toda a infraestrutura de rede + uma instância EC2 Bastion para acesso SSH
+# Ideal para ambientes que precisam de acesso SSH a recursos na VPC
+#
+# O que é criado automaticamente:
+# - VPC com CIDR configurável
+# - Subnet pública
+# - Internet Gateway
+# - Route Table com rota para IGW
+# - Security Group para SSH (porta 22)
+# - Instância EC2 Bastion com IP público
+#
+# IMPORTANTE: Após a criação, você receberá o comando SSH no status:
+#   kubectl get computestack bastion-stack -n infra-operator -o jsonpath='{.status.bastionInstance.sshCommand}'
+# =============================================================================
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: ComputeStack
+metadata:
+  name: bastion-stack
+  namespace: infra-operator
+spec:
+  # Referência ao AWSProvider (deve existir antes)
+  providerRef:
+    name: aws-develop
+
+  # Configuração da VPC
+  vpcCIDR: "10.250.0.0/16"
+  vpcName: bastion-vpc
+
+  # Availability Zone (apenas 1 necessária para bastion simples)
+  availabilityZones:
+    - us-east-1a
+
+  # Subnet pública para o Bastion (precisa de IP público)
+  publicSubnets:
+    - cidr: "10.250.1.0/24"
+      availabilityZone: us-east-1a
+      name: bastion-public-subnet
+
+  # ===========================================
+  # Configuração do Bastion Instance
+  # ===========================================
+  bastionInstance:
+    # Habilita a criação da instância EC2 Bastion
+    enabled: true
+
+    # Tipo da instância (t3.micro é suficiente para bastion)
+    instanceType: t3.micro
+
+    # CIDRs permitidos para conexão SSH
+    # ATENÇÃO: 0.0.0.0/0 permite SSH de qualquer IP (não recomendado para produção)
+    # Em produção, use o IP ou range da sua rede corporativa
+    sshAllowedCIDRs:
+      - "0.0.0.0/0"  # Qualquer IP (apenas para testes)
+      # - "10.0.0.0/8"       # Exemplo: apenas IPs internos
+      # - "203.0.113.50/32"  # Exemplo: IP específico
+
+    # Tamanho do volume raiz em GB
+    rootVolumeSize: 8
+
+    # Associa IP público automaticamente (necessário para SSH externo)
+    associatePublicIP: true
+
+  # Configurações de DNS da VPC
+  enableDNSHostnames: true
+  enableDNSSupport: true
+
+  # Tags aplicadas a todos os recursos
+  tags:
+    Environment: development
+    Purpose: bastion-ssh
+    ManagedBy: infra-operator
+
+  # Política de deleção: Delete remove tudo, Retain mantém recursos
+  deletionPolicy: Delete
+
+# =============================================================================
+# Status esperado após criação bem-sucedida:
+# =============================================================================
+# status:
+#   phase: Ready
+#   ready: true
+#   message: "ComputeStack created successfully. SSH: ssh ec2-user@<IP_PUBLICO>"
+#
+#   vpc:
+#     id: vpc-xxxxxxxxxx
+#     cidr: 10.250.0.0/16
+#     state: available
+#
+#   publicSubnets:
+#     - id: subnet-xxxxxxxxxx
+#       cidr: 10.250.1.0/24
+#       availabilityZone: us-east-1a
+#
+#   internetGateway:
+#     id: igw-xxxxxxxxxx
+#     state: attached
+#
+#   bastionSecurityGroup:
+#     id: sg-xxxxxxxxxx
+#     name: bastion-stack-bastion-sg
+#
+#   bastionInstance:
+#     id: i-xxxxxxxxxx
+#     name: bastion-stack-bastion
+#     state: running
+#     instanceType: t3.micro
+#     privateIP: 10.250.1.xxx
+#     publicIP: xx.xx.xx.xx
+#     availabilityZone: us-east-1a
+#     sshCommand: "ssh ec2-user@xx.xx.xx.xx"
+# =============================================================================
+
+# =============================================================================
+# Como usar o Bastion:
+# =============================================================================
+#
+# 1. Aplicar o ComputeStack:
+#    kubectl apply -f samples/29-computestack.yaml
+#
+# 2. Aguardar criação (acompanhar fases):
+#    kubectl get computestack bastion-stack -n infra-operator -w
+#
+#    # Fases esperadas:
+#    # CreatingVPC -> CreatingSubnets -> CreatingIGW -> CreatingRoutes ->
+#    # CreatingBastionSG -> CreatingBastion -> WaitingBastionInstance -> Ready
+#
+# 3. Verificar status completo:
+#    kubectl describe computestack bastion-stack -n infra-operator
+#
+# 4. Obter comando SSH:
+#    kubectl get computestack bastion-stack -n infra-operator \
+#      -o jsonpath='{.status.bastionInstance.sshCommand}'
+#
+# 5. Obter IP público:
+#    kubectl get computestack bastion-stack -n infra-operator \
+#      -o jsonpath='{.status.bastionInstance.publicIP}'
+#
+# 6. Conectar via SSH (usando a chave padrão Amazon Linux):
+#    # NOTA: A AMI padrão usa o usuário ec2-user
+#    # Você precisa da chave SSH configurada na sua conta AWS
+#    ssh -i ~/.ssh/sua-chave.pem ec2-user@<IP_PUBLICO>
+#
+# 7. Deletar tudo (se deletionPolicy: Delete):
+#    kubectl delete computestack bastion-stack -n infra-operator
+#    # Isso deleta: VPC, Subnet, IGW, Route Table, Security Group, EC2 Instance
+#
+# =============================================================================
+
+---
+# =============================================================================
+# Exemplo 7: ComputeStack Completo com Bastion (Produção)
+# =============================================================================
+# Configuração completa para produção:
+# - 2 AZs para resiliência
+# - Subnets públicas e privadas
+# - NAT Gateway para subnets privadas
+# - Bastion com SSH restrito
+# =============================================================================
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: ComputeStack
+metadata:
+  name: prod-bastion-stack
+  namespace: infra-operator
+spec:
+  providerRef:
+    name: aws-production
+
+  vpcCIDR: "10.200.0.0/16"
+  vpcName: production-vpc
+
+  availabilityZones:
+    - us-east-1a
+    - us-east-1b
+
+  # Subnets públicas (para ALB, Bastion, NAT)
+  publicSubnets:
+    - cidr: "10.200.1.0/24"
+      availabilityZone: us-east-1a
+      name: prod-public-1a
+      tags:
+        Tier: public
+    - cidr: "10.200.2.0/24"
+      availabilityZone: us-east-1b
+      name: prod-public-1b
+      tags:
+        Tier: public
+
+  # Subnets privadas (para aplicações, bancos de dados)
+  privateSubnets:
+    - cidr: "10.200.10.0/24"
+      availabilityZone: us-east-1a
+      name: prod-private-1a
+      tags:
+        Tier: private
+    - cidr: "10.200.20.0/24"
+      availabilityZone: us-east-1b
+      name: prod-private-1b
+      tags:
+        Tier: private
+
+  # NAT Gateway para subnets privadas acessarem internet
+  natGateway:
+    enabled: true
+    highAvailability: false  # true = 1 NAT por AZ (~$64/mês)
+
+  # Bastion com SSH restrito ao IP corporativo
+  bastionInstance:
+    enabled: true
+    instanceType: t3.micro
+    sshAllowedCIDRs:
+      - "10.0.0.0/8"        # Rede interna/VPN
+      # Adicione seu IP corporativo aqui
+    rootVolumeSize: 20
+    associatePublicIP: true
+
+  # Security Groups adicionais
+  defaultSecurityGroups:
+    - name: internal
+      description: Permite trafego interno da VPC
+      ingressRules:
+        - protocol: "-1"
+          port: 0
+          toPort: 65535
+          cidr: "10.200.0.0/16"
+          description: All VPC traffic
+
+  enableDNSHostnames: true
+  enableDNSSupport: true
+
+  tags:
+    Environment: production
+    CostCenter: engineering
+    ManagedBy: infra-operator
+
+  # Retain para não deletar acidentalmente em produção
+  deletionPolicy: Retain
+
+# =============================================================================
+# Custo estimado com Bastion (us-east-1):
+# =============================================================================
+# - VPC, Subnets, IGW, Route Tables, Security Groups: Gratuito
+# - NAT Gateway (1x): ~$32/mês + $0.045/GB
+# - EC2 t3.micro Bastion: ~$8/mês (ou gratuito no Free Tier)
+# - Elastic IP (anexado): Gratuito
+# - EBS 20GB gp3: ~$1.60/mês
+#
+# Total aproximado: ~$42/mês
+# =============================================================================
+
+---
+# =============================================================================
+# Exemplo 8: ComputeStack com Auto Key Pair (SSH Key gerado automaticamente)
+# =============================================================================
+# O operator gera automaticamente um Key Pair SSH e armazena a chave privada
+# em um Secret Kubernetes. Não precisa criar KeyPair manualmente!
+#
+# Recursos criados automaticamente:
+# - VPC + Subnet (se não especificada, cria automaticamente)
+# - Key Pair na AWS (nome: <stack-name>-bastion-key)
+# - Secret Kubernetes com chave privada (nome: <stack-name>-ssh-key)
+# - EC2 Bastion com IP público
+# =============================================================================
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: ComputeStack
+metadata:
+  name: auto-key-stack
+  namespace: infra-operator
+spec:
+  providerRef:
+    name: aws-develop
+
+  # VPC - a subnet será criada automaticamente (10.200.1.0/24)
+  vpcCIDR: "10.200.0.0/16"
+
+  bastionInstance:
+    enabled: true
+    instanceType: t3.micro
+    rootVolumeSize: 10
+    # NÃO especificar keyName = gera automaticamente!
+    # A chave privada será salva em: auto-key-stack-ssh-key
+
+  tags:
+    Environment: test
+    Feature: auto-keypair
+
+  deletionPolicy: Delete
+
+# =============================================================================
+# Como usar a chave SSH auto-gerada:
+# =============================================================================
+#
+# 1. Aguardar stack ficar Ready:
+#    kubectl get computestack auto-key-stack -n infra-operator -w
+#
+# 2. Extrair a chave privada do Secret:
+#    kubectl get secret auto-key-stack-ssh-key -n infra-operator \
+#      -o jsonpath='{.data.private-key}' | base64 -d > /tmp/auto-key.pem
+#    chmod 600 /tmp/auto-key.pem
+#
+# 3. Obter IP do Bastion:
+#    BASTION_IP=$(kubectl get computestack auto-key-stack -n infra-operator \
+#      -o jsonpath='{.status.bastionInstance.publicIP}')
+#
+# 4. Conectar via SSH:
+#    ssh -i /tmp/auto-key.pem ec2-user@$BASTION_IP
+#
+# 5. Ou usar o comando SSH completo do status:
+#    kubectl get computestack auto-key-stack -n infra-operator \
+#      -o jsonpath='{.status.bastionInstance.sshCommand}'
+# =============================================================================
+
+---
+# =============================================================================
+# Exemplo 9: ComputeStack com Cloud-Init (Neofetch)
+# =============================================================================
+# Demonstra uso de cloud-init/userData para executar scripts no boot da instância.
+# Este exemplo instala e executa o neofetch automaticamente.
+#
+# O userData suporta:
+# - Shell scripts (#!/bin/bash)
+# - Cloud-config YAML (#cloud-config)
+# - Codificação automática em base64 pelo operator
+# =============================================================================
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: ComputeStack
+metadata:
+  name: cloudinit-neofetch
+  namespace: infra-operator
+spec:
+  providerRef:
+    name: aws-develop
+
+  vpcCIDR: "10.231.0.0/16"
+
+  bastionInstance:
+    enabled: true
+    instanceType: t3.micro
+    rootVolumeSize: 10
+
+    # Cloud-Init script para instalar neofetch
+    userData: |
+      #!/bin/bash
+      set -ex
+      exec > /var/log/user-data.log 2>&1
+      echo "Starting cloud-init at $(date)"
+
+      # Instalar git
+      yum install -y git
+
+      # Clonar e instalar neofetch
+      git clone https://github.com/dylanaraps/neofetch.git /opt/neofetch
+      cd /opt/neofetch && make install
+
+      # Executar neofetch e salvar output
+      neofetch --stdout > /home/ec2-user/neofetch-output.txt
+
+      echo "Cloud-init completed at $(date)" >> /home/ec2-user/neofetch-output.txt
+      chown ec2-user:ec2-user /home/ec2-user/neofetch-output.txt
+
+  tags:
+    Environment: test
+    Feature: cloud-init
+
+  deletionPolicy: Delete
+
+# =============================================================================
+# Verificar Cloud-Init:
+# =============================================================================
+#
+# 1. Aguardar stack ficar Ready:
+#    kubectl get computestack cloudinit-neofetch -n infra-operator -w
+#
+# 2. Extrair chave SSH:
+#    kubectl get secret cloudinit-neofetch-ssh-key -n infra-operator \
+#      -o jsonpath='{.data.private-key}' | base64 -d > /tmp/cloudinit.pem
+#    chmod 600 /tmp/cloudinit.pem
+#
+# 3. Obter IP:
+#    BASTION_IP=$(kubectl get computestack cloudinit-neofetch -n infra-operator \
+#      -o jsonpath='{.status.bastionInstance.publicIP}')
+#
+# 4. Verificar output do neofetch (aguardar ~1-2min após boot):
+#    ssh -i /tmp/cloudinit.pem ec2-user@$BASTION_IP \
+#      "cat /home/ec2-user/neofetch-output.txt"
+#
+# 5. Ver logs do cloud-init:
+#    ssh -i /tmp/cloudinit.pem ec2-user@$BASTION_IP \
+#      "sudo cat /var/log/user-data.log"
+#
+# Output esperado do neofetch:
+# root@ip-10-231-1-76.ec2.internal
+# --------------------------------
+# OS: Amazon Linux 2 x86_64
+# Host: Amazon EC2
+# Kernel: 4.14.xxx
+# CPU: Intel Xeon Platinum 8259CL (2) @ 2.500GHz
+# Memory: 375MiB / 944MiB
+# Cloud-init completed at Wed Nov 26 14:32:56 UTC 2025
+# =============================================================================
+
+---
+# =============================================================================
+# Exemplo 10: ComputeStack com Cloud-Init para Docker
+# =============================================================================
+# Instala Docker e Docker Compose automaticamente no boot
+# =============================================================================
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: ComputeStack
+metadata:
+  name: cloudinit-docker
+  namespace: infra-operator
+spec:
+  providerRef:
+    name: aws-develop
+
+  vpcCIDR: "10.232.0.0/16"
+
+  bastionInstance:
+    enabled: true
+    instanceType: t3.small  # small para ter mais memória para Docker
+    rootVolumeSize: 20      # mais espaço para imagens Docker
+
+    userData: |
+      #!/bin/bash
+      set -ex
+      exec > /var/log/user-data.log 2>&1
+      echo "Starting Docker installation at $(date)"
+
+      # Instalar Docker
+      amazon-linux-extras install docker -y
+      systemctl start docker
+      systemctl enable docker
+      usermod -a -G docker ec2-user
+
+      # Instalar Docker Compose
+      curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" \
+        -o /usr/local/bin/docker-compose
+      chmod +x /usr/local/bin/docker-compose
+
+      # Verificar instalação
+      docker --version >> /home/ec2-user/docker-status.txt
+      docker-compose --version >> /home/ec2-user/docker-status.txt
+      echo "Docker installation completed at $(date)" >> /home/ec2-user/docker-status.txt
+      chown ec2-user:ec2-user /home/ec2-user/docker-status.txt
+
+  tags:
+    Environment: test
+    Feature: docker
+
+  deletionPolicy: Delete
+
+# =============================================================================
+# Verificar Docker:
+# =============================================================================
+#
+# 1. Conectar via SSH (após extrair chave do secret cloudinit-docker-ssh-key)
+#
+# 2. Verificar Docker:
+#    ssh -i /tmp/docker.pem ec2-user@$BASTION_IP "cat /home/ec2-user/docker-status.txt"
+#
+# 3. Testar Docker:
+#    ssh -i /tmp/docker.pem ec2-user@$BASTION_IP "docker run hello-world"
+# =============================================================================
+
+---
+# =============================================================================
+# Exemplo 11: ComputeStack com userData via Secret (Dados Sensíveis)
+# =============================================================================
+# Para scripts com dados sensíveis (senhas, tokens), use userDataSecretRef
+# ao invés de userData inline. O operator busca o script do Secret.
+# =============================================================================
+# PASSO 1: Criar o Secret com o userData
+apiVersion: v1
+kind: Secret
+metadata:
+  name: my-sensitive-cloudinit
+  namespace: infra-operator
+type: Opaque
+stringData:
+  userData: |
+    #!/bin/bash
+    set -ex
+    exec > /var/log/user-data.log 2>&1
+
+    # Variáveis sensíveis (não aparecem no YAML do ComputeStack)
+    export DB_PASSWORD="minha-senha-super-secreta"
+    export API_KEY="chave-api-secreta-123"
+
+    # Configurar aplicação com as variáveis
+    mkdir -p /opt/myapp
+    cat > /opt/myapp/.env <<EOF
+    DB_PASSWORD=${DB_PASSWORD}
+    API_KEY=${API_KEY}
+    EOF
+    chmod 600 /opt/myapp/.env
+
+    echo "Sensitive config created at $(date)"
+
+---
+# PASSO 2: Criar ComputeStack referenciando o Secret
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: ComputeStack
+metadata:
+  name: cloudinit-secret
+  namespace: infra-operator
+spec:
+  providerRef:
+    name: aws-develop
+
+  vpcCIDR: "10.233.0.0/16"
+
+  bastionInstance:
+    enabled: true
+    instanceType: t3.micro
+    rootVolumeSize: 10
+
+    # Referenciar Secret ao invés de userData inline
+    userDataSecretRef:
+      name: my-sensitive-cloudinit
+      # namespace: infra-operator  # opcional, usa namespace do CR se não especificado
+      key: userData  # chave dentro do Secret (default: "userData")
+
+  tags:
+    Environment: test
+    Feature: secret-cloudinit
+
+  deletionPolicy: Delete
+
+# =============================================================================
+# Vantagens do userDataSecretRef:
+# =============================================================================
+# 1. Dados sensíveis não aparecem no YAML do ComputeStack (git-safe)
+# 2. O Secret pode ser criado separadamente por equipe de segurança
+# 3. Permite rotação de credenciais sem modificar ComputeStack
+# 4. Pode ser gerenciado via External Secrets Operator
+#
+# Observação: O Secret deve existir ANTES de criar o ComputeStack
+# =============================================================================
+
+---
+# =============================================================================
+# Exemplo 12: ComputeStack com Key Pair Existente
+# =============================================================================
+# Se você já tem um Key Pair na AWS, especifique-o com keyName.
+# Neste caso, o operator NÃO gera um novo Key Pair.
+# =============================================================================
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: ComputeStack
+metadata:
+  name: existing-keypair-stack
+  namespace: infra-operator
+spec:
+  providerRef:
+    name: aws-develop
+
+  vpcCIDR: "10.234.0.0/16"
+
+  bastionInstance:
+    enabled: true
+    instanceType: t3.micro
+
+    # Usar Key Pair existente na AWS
+    # IMPORTANTE: Este KeyPair já deve existir na conta AWS
+    keyName: my-existing-keypair
+
+  tags:
+    Environment: test
+    Feature: existing-keypair
+
+  deletionPolicy: Delete
+
+# =============================================================================
+# Com keyName especificado:
+# =============================================================================
+# - O operator NÃO gera Key Pair nem Secret
+# - status.bastionInstance.keyPairGenerated = false
+# - Você precisa ter a chave privada correspondente para SSH
+# - Conectar: ssh -i ~/.ssh/my-existing-keypair.pem ec2-user@<IP>
+# =============================================================================
+
+---
+# =============================================================================
+# Exemplo 13: ComputeStack Mínimo (100% Automático)
+# =============================================================================
+# Configuração mais simples possível - o operator cria tudo automaticamente:
+# - VPC com CIDR especificado
+# - Subnet pública calculada (VPC CIDR + .1.0/24)
+# - Key Pair SSH gerado automaticamente
+# - Secret Kubernetes com chave privada
+# - EC2 Bastion com IP público
+# =============================================================================
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: ComputeStack
+metadata:
+  name: minimal-stack
+  namespace: infra-operator
+spec:
+  providerRef:
+    name: aws-develop
+  vpcCIDR: "10.235.0.0/16"  # Única configuração obrigatória!
+  bastionInstance:
+    enabled: true
+    instanceType: t3.micro
+
+# =============================================================================
+# Este é o exemplo mais simples - apenas 5 linhas de spec!
+#
+# O que é criado:
+# - VPC: 10.235.0.0/16
+# - Subnet pública: 10.235.1.0/24 (calculada automaticamente)
+# - Internet Gateway
+# - Route Table com rota 0.0.0.0/0 -> IGW
+# - Security Group para SSH
+# - Key Pair: minimal-stack-bastion-key
+# - Secret: minimal-stack-ssh-key
+# - EC2 Bastion: minimal-stack-bastion
+#
+# Para conectar:
+# kubectl get secret minimal-stack-ssh-key -n infra-operator \
+#   -o jsonpath='{.data.private-key}' | base64 -d > /tmp/minimal.pem
+# chmod 600 /tmp/minimal.pem
+# ssh -i /tmp/minimal.pem ec2-user@$(kubectl get computestack minimal-stack \
+#   -n infra-operator -o jsonpath='{.status.bastionInstance.publicIP}')
+# =============================================================================

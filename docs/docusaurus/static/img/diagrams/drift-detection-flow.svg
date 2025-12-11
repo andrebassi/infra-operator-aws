@@ -1,0 +1,138 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 420">
+  <defs>
+    <style>
+      .bg { fill: #0f172a; }
+      .k8s-box { fill: #326ce5; stroke: #4a8df8; stroke-width: 2; }
+      .aws-box { fill: #ff9900; stroke: #ffb84d; stroke-width: 2; }
+      .detector-box { fill: #10b981; stroke: #34d399; stroke-width: 2; }
+      .state-desired { fill: #3b82f6; stroke: #60a5fa; stroke-width: 2; }
+      .state-actual { fill: #f59e0b; stroke: #fbbf24; stroke-width: 2; }
+      .drift-box { fill: #ef4444; stroke: #f87171; stroke-width: 2; }
+      .heal-box { fill: #22c55e; stroke: #4ade80; stroke-width: 2; }
+      .text-title { font-family: 'Segoe UI', Arial, sans-serif; font-size: 14px; font-weight: 600; fill: #fff; }
+      .text-label { font-family: 'Segoe UI', Arial, sans-serif; font-size: 12px; fill: #fff; }
+      .text-small { font-family: 'Segoe UI', Arial, sans-serif; font-size: 10px; fill: #cbd5e1; }
+      .text-code { font-family: 'Consolas', monospace; font-size: 10px; fill: #94a3b8; }
+      .arrow { stroke: #60a5fa; stroke-width: 2; fill: none; marker-end: url(#arrow-blue); }
+      .arrow-compare { stroke: #a78bfa; stroke-width: 2; fill: none; stroke-dasharray: 6,3; marker-end: url(#arrow-purple); }
+      .arrow-drift { stroke: #f87171; stroke-width: 3; fill: none; marker-end: url(#arrow-red); }
+      .arrow-heal { stroke: #4ade80; stroke-width: 2; fill: none; marker-end: url(#arrow-green); }
+      .step-circle { fill: #1e293b; stroke: #475569; stroke-width: 2; }
+      .step-num { font-family: 'Segoe UI', Arial, sans-serif; font-size: 11px; font-weight: 700; fill: #f1f5f9; }
+      .glow { filter: drop-shadow(0 0 6px rgba(96, 165, 250, 0.4)); }
+    </style>
+    <marker id="arrow-blue" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#60a5fa"/>
+    </marker>
+    <marker id="arrow-purple" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#a78bfa"/>
+    </marker>
+    <marker id="arrow-red" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#f87171"/>
+    </marker>
+    <marker id="arrow-green" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#4ade80"/>
+    </marker>
+    <linearGradient id="k8s-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#4a8df8"/>
+      <stop offset="100%" style="stop-color:#326ce5"/>
+    </linearGradient>
+    <linearGradient id="aws-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#ffb84d"/>
+      <stop offset="100%" style="stop-color:#ff9900"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect class="bg" width="900" height="420" rx="12"/>
+
+  <!-- Title -->
+  <text x="450" y="35" text-anchor="middle" style="font-family: 'Segoe UI', Arial; font-size: 18px; font-weight: 700; fill: #f1f5f9;">Drift Detection Flow</text>
+
+  <!-- Step 1: Kubernetes CR -->
+  <g class="glow">
+    <rect fill="url(#k8s-grad)" x="40" y="70" width="180" height="100" rx="10"/>
+  </g>
+  <image href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='white'%3E%3Cpath d='M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5'/%3E%3C/svg%3E" x="55" y="80" width="24" height="24"/>
+  <text class="text-title" x="85" y="98">Kubernetes</text>
+  <text class="text-label" x="130" y="120" text-anchor="middle">Custom Resource</text>
+  <text class="text-code" x="130" y="140" text-anchor="middle">kind: S3Bucket</text>
+  <text class="text-code" x="130" y="155" text-anchor="middle">versioning: true</text>
+
+  <!-- Step 2: Desired State -->
+  <rect class="state-desired" x="40" y="210" width="180" height="70" rx="8"/>
+  <text class="text-label" x="130" y="235" text-anchor="middle">Desired State</text>
+  <text class="text-code" x="130" y="255" text-anchor="middle">{ versioning: true }</text>
+
+  <!-- Step 3: AWS Resource -->
+  <g class="glow">
+    <rect fill="url(#aws-grad)" x="680" y="70" width="180" height="100" rx="10"/>
+  </g>
+  <text class="text-title" x="770" y="98" text-anchor="middle">AWS</text>
+  <text class="text-label" x="770" y="120" text-anchor="middle">S3 Bucket</text>
+  <text class="text-code" x="770" y="140" text-anchor="middle">my-bucket-prod</text>
+  <text class="text-code" x="770" y="155" text-anchor="middle">region: us-east-1</text>
+
+  <!-- Step 4: Actual State -->
+  <rect class="state-actual" x="680" y="210" width="180" height="70" rx="8"/>
+  <text class="text-label" x="770" y="235" text-anchor="middle">Actual State</text>
+  <text class="text-code" x="770" y="255" text-anchor="middle">{ versioning: false }</text>
+
+  <!-- Step 5: Drift Detector -->
+  <rect class="detector-box" x="340" y="120" width="220" height="90" rx="10"/>
+  <text class="text-title" x="450" y="150" text-anchor="middle">Drift Detector</text>
+  <text class="text-small" x="450" y="170" text-anchor="middle">Periodic comparison</text>
+  <text class="text-code" x="450" y="190" text-anchor="middle">interval: 5m</text>
+
+  <!-- Step 6: Drift Detected Alert -->
+  <rect class="drift-box" x="340" y="310" width="220" height="70" rx="10"/>
+  <text class="text-title" x="450" y="340" text-anchor="middle">DRIFT DETECTED</text>
+  <text class="text-small" x="450" y="360" text-anchor="middle">Configuration mismatch found</text>
+
+  <!-- Step 7: Auto-heal -->
+  <rect class="heal-box" x="620" y="320" width="140" height="50" rx="8"/>
+  <text class="text-label" x="690" y="350" text-anchor="middle">Auto-Heal</text>
+
+  <!-- Step circles -->
+  <circle class="step-circle" cx="130" cy="55" r="14"/>
+  <text class="step-num" x="130" y="60" text-anchor="middle">1</text>
+
+  <circle class="step-circle" cx="130" cy="195" r="14"/>
+  <text class="step-num" x="130" y="200" text-anchor="middle">2</text>
+
+  <circle class="step-circle" cx="770" cy="55" r="14"/>
+  <text class="step-num" x="770" y="60" text-anchor="middle">3</text>
+
+  <circle class="step-circle" cx="770" cy="195" r="14"/>
+  <text class="step-num" x="770" y="200" text-anchor="middle">4</text>
+
+  <circle class="step-circle" cx="450" cy="105" r="14"/>
+  <text class="step-num" x="450" y="110" text-anchor="middle">5</text>
+
+  <circle class="step-circle" cx="450" cy="295" r="14"/>
+  <text class="step-num" x="450" y="300" text-anchor="middle">6</text>
+
+  <circle class="step-circle" cx="690" cy="305" r="14"/>
+  <text class="step-num" x="690" y="310" text-anchor="middle">7</text>
+
+  <!-- Arrows -->
+  <path class="arrow" d="M 130 170 L 130 208"/>
+  <path class="arrow" d="M 770 170 L 770 208"/>
+
+  <!-- Compare arrows -->
+  <path class="arrow-compare" d="M 220 245 Q 280 245, 340 180"/>
+  <path class="arrow-compare" d="M 680 245 Q 620 245, 560 180"/>
+
+  <!-- Drift arrow -->
+  <path class="arrow-drift" d="M 450 210 L 450 308"/>
+
+  <!-- Heal arrow -->
+  <path class="arrow-heal" d="M 560 345 L 618 345"/>
+  <path class="arrow-heal" d="M 760 345 Q 820 345, 820 250 Q 820 170, 770 170"/>
+
+  <!-- Labels on arrows -->
+  <text class="text-small" x="275" y="215">reads</text>
+  <text class="text-small" x="600" y="215">fetches</text>
+  <text class="text-small" x="465" y="265">mismatch!</text>
+  <text class="text-small" x="835" y="260" transform="rotate(90 835 260)">sync</text>
+</svg>

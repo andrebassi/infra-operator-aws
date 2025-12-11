@@ -1,0 +1,1262 @@
+---
+title: 'KMS Key - Gerenciamento de Chaves'
+description: 'Crie e gerencie chaves de criptografia com AWS KMS'
+icon: 'lock'
+---
+
+Crie e gerencie chaves de criptografia simétricas e assimétricas na AWS com suporte a rotação automática, controle de acesso granular e auditoria completa.
+
+## Pré-requisito: Configuração do AWSProvider
+
+Antes de criar qualquer recurso AWS, você precisa configurar um **AWSProvider** que gerencia as credenciais e autenticação com a AWS.
+
+<CodeGroup>
+```yaml IRSA
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: AWSProvider
+metadata:
+  name: production-aws
+  namespace: default
+spec:
+  region: us-east-1
+  roleARN: arn:aws:iam::123456789012:role/infra-operator-role
+  defaultTags:
+    managed-by: infra-operator
+    environment: production
+```
+
+```yaml Credenciais Estáticas
+apiVersion: v1
+kind: Secret
+metadata:
+  name: aws-credentials
+  namespace: default
+type: Opaque
+stringData:
+  access-key-id: test
+  secret-access-key: test
+---
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: AWSProvider
+metadata:
+  name: localstack
+  namespace: default
+spec:
+  region: us-east-1
+  accessKeyIDRef:
+    name: aws-credentials
+    key: access-key-id
+  secretAccessKeyRef:
+    name: aws-credentials
+    key: secret-access-key
+  defaultTags:
+    managed-by: infra-operator
+    environment: test
+```
+
+```bash Verificar Status
+kubectl get awsprovider
+kubectl describe awsprovider production-aws
+```
+</CodeGroup>
+
+<Warning>
+  Para produção, sempre use **IRSA** (IAM Roles for Service Accounts) ao invés de credenciais estáticas.
+</Warning>
+
+### Criar IAM Role para IRSA
+
+Para usar IRSA em produção, você precisa criar uma IAM Role com as permissões necessárias:
+
+<CodeGroup>
+```json Trust Policy (trust-policy.json)
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::123456789012:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B71EXAMPLE"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "oidc.eks.us-east-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B71EXAMPLE:sub": "system:serviceaccount:infra-operator-system:infra-operator-controller-manager",
+          "oidc.eks.us-east-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B71EXAMPLE:aud": "sts.amazonaws.com"
+        }
+      }
+    }
+  ]
+}
+```
+
+```json IAM Policy - KMS (kms-policy.json)
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "kms:CreateKey",
+        "kms:DescribeKey",
+        "kms:GetKeyPolicy",
+        "kms:PutKeyPolicy",
+        "kms:EnableKeyRotation",
+        "kms:DisableKeyRotation",
+        "kms:GetKeyRotationStatus",
+        "kms:ScheduleKeyDeletion",
+        "kms:CancelKeyDeletion",
+        "kms:TagResource",
+        "kms:UntagResource",
+        "kms:ListResourceTags",
+        "kms:EnableKey",
+        "kms:DisableKey"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+```bash Criar Role com AWS CLI
+# 1. Obter OIDC Provider do cluster EKS
+export CLUSTER_NAME=my-cluster
+export AWS_REGION=us-east-1
+export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+
+OIDC_PROVIDER=$(aws eks describe-cluster \
+  --name $CLUSTER_NAME \
+  --region $AWS_REGION \
+  --query "cluster.identity.oidc.issuer" \
+  --output text | sed -e "s/^https:\/\///")
+
+# 2. Atualizar trust-policy.json com valores corretos
+cat > trust-policy.json <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::${AWS_ACCOUNT_ID}:oidc-provider/${OIDC_PROVIDER}"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "${OIDC_PROVIDER}:sub": "system:serviceaccount:infra-operator-system:infra-operator-controller-manager",
+          "${OIDC_PROVIDER}:aud": "sts.amazonaws.com"
+        }
+      }
+    }
+  ]
+}
+EOF
+
+# 3. Criar IAM Role
+aws iam create-role \
+  --role-name infra-operator-kms-role \
+  --assume-role-policy-document file://trust-policy.json \
+  --description "Role for Infra Operator KMS management"
+
+# 4. Criar e anexar policy
+aws iam put-role-policy \
+  --role-name infra-operator-kms-role \
+  --policy-name KMSManagement \
+  --policy-document file://kms-policy.json
+
+# 5. Obter ARN da Role
+aws iam get-role \
+  --role-name infra-operator-kms-role \
+  --query 'Role.Arn' \
+  --output text
+```
+
+```bash Anotar ServiceAccount do Operator
+# Adicionar annotation ao ServiceAccount do operator
+kubectl annotate serviceaccount infra-operator-controller-manager \
+  -n infra-operator-system \
+  eks.amazonaws.com/role-arn=arn:aws:iam::123456789012:role/infra-operator-kms-role
+```
+</CodeGroup>
+
+<Note>
+  Substitua `123456789012` pelo seu AWS Account ID e `EXAMPLED539D4633E53DE1B71EXAMPLE` pelo ID do seu OIDC provider.
+</Note>
+
+## Visão Geral
+
+O AWS Key Management Service (KMS) fornece gerenciamento centralizado de chaves de criptografia com:
+
+- **Chaves Simétricas**: Para criptografia/descriptografia rápida (ENCRYPT_DECRYPT)
+- **Chaves Assimétricas**: Para assinatura digital e verificação (SIGN_VERIFY)
+- **Rotação Automática**: Rotate chaves anualmente sem perder acesso a dados antigos
+- **Auditoria Completa**: Logging de todas as operações com chaves
+- **Controle de Acesso**: Key Policies granulares com IAM policies
+- **Multi-Region**: Replicação de chaves entre regiões para disaster recovery
+- **HSM Backing**: Armazenamento seguro em Hardware Security Modules (CloudHSM)
+
+## Início Rápido
+
+<CodeGroup>
+```yaml Chave Simétrica
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: KMSKey
+metadata:
+  name: e2e-symmetric-key
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  description: "Symmetric encryption key for E2E testing"
+  keyUsage: ENCRYPT_DECRYPT
+  keySpec: SYMMETRIC_DEFAULT
+  enableKeyRotation: true
+  enabled: true
+  tags:
+    environment: test
+    managed-by: infra-operator
+    purpose: e2e-testing
+  deletionPolicy: Delete
+  pendingWindowInDays: 7
+```
+
+```yaml Chave Assimétrica RSA
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: KMSKey
+metadata:
+  name: e2e-rsa-signing-key
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  description: "RSA key for digital signatures - E2E testing"
+  keyUsage: SIGN_VERIFY
+  keySpec: RSA_2048
+  enabled: true
+  tags:
+    environment: test
+    managed-by: infra-operator
+    key-type: signing
+    purpose: e2e-testing
+  deletionPolicy: Delete
+  pendingWindowInDays: 7
+```
+
+```yaml Chave de Produção
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: KMSKey
+metadata:
+  name: app-encryption-key
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+  description: Encryption key for application data
+  keyUsage: ENCRYPT_DECRYPT
+  keySpec: SYMMETRIC_DEFAULT
+  enableKeyRotation: true
+  tags:
+    Environment: production
+    Application: myapp
+  deletionPolicy: Retain
+```
+
+```bash Aplicar
+kubectl apply -f kms.yaml
+```
+
+```bash Verificar Status
+kubectl get kmskeys
+kubectl describe kmskey e2e-symmetric-key
+```
+</CodeGroup>
+
+## Referência de Configuração
+
+### Campos Obrigatórios
+
+<ParamField path="spec.providerRef" type="object" required>
+  Referência ao recurso AWSProvider
+
+  <Expandable title="properties">
+    <ParamField path="name" type="string" required>
+      Nome do recurso AWSProvider
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="spec.description" type="string" required>
+  Descrição clara da chave e seu propósito
+
+  **Exemplos:**
+  - "Encryption key for S3 buckets"
+  - "Production database encryption"
+  - "Lambda function secrets"
+</ParamField>
+
+<ParamField path="spec.keyUsage" type="string" required>
+  Tipo de operação permitida com a chave
+
+  **Opções:**
+  - `ENCRYPT_DECRYPT`: Criptografia/descriptografia (chaves simétricas)
+  - `SIGN_VERIFY`: Assinatura digital (chaves assimétricas)
+</ParamField>
+
+<ParamField path="spec.keySpec" type="string" required>
+  Especificação técnica da chave (também aceito como `customerMasterKeySpec` para compatibilidade)
+
+  **Opções Simétricas:**
+  - `SYMMETRIC_DEFAULT`: Chave simétrica padrão (recomendado para maioria dos casos)
+
+  **Opções Assimétricas (RSA):**
+  - `RSA_2048`: Chave RSA 2048 bits
+  - `RSA_3072`: Chave RSA 3072 bits
+  - `RSA_4096`: Chave RSA 4096 bits
+
+  **Opções Assimétricas (ECC):**
+  - `ECC_NIST_P256`: Curva NIST P-256
+  - `ECC_NIST_P384`: Curva NIST P-384
+  - `ECC_NIST_P521`: Curva NIST P-521
+</ParamField>
+
+### Campos Opcionais
+
+<ParamField path="spec.keyPolicy" type="string">
+  Política JSON que define permissões de acesso à chave
+
+  **Nota:** Se não fornecida, padrão permite acesso ao root da conta
+
+  **Exemplo:**
+  ```json
+  {
+    "Version": "2012-10-17",
+    "Statement": [{
+      "Sid": "Enable IAM User Permissions",
+      "Effect": "Allow",
+      "Principal": {"AWS": "arn:aws:iam::ACCOUNT_ID:root"},
+      "Action": "kms:*",
+      "Resource": "*"
+    }, {
+      "Sid": "Allow services",
+      "Effect": "Allow",
+      "Principal": {"Service": ["s3.amazonaws.com", "rds.amazonaws.com"]},
+      "Action": ["kms:Decrypt", "kms:GenerateDataKey"],
+      "Resource": "*"
+    }]
+  }
+  ```
+</ParamField>
+
+<ParamField path="spec.enableKeyRotation" type="boolean" default="false">
+  Se `true`, rotaciona a chave automaticamente a cada ano
+
+  **Recomendação:** Ativar para produção
+  **Custo:** Sem custo adicional
+  **Compatibilidade:** Apenas chaves simétricas
+</ParamField>
+
+<ParamField path="spec.multiRegion" type="boolean" default="false">
+  Se `true`, replica a chave para múltiplas regiões (disaster recovery)
+
+  **Custo:** 1x custo adicional por região de replicação
+  **Casos de uso:** High availability e disaster recovery
+</ParamField>
+
+<ParamField path="spec.bypassPolicyLockoutSafetyCheck" type="boolean" default="false">
+  Permitir criar chave mesmo se policy poderia bloquear seu acesso
+
+  **Cuidado:** Use apenas se sabe o que está fazendo
+</ParamField>
+
+<ParamField path="spec.tags" type="object">
+  Pares chave-valor para organização, billing e controle
+
+  ```yaml
+  tags:
+    Environment: production
+    Application: myapp
+    Team: platform
+    CostCenter: engineering
+    BackupRequired: "true"
+  ```
+</ParamField>
+
+<ParamField path="spec.deletionPolicy" type="string" default="ScheduleKeyDeletion">
+  O que acontece com a chave quando o CR é deletado
+
+  **Opções:**
+  - `ScheduleKeyDeletion`: Agenda deleção em 7-30 dias (padrão, seguro)
+  - `DisableKey`: Apenas desabilita, mantém dados acessíveis
+  - `ForceDelete`: Deleta imediatamente (PERIGOSO - dados ficarão inacessíveis)
+</ParamField>
+
+## Campos de Status
+
+Após a chave ser criada, os seguintes campos de status são populados:
+
+<ResponseField name="status.keyId" type="string">
+  ID único da chave (ex: `a1b2c3d4-e5f6-7g8h-9i0j-k1l2m3n4o5p6`)
+</ResponseField>
+
+<ResponseField name="status.keyArn" type="string">
+  ARN completo da chave (ex: `arn:aws:kms:us-east-1:123456789012:key/a1b2c3d4-e5f6-7g8h-9i0j-k1l2m3n4o5p6`)
+</ResponseField>
+
+<ResponseField name="status.keyState" type="string">
+  Estado atual da chave:
+  - `Enabled`: Chave está operacional
+  - `Disabled`: Chave foi desabilitada (pode ser reabilitada)
+  - `PendingDeletion`: Agendada para deleção
+  - `Unavailable`: Não disponível (erro temporário)
+</ResponseField>
+
+<ResponseField name="status.creationDate" type="string">
+  Timestamp de criação da chave (ISO 8601)
+</ResponseField>
+
+<ResponseField name="status.lastRotationDate" type="string">
+  Timestamp da última rotação automática (se habilitada)
+</ResponseField>
+
+<ResponseField name="status.rotationEnabled" type="boolean">
+  Se a rotação automática está habilitada
+</ResponseField>
+
+<ResponseField name="status.ready" type="boolean">
+  `true` quando a chave está Enabled e pronta para uso
+</ResponseField>
+
+<ResponseField name="status.lastSyncTime" type="string">
+  Timestamp da última sincronização com a AWS
+</ResponseField>
+
+## Exemplos
+
+### Chave Simétrica para S3 Encryption
+
+Chave para criptografar buckets S3:
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: KMSKey
+metadata:
+  name: s3-encryption-key
+spec:
+  providerRef:
+    name: production-aws
+  description: Encryption key for S3 buckets
+  keyUsage: ENCRYPT_DECRYPT
+  keySpec: SYMMETRIC_DEFAULT
+  enableKeyRotation: true
+
+  keyPolicy: |
+    {
+      "Version": "2012-10-17",
+      "Statement": [{
+        "Sid": "Enable IAM User Permissions",
+        "Effect": "Allow",
+        "Principal": {"AWS": "arn:aws:iam::123456789012:root"},
+        "Action": "kms:*",
+        "Resource": "*"
+      }, {
+        "Sid": "Allow S3 to use the key",
+        "Effect": "Allow",
+        "Principal": {"Service": "s3.amazonaws.com"},
+        "Action": [
+          "kms:Decrypt",
+          "kms:GenerateDataKey"
+        ],
+        "Resource": "*"
+      }]
+    }
+
+  tags:
+    Purpose: s3-encryption
+    Environment: production
+
+  deletionPolicy: ScheduleKeyDeletion
+```
+
+### Chave Assimétrica para Assinatura Digital
+
+Chave RSA para assinature digital de mensagens:
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: KMSKey
+metadata:
+  name: signing-key-rsa
+spec:
+  providerRef:
+    name: production-aws
+  description: RSA key for digital signatures and verification
+  keyUsage: SIGN_VERIFY
+  keySpec: RSA_2048
+
+  keyPolicy: |
+    {
+      "Version": "2012-10-17",
+      "Statement": [{
+        "Sid": "Enable IAM Permissions",
+        "Effect": "Allow",
+        "Principal": {"AWS": "arn:aws:iam::123456789012:root"},
+        "Action": "kms:*",
+        "Resource": "*"
+      }, {
+        "Sid": "Allow Lambda to sign",
+        "Effect": "Allow",
+        "Principal": {"Service": "lambda.amazonaws.com"},
+        "Action": [
+          "kms:Sign",
+          "kms:Verify"
+        ],
+        "Resource": "*"
+      }]
+    }
+
+  tags:
+    Purpose: digital-signatures
+    Service: auth-service
+
+  deletionPolicy: ScheduleKeyDeletion
+```
+
+### Chave Multi-Region para Disaster Recovery
+
+Chave replicada em múltiplas regiões:
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: KMSKey
+metadata:
+  name: dr-replication-key
+spec:
+  providerRef:
+    name: production-aws
+  description: Multi-region key for disaster recovery
+  keyUsage: ENCRYPT_DECRYPT
+  keySpec: SYMMETRIC_DEFAULT
+
+  # Habilitar multi-region
+  multiRegion: true
+  enableKeyRotation: true
+
+  keyPolicy: |
+    {
+      "Version": "2012-10-17",
+      "Statement": [{
+        "Sid": "Enable IAM Permissions",
+        "Effect": "Allow",
+        "Principal": {"AWS": "arn:aws:iam::123456789012:root"},
+        "Action": "kms:*",
+        "Resource": "*"
+      }, {
+        "Sid": "Allow replication across regions",
+        "Effect": "Allow",
+        "Principal": {"Service": "kms.amazonaws.com"},
+        "Action": "kms:ReplicateKey",
+        "Resource": "*"
+      }]
+    }
+
+  tags:
+    Purpose: dr-replication
+    Environment: production
+    BackupRequired: "true"
+
+  deletionPolicy: ScheduleKeyDeletion
+```
+
+### Chave com Policy Restrictiva (Least Privilege)
+
+Chave com acesso restrito apenas a serviço específico:
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: KMSKey
+metadata:
+  name: lambda-secrets-key
+spec:
+  providerRef:
+    name: production-aws
+  description: Encryption key for Lambda secrets
+  keyUsage: ENCRYPT_DECRYPT
+  keySpec: SYMMETRIC_DEFAULT
+  enableKeyRotation: true
+
+  # Policy muito restritiva - apenas para Lambda
+  keyPolicy: |
+    {
+      "Version": "2012-10-17",
+      "Statement": [{
+        "Sid": "Enable IAM Permissions",
+        "Effect": "Allow",
+        "Principal": {"AWS": "arn:aws:iam::123456789012:root"},
+        "Action": "kms:*",
+        "Resource": "*"
+      }, {
+        "Sid": "Allow Lambda function to decrypt",
+        "Effect": "Allow",
+        "Principal": {
+          "AWS": "arn:aws:iam::123456789012:role/lambda-execution-role"
+        },
+        "Action": [
+          "kms:Decrypt",
+          "kms:DescribeKey"
+        ],
+        "Resource": "*"
+      }]
+    }
+
+  tags:
+    Service: lambda
+    Purpose: secrets-encryption
+
+  deletionPolicy: ScheduleKeyDeletion
+```
+
+### Chave com Grants para Lambda
+
+Chave usando Grants ao invés de Key Policy (padrão mais seguro):
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: KMSKey
+metadata:
+  name: app-grants-key
+spec:
+  providerRef:
+    name: production-aws
+  description: Key using grants for Lambda access
+  keyUsage: ENCRYPT_DECRYPT
+  keySpec: SYMMETRIC_DEFAULT
+  enableKeyRotation: true
+
+  # Policy padrão (permite apenas root)
+  keyPolicy: |
+    {
+      "Version": "2012-10-17",
+      "Statement": [{
+        "Sid": "Enable IAM Permissions",
+        "Effect": "Allow",
+        "Principal": {"AWS": "arn:aws:iam::123456789012:root"},
+        "Action": "kms:*",
+        "Resource": "*"
+      }]
+    }
+
+  # Grants para acesso granular
+  grants:
+  - name: lambda-decrypt-grant
+    granteeRoleArn: arn:aws:iam::123456789012:role/lambda-execution-role
+    operations:
+    - Decrypt
+    - DescribeKey
+
+  - name: rds-encrypt-grant
+    granteeRoleArn: arn:aws:iam::123456789012:role/rds-service-role
+    operations:
+    - Encrypt
+    - Decrypt
+    - GenerateDataKey
+    - DescribeKey
+
+  tags:
+    Environment: production
+    AccessModel: grants
+
+  deletionPolicy: ScheduleKeyDeletion
+```
+
+## Verificação
+
+### Verificar Status via kubectl
+
+```bash
+# Listar todas as chaves
+kubectl get kmskeys
+
+# Obter informações detalhadas
+kubectl get kmskey app-encryption-key -o yaml
+
+# Acompanhar criação em tempo real
+kubectl get kmskey app-encryption-key -w
+
+# Ver apenas campos de status
+kubectl get kmskey app-encryption-key -o jsonpath='{.status}'
+
+# Descrever chave com eventos
+kubectl describe kmskey app-encryption-key
+```
+
+### Verificar na AWS
+
+<Tabs>
+  <Tab title="AWS CLI">
+    ```bash
+    # Descrever chave
+    aws kms describe-key \
+      --key-id arn:aws:kms:us-east-1:123456789012:key/a1b2c3d4 \
+      --region us-east-1 \
+      --output json | jq '.KeyMetadata'
+
+    # Listar aliases
+    aws kms list-aliases --region us-east-1
+
+    # Criar alias para chave
+    aws kms create-alias \
+      --alias-name alias/app-encryption \
+      --target-key-id a1b2c3d4-e5f6-7g8h-9i0j-k1l2m3n4o5p6 \
+      --region us-east-1
+
+    # Ver política da chave
+    aws kms get-key-policy \
+      --key-id a1b2c3d4 \
+      --policy-name default \
+      --region us-east-1
+
+    # Verificar rotação habilitada
+    aws kms get-key-rotation-status \
+      --key-id a1b2c3d4 \
+      --region us-east-1
+
+    # Listar grants para uma chave
+    aws kms list-grants \
+      --key-id a1b2c3d4 \
+      --region us-east-1
+    ```
+  </Tab>
+
+  <Tab title="LocalStack">
+    ```bash
+    # Apontar para LocalStack
+    export AWS_ENDPOINT_URL=http://localhost:4566
+
+    # Descrever chave
+    aws kms describe-key \
+      --key-id a1b2c3d4 \
+      --output json | jq '.KeyMetadata'
+
+    # Listar chaves
+    aws kms list-keys
+
+    # Listar aliases
+    aws kms list-aliases
+    ```
+  </Tab>
+</Tabs>
+
+### Saída Esperada
+
+```yaml
+status:
+  keyId: a1b2c3d4-e5f6-7g8h-9i0j-k1l2m3n4o5p6
+  keyArn: arn:aws:kms:us-east-1:123456789012:key/a1b2c3d4-e5f6-7g8h-9i0j-k1l2m3n4o5p6
+  keyState: Enabled
+  creationDate: "2025-11-22T20:18:08Z"
+  lastRotationDate: "2025-11-22T20:18:08Z"
+  rotationEnabled: true
+  ready: true
+  lastSyncTime: "2025-11-22T20:18:08Z"
+```
+
+## Resolução de Problemas
+
+<AccordionGroup>
+  <Accordion title="Falha na criação da chave">
+    **Sintomas:** `status.ready: false`, chave não aparece na AWS
+
+    **Causas comuns:**
+    1. AWSProvider não configurado corretamente
+    2. Credenciais insuficientes (permissão `kms:CreateKey`)
+    3. Limite de chaves atingido na conta
+
+    **Soluções:**
+    ```bash
+    # Verificar status do AWSProvider
+    kubectl describe awsprovider production-aws
+
+    # Ver logs do controller
+    kubectl logs -n infra-operator-system \
+      deploy/infra-operator-controller-manager \
+      -f | grep -i kms
+
+    # Verificar eventos
+    kubectl describe kmskey app-encryption-key
+
+    # Contar chaves existentes
+    aws kms list-keys | jq '.Keys | length'
+    ```
+  </Accordion>
+
+  <Accordion title="Acesso negado ao usar chave">
+    **Erro:** `UserNotAuthorizedForKeyException` ou `InvalidStateException`
+
+    **Causas:**
+    1. Key Policy não permite a operação
+    2. IAM role sem permissão kms:Decrypt ou kms:GenerateDataKey
+    3. Chave está Disabled ou PendingDeletion
+
+    **Soluções:**
+    ```bash
+    # Verificar estado da chave
+    aws kms describe-key --key-id a1b2c3d4 \
+      --query 'KeyMetadata.KeyState'
+
+    # Ver policy da chave
+    aws kms get-key-policy \
+      --key-id a1b2c3d4 \
+      --policy-name default | jq '.'
+
+    # Reabilitar se desabilitada
+    aws kms enable-key --key-id a1b2c3d4
+
+    # Adicionar permissão via IAM policy
+    # (alternativa a modificar key policy)
+    aws iam put-role-policy \
+      --role-name lambda-execution-role \
+      --policy-name kms-decrypt \
+      --policy-document file://kms-policy.json
+    ```
+
+    **Exemplo kms-policy.json:**
+    ```json
+    {
+      "Version": "2012-10-17",
+      "Statement": [{
+        "Effect": "Allow",
+        "Action": [
+          "kms:Decrypt",
+          "kms:GenerateDataKey",
+          "kms:DescribeKey"
+        ],
+        "Resource": "arn:aws:kms:*:123456789012:key/a1b2c3d4"
+      }]
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Rotação não funciona">
+    **Sintomas:** `lastRotationDate` não muda, rotation não automática
+
+    **Causas:**
+    1. `enableKeyRotation: false` (padrão)
+    2. Chave assimétrica (rotação automática só para simétricas)
+    3. Chave em estado PendingDeletion
+
+    **Soluções:**
+    ```bash
+    # Habilitar rotação (via patch)
+    kubectl patch kmskey app-encryption-key --type='json' \
+      -p='[{"op": "replace", "path": "/spec/enableKeyRotation", "value":true}]'
+
+    # Verificar rotação habilitada
+    aws kms get-key-rotation-status --key-id a1b2c3d4
+
+    # Rotacionar manualmente (cria versão nova)
+    aws kms rotate-key --key-id a1b2c3d4
+
+    # Ver histórico de rotações
+    aws kms list-key-rotations --key-id a1b2c3d4
+    ```
+  </Accordion>
+
+  <Accordion title="Key Policy muito permissiva">
+    **Sintomas:** Violação de compliance, segurança
+
+    **Causas:**
+    1. Actions: `kms:*` (permite tudo)
+    2. Principal: `*` (permite qualquer um)
+    3. Resource: `*` (mais específico é melhor)
+
+    **Soluções:**
+    ```bash
+    # Obter policy atual
+    aws kms get-key-policy \
+      --key-id a1b2c3d4 \
+      --policy-name default > policy.json
+
+    # Editar policy.json com least privilege
+
+    # Aplicar nova policy
+    aws kms put-key-policy \
+      --key-id a1b2c3d4 \
+      --policy-name default \
+      --policy file://policy.json
+
+    # Verificar nova policy
+    aws kms get-key-policy \
+      --key-id a1b2c3d4 \
+      --policy-name default | jq '.'
+    ```
+
+    **Exemplo policy com least privilege:**
+    ```json
+    {
+      "Version": "2012-10-17",
+      "Statement": [{
+        "Sid": "Enable IAM Permissions",
+        "Effect": "Allow",
+        "Principal": {"AWS": "arn:aws:iam::123456789012:root"},
+        "Action": "kms:*",
+        "Resource": "*"
+      }, {
+        "Sid": "Allow specific service",
+        "Effect": "Allow",
+        "Principal": {"Service": "s3.amazonaws.com"},
+        "Action": [
+          "kms:Decrypt",
+          "kms:GenerateDataKey"
+        ],
+        "Resource": "*",
+        "Condition": {
+          "StringEquals": {
+            "aws:SourceAccount": "123456789012"
+          }
+        }
+      }]
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Custos elevados (~$1/mês por chave)">
+    **Sintomas:** Conta AWS com custos KMS inesperados
+
+    **Possíveis causas:**
+    1. Muitas chaves criadas e não utilizadas
+    2. Multi-region habilitado desnecessariamente
+    3. Chaves antigas não deletadas
+
+    **Soluções:**
+    ```bash
+    # Listar todas as chaves com datas
+    aws kms list-keys | jq '.Keys[] | {KeyId, KeyArn}' | while read line; do
+      KEY_ID=$(echo $line | jq -r '.KeyId')
+      aws kms describe-key --key-id $KEY_ID | jq '.KeyMetadata | {KeyId, CreationDate, KeyState, MultiRegion}'
+    done
+
+    # Desabilitar chaves não utilizadas (sem deletar)
+    aws kms disable-key --key-id a1b2c3d4
+
+    # Agendar deleção (para limpar chaves antigas)
+    aws kms schedule-key-deletion \
+      --key-id a1b2c3d4 \
+      --pending-window-in-days 7
+
+    # Remover replicação multi-region se não precisa
+    # Nota: não há como remover, mas para novas chaves não usar multiRegion: true
+    ```
+  </Accordion>
+
+  <Accordion title="Deleção travada ou cancela inesperadamente">
+    **Sintomas:** ScheduleKeyDeletion fica pendente, ou policy não permite deletar
+
+    **Causas:**
+    1. Outro serviço usando a chave (S3, RDS, etc)
+    2. Grants não revogados
+    3. Key policy não permite DeleteKey
+
+    **Soluções:**
+    ```bash
+    # Verificar se há dados criptografados com a chave
+    # (AWS S3, RDS, Secrets Manager, etc podem estar usando)
+
+    # Listar grants (autoridades de uso)
+    aws kms list-grants --key-id a1b2c3d4
+
+    # Revogar grants se necessário
+    aws kms retire-grant --key-id a1b2c3d4 --grant-token <token>
+
+    # Ver cronograma de deleção
+    aws kms describe-key --key-id a1b2c3d4 \
+      --query 'KeyMetadata.DeletionDate'
+
+    # Cancelar deleção agendada
+    aws kms cancel-key-deletion --key-id a1b2c3d4
+
+    # Força delete (APENAS se absolutamente necessário)
+    # AVISO: Dados criptografados ficarão inacessíveis!
+    # Usar apenas com deletionPolicy: ForceDelete no spec
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Melhores Práticas
+
+<CardGroup cols={2}>
+  <Card title="Rotação Automática" icon="rotate">
+    - Ativar `enableKeyRotation: true` para produção
+    - AWS rotaciona automaticamente a cada 365 dias
+    - Sem custo adicional
+    - Dados antigos continuam acessíveis (boas práticas KMS)
+  </Card>
+
+  <Card title="Princípio de Least Privilege" icon="shield-halved">
+    - Usar Grants em vez de Key Policy quando possível
+    - Restringir Actions a apenas o necessário
+    - Usar Conditions para limitar contexto (source account, IP, etc)
+    - Revisar policies regularmente
+  </Card>
+
+  <Card title="Auditoria e Logging" icon="book-open">
+    - Logging registra todas operações kms:*
+    - Tag com Compliance e Environment
+    - Documentar propósito em description
+    - Revisar logs de auditoria regularmente
+  </Card>
+
+  <Card title="Disaster Recovery" icon="arrows-rotate">
+    - Usar `multiRegion: true` para dados críticos
+    - Replicação automática mantém dados acessíveis
+    - Custo adicional mas garante continuidade
+    - Backups automáticos de dados criptografados
+  </Card>
+
+  <Card title="Modelagem de Chaves" icon="key">
+    - Uma chave por aplicação/serviço (não compartilhar)
+    - Separar chaves por ambiente (dev/staging/prod)
+    - Usar aliases (`alias/app-name`) para facilitar
+    - Multi-region apenas se realmente necessário
+  </Card>
+
+  <Card title="Governança de Custos" icon="coins">
+    - Cada chave custa ~$1/mês (~$12/ano)
+    - Multi-region multiplica por número de regiões
+    - Usar AWS Managed Key se possível (sem custo)
+    - Deletar chaves não utilizadas
+  </Card>
+</CardGroup>
+
+## Padrões de Arquitetura
+
+### Padrão: Envelope Encryption (Recomendado)
+
+Usar KMS para criptografar chaves de dados, não dados diretamente:
+
+```yaml
+# 1. KMS key para Data Key Encryption Key
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: KMSKey
+metadata:
+  name: dkek-master-key
+spec:
+  providerRef:
+    name: production-aws
+  description: Data Key Encryption Key (DKEK) for envelope encryption
+  keyUsage: ENCRYPT_DECRYPT
+  keySpec: SYMMETRIC_DEFAULT
+  enableKeyRotation: true
+  deletionPolicy: ScheduleKeyDeletion
+
+# 2. Usar em S3:
+---
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: S3Bucket
+metadata:
+  name: encrypted-bucket
+spec:
+  providerRef:
+    name: production-aws
+  bucketName: my-encrypted-data
+  encryption:
+    algorithm: aws:kms
+    keyArn: arn:aws:kms:us-east-1:123456789012:key/a1b2c3d4
+
+# 3. Lambda criptografa dados localmente, depois envia ao S3 já criptografado
+```
+
+### Padrão: Chave por Serviço
+
+Separar chaves por serviço para isolamento de acesso:
+
+```yaml
+# Database key
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: KMSKey
+metadata:
+  name: rds-encryption-key
+spec:
+  description: KMS key for RDS PostgreSQL
+  keyUsage: ENCRYPT_DECRYPT
+  keySpec: SYMMETRIC_DEFAULT
+  keyPolicy: |
+    {
+      "Statement": [{
+        "Effect": "Allow",
+        "Principal": {"Service": "rds.amazonaws.com"},
+        "Action": ["kms:Decrypt", "kms:GenerateDataKey"],
+        "Resource": "*"
+      }]
+    }
+
+---
+# S3 key (diferente para isolamento)
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: KMSKey
+metadata:
+  name: s3-encryption-key
+spec:
+  description: KMS key for S3 buckets
+  keyUsage: ENCRYPT_DECRYPT
+  keySpec: SYMMETRIC_DEFAULT
+  keyPolicy: |
+    {
+      "Statement": [{
+        "Effect": "Allow",
+        "Principal": {"Service": "s3.amazonaws.com"},
+        "Action": ["kms:Decrypt", "kms:GenerateDataKey"],
+        "Resource": "*"
+      }]
+    }
+```
+
+### Padrão: Multi-Region para HA
+
+Chave replicada para múltiplas regiões:
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: KMSKey
+metadata:
+  name: global-ha-key
+spec:
+  providerRef:
+    name: production-aws
+  description: Multi-region key for global HA
+  keyUsage: ENCRYPT_DECRYPT
+  keySpec: SYMMETRIC_DEFAULT
+  multiRegion: true  # Replicado automaticamente
+  enableKeyRotation: true
+
+  tags:
+    Tier: critical
+    HA: enabled
+```
+
+## Casos de Uso
+
+### S3 Bucket Encryption
+
+```yaml
+# KMS key
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: KMSKey
+metadata:
+  name: s3-key
+spec:
+  keyUsage: ENCRYPT_DECRYPT
+  keySpec: SYMMETRIC_DEFAULT
+
+---
+# S3 bucket usando a chave
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: S3Bucket
+metadata:
+  name: encrypted-data
+spec:
+  encryption:
+    algorithm: aws:kms
+    keyArn: <keyArn do KMSKey>
+```
+
+### RDS Database Encryption
+
+```yaml
+# KMS key
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: KMSKey
+metadata:
+  name: rds-encryption-key
+spec:
+  keyUsage: ENCRYPT_DECRYPT
+  keySpec: SYMMETRIC_DEFAULT
+
+---
+# RDS usando a chave (em RDSInstance CR)
+spec:
+  storageEncrypted: true
+  kmsKeyId: <keyId do KMSKey>
+```
+
+### EBS Volume Encryption
+
+```yaml
+# KMS key
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: KMSKey
+metadata:
+  name: ebs-encryption-key
+spec:
+  keyUsage: ENCRYPT_DECRYPT
+  keySpec: SYMMETRIC_DEFAULT
+```
+
+### Secrets Manager Encryption
+
+```yaml
+# KMS key
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: KMSKey
+metadata:
+  name: secrets-key
+spec:
+  keyUsage: ENCRYPT_DECRYPT
+  keySpec: SYMMETRIC_DEFAULT
+```
+
+### Assinatura Digital (SIGN_VERIFY)
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: KMSKey
+metadata:
+  name: signing-key
+spec:
+  keyUsage: SIGN_VERIFY
+  keySpec: RSA_2048
+```
+
+## Recursos Relacionados
+
+<CardGroup cols={2}>
+  <Card
+    title="S3 Bucket"
+    icon="bucket"
+    href="/services/storage/s3"
+  >
+    Criptografar buckets com KMS
+  </Card>
+
+  <Card
+    title="RDS"
+    icon="database"
+    href="/services/database/rds"
+  >
+    Criptografia de banco de dados
+  </Card>
+
+  <Card
+    title="Secrets Manager"
+    icon="lock"
+    href="/services/security/secrets-manager"
+  >
+    Secrets criptografados com KMS
+  </Card>
+
+  <Card
+    title="IAM"
+    icon="user-shield"
+    href="/services/security/iam"
+  >
+    Controle de acesso às chaves
+  </Card>
+
+  <Card
+    title="CloudTrail"
+    icon="list"
+    href="/services/logging/cloudtrail"
+  >
+    Auditoria de operações com chaves
+  </Card>
+
+</CardGroup>

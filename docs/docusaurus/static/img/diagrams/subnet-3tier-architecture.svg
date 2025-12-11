@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 550">
+  <defs>
+    <style>
+      .vpc-box { fill: #e1f5ff; stroke: #0066cc; stroke-width: 3; }
+      .az-box { fill: #fff4e6; stroke: #ff9800; stroke-width: 2; }
+      .public-subnet { fill: #c8e6c9; stroke: #4caf50; stroke-width: 2; }
+      .private-subnet { fill: #fff9c4; stroke: #fbc02d; stroke-width: 2; }
+      .db-subnet { fill: #ffcdd2; stroke: #f44336; stroke-width: 2; }
+      .internet-circle { fill: #bbdefb; stroke: #2196f3; stroke-width: 2; }
+      .text-title { font-family: Arial, sans-serif; font-size: 14px; font-weight: bold; fill: #333; }
+      .text-label { font-family: Arial, sans-serif; font-size: 11px; fill: #333; }
+      .text-small { font-family: Arial, sans-serif; font-size: 10px; fill: #666; }
+      .arrow { stroke: #60a5fa; stroke-width: 2; fill: none; marker-end: url(#arrowhead); }
+    </style>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#60a5fa"/>
+    </marker>
+  </defs>
+
+  <!-- VPC Container -->
+  <rect class="vpc-box" x="50" y="80" width="700" height="440" rx="10"/>
+  <text class="text-title" x="70" y="105">VPC: 10.0.0.0/16</text>
+
+  <!-- Internet -->
+  <ellipse class="internet-circle" cx="400" cy="40" rx="50" ry="25"/>
+  <text class="text-label" x="375" y="45">Internet</text>
+
+  <!-- AZ 1 -->
+  <rect class="az-box" x="80" y="130" width="280" height="370" rx="8"/>
+  <text class="text-label" x="100" y="155">Availability Zone: us-east-1a</text>
+
+  <!-- Public Subnet AZ1 -->
+  <rect class="public-subnet" x="100" y="175" width="240" height="70" rx="5"/>
+  <text class="text-label" x="160" y="200">Public Subnet</text>
+  <text class="text-small" x="175" y="220">10.0.1.0/24</text>
+  <text class="text-small" x="155" y="235">(Load Balancers)</text>
+
+  <!-- Private Subnet AZ1 -->
+  <rect class="private-subnet" x="100" y="275" width="240" height="70" rx="5"/>
+  <text class="text-label" x="160" y="300">Private Subnet</text>
+  <text class="text-small" x="170" y="320">10.0.10.0/24</text>
+  <text class="text-small" x="145" y="335">(Application Servers)</text>
+
+  <!-- Database Subnet AZ1 -->
+  <rect class="db-subnet" x="100" y="375" width="240" height="70" rx="5"/>
+  <text class="text-label" x="155" y="400">Database Subnet</text>
+  <text class="text-small" x="170" y="420">10.0.20.0/24</text>
+  <text class="text-small" x="165" y="435">(Data Layer)</text>
+
+  <!-- AZ 2 -->
+  <rect class="az-box" x="440" y="130" width="280" height="370" rx="8"/>
+  <text class="text-label" x="460" y="155">Availability Zone: us-east-1b</text>
+
+  <!-- Public Subnet AZ2 -->
+  <rect class="public-subnet" x="460" y="175" width="240" height="70" rx="5"/>
+  <text class="text-label" x="520" y="200">Public Subnet</text>
+  <text class="text-small" x="535" y="220">10.0.2.0/24</text>
+  <text class="text-small" x="515" y="235">(Load Balancers)</text>
+
+  <!-- Private Subnet AZ2 -->
+  <rect class="private-subnet" x="460" y="275" width="240" height="70" rx="5"/>
+  <text class="text-label" x="520" y="300">Private Subnet</text>
+  <text class="text-small" x="530" y="320">10.0.11.0/24</text>
+  <text class="text-small" x="505" y="335">(Application Servers)</text>
+
+  <!-- Database Subnet AZ2 -->
+  <rect class="db-subnet" x="460" y="375" width="240" height="70" rx="5"/>
+  <text class="text-label" x="515" y="400">Database Subnet</text>
+  <text class="text-small" x="530" y="420">10.0.21.0/24</text>
+  <text class="text-small" x="525" y="435">(Data Layer)</text>
+
+  <!-- Arrows -->
+  <line class="arrow" x1="380" y1="65" x2="220" y2="173"/>
+  <line class="arrow" x1="420" y1="65" x2="580" y2="173"/>
+  <line class="arrow" x1="220" y1="245" x2="220" y2="273"/>
+  <line class="arrow" x1="580" y1="245" x2="580" y2="273"/>
+  <line class="arrow" x1="220" y1="345" x2="220" y2="373"/>
+  <line class="arrow" x1="580" y1="345" x2="580" y2="373"/>
+</svg>

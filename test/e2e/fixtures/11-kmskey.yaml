@@ -1,0 +1,172 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: kmskeys.aws-infra-operator.runner.codes
+spec:
+  group: aws-infra-operator.runner.codes
+  names:
+    kind: KMSKey
+    listKind: KMSKeyList
+    plural: kmskeys
+    singular: kmskey
+    shortNames:
+    - kms
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            required:
+            - providerRef
+            properties:
+              providerRef:
+                type: object
+                required:
+                - name
+                properties:
+                  name:
+                    type: string
+                  namespace:
+                    type: string
+              description:
+                type: string
+              keyUsage:
+                type: string
+                enum:
+                - ENCRYPT_DECRYPT
+                - SIGN_VERIFY
+                - GENERATE_VERIFY_MAC
+                default: ENCRYPT_DECRYPT
+              keySpec:
+                type: string
+                default: SYMMETRIC_DEFAULT
+              multiRegion:
+                type: boolean
+                default: false
+              enableKeyRotation:
+                type: boolean
+                default: false
+              enabled:
+                type: boolean
+                default: true
+              keyPolicy:
+                type: string
+              tags:
+                type: object
+                additionalProperties:
+                  type: string
+              deletionPolicy:
+                type: string
+                enum:
+                - Delete
+                - Retain
+                default: Retain
+              pendingWindowInDays:
+                type: integer
+                minimum: 7
+                maximum: 30
+                default: 30
+          status:
+            type: object
+            properties:
+              ready:
+                type: boolean
+              keyId:
+                type: string
+              arn:
+                type: string
+              keyState:
+                type: string
+              creationDate:
+                type: string
+                format: date-time
+              deletionDate:
+                type: string
+                format: date-time
+              keyManager:
+                type: string
+              lastSyncTime:
+                type: string
+                format: date-time
+              conditions:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    type:
+                      type: string
+                    status:
+                      type: string
+                    reason:
+                      type: string
+                    message:
+                      type: string
+                    lastTransitionTime:
+                      type: string
+                      format: date-time
+    subresources:
+      status: {}
+    additionalPrinterColumns:
+    - name: KeyId
+      type: string
+      jsonPath: .status.keyId
+    - name: State
+      type: string
+      jsonPath: .status.keyState
+    - name: Ready
+      type: boolean
+      jsonPath: .status.ready
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp
+
+---
+# Test KMS Key 1: Symmetric encryption key with rotation
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: KMSKey
+metadata:
+  name: e2e-symmetric-key
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  description: "Symmetric encryption key for E2E testing"
+  keyUsage: ENCRYPT_DECRYPT
+  keySpec: SYMMETRIC_DEFAULT
+  enableKeyRotation: true
+  enabled: true
+  tags:
+    environment: test
+    managed-by: infra-operator
+    purpose: e2e-testing
+  deletionPolicy: Delete
+  pendingWindowInDays: 7
+
+---
+# Test KMS Key 2: Asymmetric signing key (no rotation)
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: KMSKey
+metadata:
+  name: e2e-rsa-signing-key
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  description: "RSA key for digital signatures - E2E testing"
+  keyUsage: SIGN_VERIFY
+  keySpec: RSA_2048
+  enabled: true
+  tags:
+    environment: test
+    managed-by: infra-operator
+    key-type: signing
+    purpose: e2e-testing
+  deletionPolicy: Delete
+  pendingWindowInDays: 7

@@ -1,0 +1,637 @@
+---
+title: 'ECS - Elastic Container Service'
+description: 'Orquestre containers Docker sem gerenciar servidores'
+icon: 'docker'
+---
+
+Orquestre containers Docker de forma escalável com ECS Fargate (serverless) ou EC2.
+
+## Pré-requisito: Configuração do AWSProvider
+
+Antes de criar qualquer recurso AWS, você precisa configurar um **AWSProvider** que gerencia as credenciais e autenticação com a AWS.
+
+<CodeGroup>
+```yaml IRSA
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: AWSProvider
+metadata:
+  name: production-aws
+  namespace: default
+spec:
+  region: us-east-1
+  roleARN: arn:aws:iam::123456789012:role/infra-operator-role
+  defaultTags:
+    managed-by: infra-operator
+    environment: production
+```
+
+```yaml Credenciais Estáticas
+apiVersion: v1
+kind: Secret
+metadata:
+  name: aws-credentials
+  namespace: default
+type: Opaque
+stringData:
+  access-key-id: test
+  secret-access-key: test
+---
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: AWSProvider
+metadata:
+  name: localstack
+  namespace: default
+spec:
+  region: us-east-1
+  accessKeyIDRef:
+    name: aws-credentials
+    key: access-key-id
+  secretAccessKeyRef:
+    name: aws-credentials
+    key: secret-access-key
+  defaultTags:
+    managed-by: infra-operator
+    environment: test
+```
+
+```bash Verificar Status
+kubectl get awsprovider
+kubectl describe awsprovider production-aws
+```
+</CodeGroup>
+
+<Warning>
+  Para produção, sempre use **IRSA** (IAM Roles for Service Accounts) ao invés de credenciais estáticas.
+</Warning>
+
+### Criar IAM Role para IRSA
+
+Para usar IRSA em produção, você precisa criar uma IAM Role com as permissões necessárias:
+
+<CodeGroup>
+```json Trust Policy (trust-policy.json)
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::123456789012:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B71EXAMPLE"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "oidc.eks.us-east-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B71EXAMPLE:sub": "system:serviceaccount:infra-operator-system:infra-operator-controller-manager",
+          "oidc.eks.us-east-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B71EXAMPLE:aud": "sts.amazonaws.com"
+        }
+      }
+    }
+  ]
+}
+```
+
+```json IAM Policy - ECS (ecs-policy.json)
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ecs:CreateCluster",
+        "ecs:DeleteCluster",
+        "ecs:DescribeClusters",
+        "ecs:UpdateCluster",
+        "ecs:UpdateClusterSettings",
+        "ecs:PutClusterCapacityProviders",
+        "ecs:TagResource",
+        "ecs:UntagResource",
+        "ecs:ListTagsForResource"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+```bash Criar Role
+# Criar IAM Role
+aws iam create-role \
+  --role-name infra-operator-ecs-role \
+  --assume-role-policy-document file://trust-policy.json
+
+# Anexar policy
+aws iam put-role-policy \
+  --role-name infra-operator-ecs-role \
+  --policy-name ecs-policy \
+  --policy-document file://ecs-policy.json
+
+# Anotar Service Account no K8s
+kubectl annotate serviceaccount infra-operator-controller-manager \
+  -n infra-operator-system \
+  eks.amazonaws.com/role-arn=arn:aws:iam::123456789012:role/infra-operator-ecs-role
+```
+</CodeGroup>
+
+## Criando ECS Cluster
+
+<CodeGroup>
+```yaml Cluster Básico (Fargate)
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: ECSCluster
+metadata:
+  name: fargate-cluster
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  clusterName: my-fargate-cluster
+
+  # Container Insights habilitado por padrão
+  settings:
+    - name: containerInsights
+      value: enabled
+
+  tags:
+    Name: fargate-cluster
+    Environment: production
+    Team: platform
+```
+
+```yaml Cluster com Fargate + EC2
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: ECSCluster
+metadata:
+  name: hybrid-cluster
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  clusterName: hybrid-cluster
+
+  # Capacity providers (Fargate + EC2)
+  capacityProviders:
+    - FARGATE
+    - FARGATE_SPOT
+    - my-ec2-capacity-provider
+
+  # Estratégia padrão (80% Fargate, 20% Fargate Spot)
+  defaultCapacityProviderStrategy:
+    - capacityProvider: FARGATE
+      weight: 80
+      base: 10  # Garante 10 tasks no Fargate regular
+    - capacityProvider: FARGATE_SPOT
+      weight: 20
+
+  settings:
+    - name: containerInsights
+      value: enabled
+
+  tags:
+    Name: hybrid-cluster
+    Environment: production
+```
+
+```yaml Cluster com ECS Exec
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: ECSCluster
+metadata:
+  name: debug-cluster
+  namespace: development
+spec:
+  providerRef:
+    name: dev-aws
+
+  clusterName: debug-cluster
+
+  # Configuração para ECS Exec (debugging)
+  configuration:
+    executeCommandConfiguration:
+      logging: OVERRIDE
+      kmsKeyId: arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012
+      logConfiguration:
+        cloudWatchLogGroupName: /ecs/execute-command
+        cloudWatchEncryptionEnabled: true
+
+  settings:
+    - name: containerInsights
+      value: enabled
+
+  tags:
+    Name: debug-cluster
+    Environment: development
+```
+
+```bash Verificar Status
+# Listar clusters
+kubectl get ecscluster
+
+# Ver detalhes
+kubectl describe ecscluster fargate-cluster
+
+# Ver ARN do cluster
+kubectl get ecscluster fargate-cluster -o jsonpath='{.status.clusterARN}'
+
+# Ver estatísticas
+kubectl get ecscluster fargate-cluster -o jsonpath='{.status}'
+```
+</CodeGroup>
+
+## Campos da Especificação
+
+| Campo | Tipo | Obrigatório | Descrição |
+|-------|------|-------------|-----------|
+| `clusterName` | string | ✅ | Nome do ECS cluster (1-255 caracteres) |
+| `capacityProviders` | []string | ❌ | Lista de capacity providers (`FARGATE`, `FARGATE_SPOT`, ou custom) |
+| `defaultCapacityProviderStrategy` | []object | ❌ | Estratégia padrão de distribuição entre providers |
+| `settings` | []object | ❌ | Configurações do cluster (containerInsights) |
+| `configuration` | object | ❌ | Configuração avançada (execute command) |
+| `serviceConnectDefaults` | object | ❌ | Defaults para Service Connect |
+| `tags` | map[string]string | ❌ | Tags customizadas para o cluster |
+| `deletionPolicy` | string | ❌ | Política de deleção: `Delete` (padrão) ou `Retain` |
+
+### Capacity Provider Strategy
+
+| Campo | Tipo | Obrigatório | Descrição |
+|-------|------|-------------|-----------|
+| `capacityProvider` | string | ✅ | Nome do capacity provider |
+| `weight` | int32 | ❌ | Peso relativo (0-1000, padrão: 0) |
+| `base` | int32 | ❌ | Número mínimo de tasks neste provider |
+
+### Execute Command Configuration
+
+| Campo | Tipo | Descrição |
+|-------|------|-----------|
+| `logging` | string | Tipo de logging: `NONE`, `DEFAULT`, `OVERRIDE` |
+| `kmsKeyId` | string | KMS key para criptografia de logs |
+| `logConfiguration.cloudWatchLogGroupName` | string | CloudWatch log group |
+| `logConfiguration.cloudWatchEncryptionEnabled` | bool | Habilitar criptografia CloudWatch |
+| `logConfiguration.s3BucketName` | string | S3 bucket para logs |
+| `logConfiguration.s3EncryptionEnabled` | bool | Habilitar criptografia S3 |
+
+## Campos de Status
+
+| Campo | Tipo | Descrição |
+|-------|------|-----------|
+| `ready` | bool | Se o cluster está ativo (`status` = "ACTIVE") |
+| `clusterARN` | string | ARN do cluster criado |
+| `status` | string | Estado: `PROVISIONING`, `ACTIVE`, `DEPROVISIONING`, `FAILED`, `INACTIVE` |
+| `registeredContainerInstancesCount` | int32 | Número de EC2 instances registradas |
+| `runningTasksCount` | int32 | Número de tasks rodando |
+| `pendingTasksCount` | int32 | Número de tasks pendentes |
+| `activeServicesCount` | int32 | Número de services ativos |
+| `lastSyncTime` | time | Última sincronização com AWS |
+
+## Casos de Uso
+
+### Cluster Serverless (Fargate Only)
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: ECSCluster
+metadata:
+  name: serverless-cluster
+  namespace: production
+spec:
+  providerRef:
+    name: production-aws
+
+  clusterName: serverless-prod
+
+  capacityProviders:
+    - FARGATE
+    - FARGATE_SPOT
+
+  defaultCapacityProviderStrategy:
+    - capacityProvider: FARGATE
+      weight: 70
+      base: 5
+    - capacityProvider: FARGATE_SPOT
+      weight: 30
+
+  settings:
+    - name: containerInsights
+      value: enabled
+
+  tags:
+    Type: serverless
+    Environment: production
+```
+
+### Cluster para Development com Debugging
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: ECSCluster
+metadata:
+  name: dev-cluster
+  namespace: development
+spec:
+  providerRef:
+    name: dev-aws
+
+  clusterName: development
+
+  configuration:
+    executeCommandConfiguration:
+      logging: OVERRIDE
+      logConfiguration:
+        cloudWatchLogGroupName: /ecs/dev/exec
+        cloudWatchEncryptionEnabled: false
+
+  settings:
+    - name: containerInsights
+      value: enabled
+
+  tags:
+    Environment: development
+    Debug: enabled
+```
+
+## Troubleshooting
+
+### Cluster não fica ACTIVE
+
+<AccordionGroup>
+<Accordion title="Verificar estado do cluster">
+```bash
+kubectl describe ecscluster my-cluster
+```
+
+Procure por:
+- `Status: PROVISIONING` - Cluster ainda sendo criado (normalmente 1-2 minutos)
+- `Status: FAILED` - Falha na criação (verifique logs do operator)
+</Accordion>
+
+<Accordion title="Verificar permissões IAM">
+```bash
+# Ver logs do operator
+kubectl logs -n infra-operator-system -l control-plane=controller-manager
+
+# Procure por erros tipo "AccessDenied"
+```
+
+**Erro comum**: IAM role sem permissões ECS
+**Solução**: Adicione policy `ecs:*` na role IRSA
+</Accordion>
+
+<Accordion title="Verificar capacity providers">
+```bash
+# Verificar se capacity providers existem
+aws ecs describe-capacity-providers \
+  --capacity-providers my-ec2-capacity-provider
+```
+
+**Erro comum**: Capacity provider não existe
+**Solução**: Crie o capacity provider primeiro ou use apenas `FARGATE`/`FARGATE_SPOT`
+</Accordion>
+</AccordionGroup>
+
+### Tasks não iniciam
+
+<AccordionGroup>
+<Accordion title="Verificar capacity providers">
+```bash
+# Ver cluster details
+kubectl get ecscluster my-cluster -o yaml
+```
+
+Se não houver `capacityProviders` configurados:
+```bash
+kubectl patch ecscluster my-cluster --type=merge -p '{"spec":{"capacityProviders":["FARGATE"]}}'
+```
+</Accordion>
+
+<Accordion title="Verificar subnet e security groups">
+Tasks Fargate precisam de:
+- Subnets com conectividade à internet (ou NAT Gateway)
+- Security groups permitindo tráfego necessário
+
+```bash
+# Verificar subnets da task
+aws ecs describe-tasks --cluster my-cluster --tasks <task-id> \
+  --query 'tasks[0].attachments[0].details'
+```
+</Accordion>
+
+<Accordion title="Verificar limites da conta">
+```bash
+# Verificar quota de vCPUs Fargate
+aws service-quotas get-service-quota \
+  --service-code fargate \
+  --quota-code L-3032A538
+
+# Ver tasks rodando
+kubectl get ecscluster my-cluster -o jsonpath='{.status.runningTasksCount}'
+```
+
+Se atingiu o limite:
+- Solicite aumento de quota via AWS Console
+- Escale horizontalmente tasks
+</Accordion>
+</AccordionGroup>
+
+### Erro ao deletar cluster
+
+<AccordionGroup>
+<Accordion title="Cluster com services ou tasks ativas">
+```bash
+# Ver tasks e services
+kubectl get ecscluster my-cluster -o jsonpath='{.status}'
+```
+
+Se houver tasks/services rodando:
+```bash
+# Pare todas as tasks
+aws ecs list-tasks --cluster my-cluster | \
+  xargs -I {} aws ecs stop-task --cluster my-cluster --task {}
+
+# Delete todos os services
+aws ecs list-services --cluster my-cluster | \
+  xargs -I {} aws ecs delete-service --cluster my-cluster --service {} --force
+```
+
+Aguarde 1-2 minutos e tente deletar novamente.
+</Accordion>
+
+<Accordion title="Container instances registradas">
+```bash
+# Ver instances
+kubectl get ecscluster my-cluster -o jsonpath='{.status.registeredContainerInstancesCount}'
+```
+
+Se houver EC2 instances:
+```bash
+# Deregistrar instances
+aws ecs list-container-instances --cluster my-cluster | \
+  xargs -I {} aws ecs deregister-container-instance --cluster my-cluster --container-instance {} --force
+```
+</Accordion>
+</AccordionGroup>
+
+## Políticas de Deleção
+
+### Delete (Padrão)
+
+Quando o CR é deletado, o cluster ECS é deletado automaticamente:
+
+```yaml
+spec:
+  deletionPolicy: Delete  # Padrão
+```
+
+<Warning>
+  O cluster só pode ser deletado se não tiver tasks, services ou container instances.
+</Warning>
+
+### Retain
+
+O cluster ECS é mantido mesmo após deletar o CR:
+
+```yaml
+spec:
+  deletionPolicy: Retain
+```
+
+**Caso de uso**: Clusters com configurações complexas ou dados importantes.
+
+## Exemplos Avançados
+
+### Cluster com Service Connect
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: ECSCluster
+metadata:
+  name: service-mesh-cluster
+spec:
+  providerRef:
+    name: production-aws
+
+  clusterName: service-mesh
+
+  serviceConnectDefaults:
+    namespace: my-app-namespace
+
+  settings:
+    - name: containerInsights
+      value: enabled
+
+  tags:
+    ServiceMesh: enabled
+```
+
+### Cluster com Logging Completo
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: ECSCluster
+metadata:
+  name: audit-cluster
+spec:
+  providerRef:
+    name: production-aws
+
+  clusterName: audit-prod
+
+  configuration:
+    executeCommandConfiguration:
+      logging: OVERRIDE
+      kmsKeyId: arn:aws:kms:us-east-1:123456789012:key/audit-key
+      logConfiguration:
+        cloudWatchLogGroupName: /ecs/audit/exec
+        cloudWatchEncryptionEnabled: true
+        s3BucketName: audit-logs-bucket
+        s3EncryptionEnabled: true
+        s3KeyPrefix: ecs-exec/
+
+  settings:
+    - name: containerInsights
+      value: enabled
+
+  tags:
+    Compliance: sox
+    Audit: enabled
+```
+
+## Próximos Passos
+
+Depois de criar o ECS cluster:
+
+1. **Crie Task Definitions** definindo containers e recursos
+2. **Configure Services** para rodar tasks de forma permanente
+3. **Setup Auto Scaling** para escalar automaticamente
+4. **Configure Load Balancers** (ALB/NLB) para distribuir tráfego
+5. **Implemente Service Discovery** com AWS Cloud Map
+6. **Configure CI/CD** para deploy automatizado
+
+<Info>
+O operator gerencia apenas o cluster. Task definitions, services, e tasks devem ser gerenciados separadamente.
+</Info>
+
+## Monitoramento
+
+### CloudWatch Container Insights
+
+Com `containerInsights: enabled`, você tem acesso a:
+
+- **Cluster metrics**: CPU, memória, rede do cluster
+- **Service metrics**: CPU, memória por service
+- **Task metrics**: CPU, memória por task
+- **Container metrics**: Métricas por container
+
+```bash
+# Ver métricas no CloudWatch
+aws cloudwatch get-metric-statistics \
+  --namespace AWS/ECS \
+  --metric-name CPUUtilization \
+  --dimensions Name=ClusterName,Value=my-cluster \
+  --start-time 2024-01-01T00:00:00Z \
+  --end-time 2024-01-01T23:59:59Z \
+  --period 3600 \
+  --statistics Average
+```
+
+### ECS Exec (Debugging)
+
+Com execute command habilitado, você pode executar comandos em containers rodando:
+
+```bash
+# Habilitar execute command na task definition
+# Depois, executar comandos:
+aws ecs execute-command \
+  --cluster my-cluster \
+  --task <task-id> \
+  --container my-container \
+  --interactive \
+  --command "/bin/sh"
+```
+
+## Comparação: ECS vs EKS
+
+| Aspecto | ECS | EKS (Kubernetes) |
+|---------|-----|------------------|
+| **Complexidade** | Simples | Complexo |
+| **Lock-in** | AWS only | Multi-cloud |
+| **Custo** | Grátis (paga Fargate/EC2) | $0.10/hora por cluster |
+| **Integração AWS** | Nativa e deep | Via AWS Load Balancer Controller |
+| **Comunidade** | Menor | Gigante |
+| **Curva de aprendizado** | Rápida | Lenta |
+
+**Use ECS se**:
+- Você está 100% AWS
+- Quer simplicidade
+- Time pequeno/médio
+
+**Use EKS se**:
+- Precisa multi-cloud
+- Já usa Kubernetes
+- Quer portabilidade
+
+## Referências
+
+- [AWS ECS Documentation](https://docs.aws.amazon.com/ecs/)
+- [Fargate Pricing](https://aws.amazon.com/fargate/pricing/)
+- [ECS Best Practices](https://docs.aws.amazon.com/AmazonECS/latest/bestpracticesguide/)
+- [Container Insights](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/ContainerInsights.html)

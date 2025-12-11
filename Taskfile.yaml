@@ -1,0 +1,455 @@
+version: '3'
+
+# Taskfile para desenvolvimento do infra-operator
+# Uso: task <command>
+# Lista de comandos: task --list
+
+vars:
+  PROJECT_NAME: infra-operator
+  DOCKER_REGISTRY: ttl.sh
+  IMAGE_NAME: "{{.DOCKER_REGISTRY}}/{{.PROJECT_NAME}}"
+  IMAGE_TAG: dev-{{now | date "20060102-150405"}}
+  NAMESPACE: infra-operator-system
+  LOCALSTACK_ENDPOINT: http://localhost:4566
+  AWS_REGION: us-east-1
+
+dotenv: ['.env']
+
+tasks:
+  # ========================================
+  # Setup & Dependencies
+  # ========================================
+
+  setup:
+    desc: "Setup completo do ambiente de desenvolvimento"
+    cmds:
+      - task: install-tools
+      - task: localstack:start
+      - echo "✅ Ambiente pronto! Use 'task dev' para iniciar desenvolvimento"
+
+  install-tools:
+    desc: "Instala ferramentas necessárias"
+    cmds:
+      - |
+        echo "📦 Verificando ferramentas necessárias..."
+        command -v go >/dev/null 2>&1 || { echo "❌ Go não encontrado. Instale: brew install go"; exit 1; }
+        command -v kubectl >/dev/null 2>&1 || { echo "❌ kubectl não encontrado. Instale: brew install kubectl"; exit 1; }
+        command -v docker >/dev/null 2>&1 || { echo "❌ Docker não encontrado. Instale Docker Desktop ou OrbStack"; exit 1; }
+        command -v task >/dev/null 2>&1 || { echo "❌ Task não encontrado. Instale: brew install go-task"; exit 1; }
+        echo "✅ Todas as ferramentas instaladas!"
+    silent: true
+
+  # ========================================
+  # LocalStack (AWS Local)
+  # ========================================
+
+  localstack:start:
+    desc: "Inicia LocalStack (AWS local)"
+    dir: .
+    cmds:
+      - docker-compose up -d localstack
+      - sleep 3
+      - echo "✅ LocalStack rodando em {{.LOCALSTACK_ENDPOINT}}"
+      - task: localstack:health
+
+  localstack:stop:
+    desc: "Para LocalStack"
+    cmds:
+      - docker-compose down
+
+  localstack:restart:
+    desc: "Reinicia LocalStack"
+    cmds:
+      - task: localstack:stop
+      - task: localstack:start
+
+  localstack:health:
+    desc: "Verifica health do LocalStack"
+    cmds:
+      - |
+        echo "🔍 Verificando LocalStack..."
+        curl -s {{.LOCALSTACK_ENDPOINT}}/health | jq . || echo "❌ LocalStack não está saudável"
+    silent: true
+
+  localstack:logs:
+    desc: "Mostra logs do LocalStack"
+    cmds:
+      - docker-compose logs -f localstack
+
+  localstack:aws:
+    desc: "Executa comando AWS CLI contra LocalStack (uso: task localstack:aws -- s3 ls)"
+    cmds:
+      - |
+        aws --endpoint-url={{.LOCALSTACK_ENDPOINT}} \
+            --region={{.AWS_REGION}} \
+            {{.CLI_ARGS}}
+
+  # ========================================
+  # Development
+  # ========================================
+
+  dev:
+    desc: "Inicia desenvolvimento local (sem Kubernetes)"
+    cmds:
+      - task: localstack:start
+      - task: generate
+      - go run ./cmd/main.go --clean-arch=true
+
+  run:local:
+    desc: "Roda operator localmente contra cluster K8s (OrbStack)"
+    cmds:
+      - |
+        echo "🚀 Rodando operator localmente..."
+        echo "📝 Logs em tempo real..."
+        kubectl config current-context
+        export AWS_ENDPOINT_URL={{.LOCALSTACK_ENDPOINT}}
+        go run ./cmd/main.go --clean-arch=true 2>&1 | tee /tmp/log.txt
+
+  # ========================================
+  # Build
+  # ========================================
+
+  generate:
+    desc: "Gera código (deep copy, etc)"
+    cmds:
+      - |
+        echo "🔨 Gerando código..."
+        # controller-gen object:headerFile="hack/boilerplate.go.txt" paths="./..."
+        echo "⚠️  controller-gen não instalado - pulando geração"
+
+  build:
+    desc: "Build do binário (otimizado, sem debug symbols)"
+    cmds:
+      - |
+        echo "🔨 Building infra-operator..."
+        go build -ldflags="-s -w" -o bin/infra-operator ./cmd/main.go
+        echo "✅ Binário criado: bin/infra-operator ($(du -h bin/infra-operator | cut -f1))"
+
+  docker:build:
+    desc: "Build da imagem Docker"
+    cmds:
+      - |
+        echo "🐳 Building Docker image..."
+        docker build -t {{.IMAGE_NAME}}:{{.IMAGE_TAG}} .
+        docker tag {{.IMAGE_NAME}}:{{.IMAGE_TAG}} {{.IMAGE_NAME}}:latest
+        echo "✅ Imagem: {{.IMAGE_NAME}}:{{.IMAGE_TAG}}"
+
+  docker:push:
+    desc: "Push da imagem para registry"
+    deps: [docker:build]
+    cmds:
+      - |
+        echo "📤 Pushing to registry..."
+        docker push {{.IMAGE_NAME}}:{{.IMAGE_TAG}}
+        docker push {{.IMAGE_NAME}}:latest
+        echo "✅ Pushed: {{.IMAGE_NAME}}:{{.IMAGE_TAG}}"
+
+  # ========================================
+  # Deploy to Kubernetes
+  # ========================================
+
+  k8s:install-crds:
+    desc: "Instala CRDs no cluster"
+    cmds:
+      - |
+        echo "📦 Instalando CRDs..."
+        kubectl apply -f config/crd/bases/
+        echo "✅ CRDs instalados"
+
+  k8s:uninstall-crds:
+    desc: "Remove CRDs do cluster"
+    cmds:
+      - kubectl delete -f config/crd/bases/ --ignore-not-found=true
+
+  k8s:deploy:
+    desc: "Deploy completo no cluster"
+    deps: [docker:build]
+    cmds:
+      - task: k8s:install-crds
+      - |
+        echo "🚀 Deploying operator..."
+        kubectl create namespace {{.NAMESPACE}} --dry-run=client -o yaml | kubectl apply -f -
+        kubectl apply -f config/rbac/
+
+        # Update image in deployment
+        cat config/manager/deployment.yaml | \
+          sed "s|image: .*|image: {{.IMAGE_NAME}}:latest|g" | \
+          kubectl apply -f -
+
+        echo "✅ Operator deployed!"
+      - task: k8s:status
+
+  k8s:undeploy:
+    desc: "Remove operator do cluster"
+    cmds:
+      - kubectl delete -f config/manager/deployment.yaml --ignore-not-found=true
+      - kubectl delete -f config/rbac/ --ignore-not-found=true
+      - kubectl delete namespace {{.NAMESPACE}} --ignore-not-found=true
+
+  k8s:status:
+    desc: "Mostra status do operator"
+    cmds:
+      - |
+        echo "📊 Status do Operator:"
+        kubectl get pods -n {{.NAMESPACE}}
+        echo ""
+        echo "📊 CRDs instalados:"
+        kubectl get crds | grep aws-infra-operator.runner.codes
+
+  k8s:logs:
+    desc: "Mostra logs do operator"
+    cmds:
+      - kubectl logs -n {{.NAMESPACE}} -l control-plane=controller-manager -f --tail=100
+
+  k8s:restart:
+    desc: "Reinicia operator"
+    cmds:
+      - kubectl rollout restart deployment -n {{.NAMESPACE}} infra-operator-controller-manager
+      - kubectl rollout status deployment -n {{.NAMESPACE}} infra-operator-controller-manager
+
+  # ========================================
+  # Testing
+  # ========================================
+
+  test:unit:
+    desc: "Roda testes unitários"
+    cmds:
+      - |
+        echo "🧪 Rodando testes unitários..."
+        go test -v -race -coverprofile=coverage.out ./internal/... 2>&1 | tee /tmp/log.txt
+        echo ""
+        echo "📊 Cobertura:"
+        go tool cover -func=coverage.out | tail -1
+
+  test:integration:
+    desc: "Roda testes de integração (contra LocalStack)"
+    cmds:
+      - task: localstack:start
+      - |
+        echo "🧪 Rodando testes de integração..."
+        export AWS_ENDPOINT_URL={{.LOCALSTACK_ENDPOINT}}
+        export AWS_REGION={{.AWS_REGION}}
+        export AWS_ACCESS_KEY_ID=test
+        export AWS_SECRET_ACCESS_KEY=test
+        go test -v -tags=integration ./test/integration/... 2>&1 | tee /tmp/log.txt
+
+  test:e2e:
+    desc: "Roda testes E2E (operator no cluster + LocalStack)"
+    deps: [k8s:deploy]
+    cmds:
+      - task: localstack:start
+      - task: test:e2e:run
+
+  test:e2e:run:
+    desc: "Executa testes E2E"
+    cmds:
+      - |
+        echo "🧪 Rodando testes E2E..."
+        kubectl apply -f test/e2e/fixtures/
+        sleep 10
+        kubectl get awsproviders,s3buckets -A
+        echo "✅ Testes E2E concluídos"
+
+  test:all:
+    desc: "Roda todos os testes"
+    cmds:
+      - task: test:unit
+      - task: test:integration
+      - task: test:e2e
+
+  # ========================================
+  # Examples & Samples
+  # ========================================
+
+  samples:apply:
+    desc: "Aplica samples de exemplo"
+    cmds:
+      - |
+        echo "📝 Aplicando samples..."
+
+        # Cria AWSProvider para LocalStack
+        cat <<EOF | kubectl apply -f -
+        apiVersion: v1
+        kind: Secret
+        metadata:
+          name: localstack-credentials
+          namespace: default
+        type: Opaque
+        stringData:
+          access-key-id: test
+          secret-access-key: test
+        ---
+        apiVersion: aws-infra-operator.runner.codes/v1alpha1
+        kind: AWSProvider
+        metadata:
+          name: localstack
+          namespace: default
+        spec:
+          region: {{.AWS_REGION}}
+          accessKeyIDRef:
+            name: localstack-credentials
+            key: access-key-id
+          secretAccessKeyRef:
+            name: localstack-credentials
+            key: secret-access-key
+        EOF
+
+        # Aguarda provider ficar ready
+        sleep 5
+
+        # Aplica S3Bucket sample
+        kubectl apply -f config/samples/s3bucket_sample.yaml
+
+        echo "✅ Samples aplicados!"
+      - task: samples:status
+
+  samples:delete:
+    desc: "Remove samples"
+    cmds:
+      - kubectl delete -f config/samples/ --ignore-not-found=true
+      - kubectl delete awsprovider localstack -n default --ignore-not-found=true
+      - kubectl delete secret localstack-credentials -n default --ignore-not-found=true
+
+  samples:status:
+    desc: "Mostra status dos samples"
+    cmds:
+      - |
+        echo "📊 Status dos recursos:"
+        echo ""
+        echo "AWSProviders:"
+        kubectl get awsproviders -A
+        echo ""
+        echo "S3Buckets:"
+        kubectl get s3buckets -A
+        echo ""
+        echo "Detalhes:"
+        kubectl describe s3bucket -n default 2>/dev/null | head -50 || echo "Nenhum bucket encontrado"
+
+  # ========================================
+  # Cleanup
+  # ========================================
+
+  clean:
+    desc: "Limpa arquivos temporários"
+    cmds:
+      - rm -rf bin/ coverage.out /tmp/log.txt
+      - echo "✅ Arquivos temporários removidos"
+
+  clean:all:
+    desc: "Limpa tudo (incluindo cluster e LocalStack)"
+    cmds:
+      - task: samples:delete
+      - task: k8s:undeploy
+      - task: k8s:uninstall-crds
+      - task: localstack:stop
+      - task: clean
+      - echo "✅ Ambiente limpo!"
+
+  # ========================================
+  # Code Quality
+  # ========================================
+
+  lint:
+    desc: "Roda linter"
+    cmds:
+      - |
+        if command -v golangci-lint >/dev/null 2>&1; then
+          golangci-lint run ./...
+        else
+          echo "⚠️  golangci-lint não instalado. Instale: brew install golangci-lint"
+          echo "Rodando go vet como alternativa..."
+          go vet ./...
+        fi
+
+  fmt:
+    desc: "Formata código"
+    cmds:
+      - go fmt ./...
+      - echo "✅ Código formatado"
+
+  # ========================================
+  # Development Workflows
+  # ========================================
+
+  dev:full:
+    desc: "Workflow completo de desenvolvimento"
+    cmds:
+      - task: setup
+      - task: build
+      - task: test:unit
+      - task: k8s:deploy
+      - task: samples:apply
+      - echo "✅ Ambiente completo pronto!"
+      - echo "📝 Logs - task k8s logs"
+      - echo "📊 Status - task samples status"
+
+  dev:quick:
+    desc: "Deploy rápido (sem rebuild completo)"
+    cmds:
+      - task: docker:build
+      - task: k8s:restart
+      - echo "✅ Operator atualizado!"
+
+  dev:watch:
+    desc: "Watch mode - rebuild automático ao mudar código"
+    cmds:
+      - |
+        echo "👀 Watching for changes..."
+        while true; do
+          inotifywait -r -e modify,create,delete ./controllers ./internal ./pkg 2>/dev/null || {
+            echo "⚠️  inotifywait não disponível. Instale: brew install inotify-tools"
+            echo "Usando polling manual (Ctrl+C para parar)..."
+            sleep 5
+          }
+          echo "🔄 Mudança detectada, rebuilding..."
+          task dev:quick
+        done
+
+  # ========================================
+  # Documentation
+  # ========================================
+
+  docs:serve:
+    desc: "Serve documentação local"
+    cmds:
+      - |
+        echo "📚 Servindo documentação em http://localhost:6060"
+        godoc -http=:6060
+
+  # ========================================
+  # Helpers
+  # ========================================
+
+  help:
+    desc: "Mostra ajuda completa"
+    cmds:
+      - task --list
+      - |
+        echo ""
+        echo "📖 Workflows Comuns:"
+        echo ""
+        echo "  Development Local:"
+        echo "    task setup              # Setup inicial"
+        echo "    task dev                # Desenvolvimento local (sem K8s)"
+        echo "    task run:local          # Roda contra cluster K8s"
+        echo ""
+        echo "  Deploy no Cluster:"
+        echo "    task dev:full           # Deploy completo + samples"
+        echo "    task dev:quick          # Rebuild rápido"
+        echo "    task k8s:logs           # Ver logs"
+        echo ""
+        echo "  Testing:"
+        echo "    task test:unit          # Testes unitários"
+        echo "    task test:integration   # Testes com LocalStack"
+        echo "    task test:e2e           # Testes E2E completos"
+        echo ""
+        echo "  LocalStack:"
+        echo "    task localstack:start   # Inicia AWS local"
+        echo "    task localstack:aws -- s3 ls  # AWS CLI local"
+        echo ""
+        echo "  Cleanup:"
+        echo "    task clean:all          # Limpa tudo"
+
+  default:
+    cmds:
+      - task: help

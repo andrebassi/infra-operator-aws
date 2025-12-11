@@ -1,0 +1,16 @@
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: LambdaFunction
+metadata:
+  name: test-function
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  functionName: helm-test-function
+  runtime: python3.9
+  handler: lambda_function.handler
+  role: arn:aws:iam::000000000000:role/lambda-role
+  code:
+    zipFile: UEsDBAoAAAAAAKRieFkAAAAAAAAAAAAAAAAJABwAbGFtYmRhX2Z1bmN0aW9uL1VUCQADl8+pZ5fPqWd1eAsAAQT1AQAABPUBAABQSwMEFAAIAAgAAAAAAAAAAAAAAAAAAAAAABsAHABsYW1iZGFfZnVuY3Rpb24vbGFtYmRhX2Z1bmN0aW9uLnB5VVQJAAOXz6lnl8+pZ3V4CwABBPUBAAAE9QEAAEtJTUvKzEu1UihKTMnWSCpKLE5VsOPSAABQSwcIaPmgJR4AAAAcAAAAUEsBAh4DCgAAAAAAoGJ4WQAAAAAAAAAAAAAACQAYAAAAAAAAAABAAAA0QAAAABsYW1iZGFfZnVuY3Rpb24vVVQFAAOXz6lndXgLAAEE9QEAAAQBAABQSwECHgMUAAgACACbYnhZaPmgJR4AAAAcAAAAGwAYAAAAAAABAAAApIFBAAAAbGFtYmRhX2Z1bmN0aW9uL2xhbWJkYV9mdW5jdGlvbi5weVVUBQADl8+pZ3V4CwABBPUBAAAE9QEAAFBLBQYAAAAAAgACALEAAADCAAAAAAA=
+  timeout: 30
+  memorySize: 128

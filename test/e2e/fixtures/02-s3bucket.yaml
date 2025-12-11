@@ -1,0 +1,48 @@
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: S3Bucket
+metadata:
+  name: e2e-test-bucket
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  bucketName: e2e-test-bucket-infra-operator
+
+  # Enable versioning
+  versioning:
+    enabled: true
+
+  # Encryption
+  encryption:
+    algorithm: AES256
+
+  # Block public access
+  publicAccessBlock:
+    blockPublicAcls: true
+    ignorePublicAcls: true
+    blockPublicPolicy: true
+    restrictPublicBuckets: true
+
+  # Tags
+  tags:
+    test-type: e2e
+    component: s3-controller
+
+  # Retain bucket after test (for debugging)
+  deletionPolicy: Delete
+---
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: S3Bucket
+metadata:
+  name: e2e-simple-bucket
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  bucketName: e2e-simple-bucket
+
+  tags:
+    test-type: e2e
+    variant: simple
+
+  deletionPolicy: Delete

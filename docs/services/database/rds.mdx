@@ -1,0 +1,1836 @@
+---
+title: 'RDS Instance - Banco Relacional'
+description: 'Bancos de dados relacionais gerenciados (PostgreSQL, MySQL, MariaDB, SQL Server, Oracle)'
+icon: 'database'
+---
+
+Crie e gerencie bancos de dados relacionais totalmente gerenciados e escaláveis na AWS com PostgreSQL, MySQL, MariaDB, SQL Server ou Oracle.
+
+## Pré-requisito: Configuração do AWSProvider
+
+Antes de criar qualquer recurso AWS, você precisa configurar um **AWSProvider** que gerencia as credenciais e autenticação com a AWS.
+
+<CodeGroup>
+```yaml IRSA
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: AWSProvider
+metadata:
+  name: production-aws
+  namespace: default
+spec:
+  region: us-east-1
+  roleARN: arn:aws:iam::123456789012:role/infra-operator-role
+  defaultTags:
+    managed-by: infra-operator
+    environment: production
+```
+
+```yaml Credenciais Estáticas
+apiVersion: v1
+kind: Secret
+metadata:
+  name: aws-credentials
+  namespace: default
+type: Opaque
+stringData:
+  access-key-id: test
+  secret-access-key: test
+---
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: AWSProvider
+metadata:
+  name: localstack
+  namespace: default
+spec:
+  region: us-east-1
+  accessKeyIDRef:
+    name: aws-credentials
+    key: access-key-id
+  secretAccessKeyRef:
+    name: aws-credentials
+    key: secret-access-key
+  defaultTags:
+    managed-by: infra-operator
+    environment: test
+```
+
+```bash Verificar Status
+kubectl get awsprovider
+kubectl describe awsprovider production-aws
+```
+</CodeGroup>
+
+<Warning>
+  Para produção, sempre use **IRSA** (IAM Roles for Service Accounts) ao invés de credenciais estáticas.
+</Warning>
+
+### Criar IAM Role para IRSA
+
+Para usar IRSA em produção, você precisa criar uma IAM Role com as permissões necessárias:
+
+<CodeGroup>
+```json Trust Policy (trust-policy.json)
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::123456789012:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B71EXAMPLE"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "oidc.eks.us-east-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B71EXAMPLE:sub": "system:serviceaccount:infra-operator-system:infra-operator-controller-manager",
+          "oidc.eks.us-east-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B71EXAMPLE:aud": "sts.amazonaws.com"
+        }
+      }
+    }
+  ]
+}
+```
+
+```json IAM Policy - RDS (rds-policy.json)
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "rds:CreateDBInstance",
+        "rds:DeleteDBInstance",
+        "rds:DescribeDBInstances",
+        "rds:ModifyDBInstance",
+        "rds:StartDBInstance",
+        "rds:StopDBInstance",
+        "rds:CreateDBSnapshot",
+        "rds:DeleteDBSnapshot",
+        "rds:AddTagsToResource",
+        "rds:RemoveTagsFromResource",
+        "rds:ListTagsForResource",
+        "rds:CreateDBParameterGroup",
+        "rds:ModifyDBParameterGroup"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+```bash Criar Role com AWS CLI
+# 1. Obter OIDC Provider do cluster EKS
+export CLUSTER_NAME=my-cluster
+export AWS_REGION=us-east-1
+export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+
+OIDC_PROVIDER=$(aws eks describe-cluster \
+  --name $CLUSTER_NAME \
+  --region $AWS_REGION \
+  --query "cluster.identity.oidc.issuer" \
+  --output text | sed -e "s/^https:\/\///")
+
+# 2. Atualizar trust-policy.json com valores corretos
+cat > trust-policy.json <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::${AWS_ACCOUNT_ID}:oidc-provider/${OIDC_PROVIDER}"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "${OIDC_PROVIDER}:sub": "system:serviceaccount:infra-operator-system:infra-operator-controller-manager",
+          "${OIDC_PROVIDER}:aud": "sts.amazonaws.com"
+        }
+      }
+    }
+  ]
+}
+EOF
+
+# 3. Criar IAM Role
+aws iam create-role \
+  --role-name infra-operator-rds-role \
+  --assume-role-policy-document file://trust-policy.json \
+  --description "Role for Infra Operator RDS management"
+
+# 4. Criar e anexar policy
+aws iam put-role-policy \
+  --role-name infra-operator-rds-role \
+  --policy-name RDSManagement \
+  --policy-document file://rds-policy.json
+
+# 5. Obter ARN da Role
+aws iam get-role \
+  --role-name infra-operator-rds-role \
+  --query 'Role.Arn' \
+  --output text
+```
+
+```bash Anotar ServiceAccount do Operator
+# Adicionar annotation ao ServiceAccount do operator
+kubectl annotate serviceaccount infra-operator-controller-manager \
+  -n infra-operator-system \
+  eks.amazonaws.com/role-arn=arn:aws:iam::123456789012:role/infra-operator-rds-role
+```
+</CodeGroup>
+
+<Note>
+  Substitua `123456789012` pelo seu AWS Account ID e `EXAMPLED539D4633E53DE1B71EXAMPLE` pelo ID do seu OIDC provider.
+</Note>
+
+## Visão Geral
+
+Amazon RDS (Relational Database Service) é um serviço de banco de dados relacional completamente gerenciado que oferece:
+
+**Características:**
+- **Totalmente Gerenciado**: AWS gerencia backups, patches, replicação e failover
+- **Alta Disponibilidade**: Multi-AZ automático com failover em minutos
+- **Múltiplos Engines**: PostgreSQL, MySQL, MariaDB, SQL Server, Oracle
+- **Escalabilidade**: Aumente ou diminua capacity conforme necessário
+- **Backups Automáticos**: Retenção configurável (até 35 dias)
+- **Point-in-Time Recovery (PITR)**: Restaure para qualquer ponto nos últimos 35 dias
+- **Encryption at Rest**: AES-256 com AWS KMS
+- **Encryption in Transit**: SSL/TLS automático
+- **Performance Insights**: Monitor e otimize performance
+- **Enhanced Monitoring**: Métricas detalhadas de SO, IO, CPU
+- **Read Replicas**: Replicação de leitura em regiões (síncrona ou assíncrona)
+- **Automated Patching**: Janelas de manutenção configuráveis
+- **Parameter Groups**: Configuração customizadas do banco de dados
+- **Security Groups**: Controle de acesso em nível de rede
+
+**Status**: ⚠️ Requer LocalStack Pro ou AWS Real
+
+## Início Rápido
+
+<CodeGroup>
+```yaml RDS PostgreSQL
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: RDSInstance
+metadata:
+  name: e2e-postgres-db
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+
+  # Identificador único do banco
+  dbInstanceIdentifier: e2e-test-postgres
+
+  # Motor de banco de dados
+  engine: postgres
+  engineVersion: "14.7"
+
+  # Classe da instância
+  dbInstanceClass: db.t3.micro
+
+  # Armazenamento
+  allocatedStorage: 20
+
+  # Credenciais de administrador
+  masterUsername: dbadmin
+  masterUserPassword: Test123456!
+
+  # Nome do banco inicial
+  dbName: testdb
+  port: 5432
+
+  # Configurações
+  multiAZ: false
+  publiclyAccessible: true
+  storageEncrypted: true
+
+  # Backups
+  backupRetentionPeriod: 7
+  preferredBackupWindow: "03:00-04:00"
+
+  # Tags
+  tags:
+    Environment: test
+    ManagedBy: infra-operator
+    Database: postgres
+
+  deletionPolicy: Delete
+  skipFinalSnapshot: true
+```
+
+```yaml RDS MySQL
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: RDSInstance
+metadata:
+  name: e2e-mysql-db
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+
+  # Identificador único
+  dbInstanceIdentifier: e2e-test-mysql
+
+  # Motor MySQL
+  engine: mysql
+  engineVersion: "8.0.33"
+
+  # Classe da instância
+  dbInstanceClass: db.t3.small
+
+  # Armazenamento
+  allocatedStorage: 30
+
+  # Credenciais
+  masterUsername: admin
+  masterUserPassword: MyPassword123!
+
+  # Banco inicial
+  dbName: mydb
+  port: 3306
+
+  # Multi-AZ habilitado
+  multiAZ: true
+  publiclyAccessible: false
+  storageEncrypted: true
+
+  # Backups
+  backupRetentionPeriod: 14
+
+  # Tags
+  tags:
+    Environment: test
+    ManagedBy: infra-operator
+    Database: mysql
+
+  deletionPolicy: Delete
+  skipFinalSnapshot: true
+```
+
+```yaml RDS PostgreSQL Produção
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: RDSInstance
+metadata:
+  name: app-database
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  # Identificador único do banco (2-63 caracteres)
+  dbInstanceIdentifier: app-db-prod
+
+  # Motor de banco de dados
+  engine: postgres
+  engineVersion: "15.4"
+
+  # Classe da instância (capacidade)
+  dbInstanceClass: db.t3.micro
+
+  # Armazenamento
+  allocatedStorage: 20
+  storageType: gp3
+  iops: 3000
+
+  # Credenciais de administrador
+  masterUsername: postgres
+  masterUserPasswordSecretRef:
+    name: db-password
+    key: password
+
+  # Multi-AZ para alta disponibilidade
+  multiAZ: true
+
+  # VPC e segurança
+  dbSubnetGroupName: private-subnet-group
+  vpcSecurityGroupRefs:
+  - name: db-sg
+
+  # Backups
+  backupRetentionPeriod: 7
+  preferredBackupWindow: "03:00-04:00"
+  preferredMaintenanceWindow: "sun:04:00-sun:05:00"
+
+  # Proteção de deleção
+  deletionProtection: true
+
+  # Tagging
+  tags:
+    Environment: production
+    Application: web-app
+
+  deletionPolicy: Retain
+```
+
+```bash Aplicar
+kubectl apply -f rds.yaml
+```
+
+```bash Verificar Status
+kubectl get rdsinstances
+kubectl describe rdsinstance e2e-postgres-db
+kubectl get rdsinstance e2e-postgres-db -o yaml
+```
+</CodeGroup>
+
+## Referência de Configuração
+
+### Campos Obrigatórios
+
+<ParamField path="spec.providerRef" type="object" required>
+  Referência ao recurso AWSProvider para autenticação
+
+  <Expandable title="properties">
+    <ParamField path="name" type="string" required>
+      Nome do recurso AWSProvider
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="spec.dbInstanceIdentifier" type="string" required>
+  Identificador único da instância RDS (2 a 63 caracteres)
+
+  **Regras:**
+  - Alfanuméricos e hífens apenas
+  - Não pode começar ou terminar com hífen
+  - Deve ser único por região
+  - Não pode ser modificado após criação
+
+  ```yaml
+  dbInstanceIdentifier: myapp-db-prod
+  ```
+</ParamField>
+
+<ParamField path="spec.engine" type="string" required>
+  Motor de banco de dados
+
+  **Opções:**
+  - `postgres` - PostgreSQL
+  - `mysql` - MySQL
+  - `mariadb` - MariaDB
+  - `sqlserver-ex` - SQL Server Express
+  - `sqlserver-se` - SQL Server Standard
+  - `sqlserver-ee` - SQL Server Enterprise
+  - `oracle-se2` - Oracle Standard Edition 2
+  - `oracle-ee` - Oracle Enterprise Edition
+
+  ```yaml
+  engine: postgres
+  ```
+</ParamField>
+
+<ParamField path="spec.engineVersion" type="string" required>
+  Versão do motor do banco de dados
+
+  **Exemplos:**
+  - PostgreSQL: `15.4`, `14.9`, `13.13`
+  - MySQL: `8.0.35`, `8.0.34`, `5.7.44`
+  - MariaDB: `10.6.14`, `10.5.21`, `10.4.32`
+
+  ```yaml
+  engineVersion: "15.4"
+  ```
+
+  **Nota:** Sempre especifique versões com patch (ex: 15.4, não 15)
+</ParamField>
+
+<ParamField path="spec.dbInstanceClass" type="string" required>
+  Classe de instância (CPU, RAM, performance)
+
+  **Família db.t3 (Burstable - Dev/Test):**
+  - `db.t3.micro` - 1 vCPU, 1 GB RAM (~$0.017/hora)
+  - `db.t3.small` - 1 vCPU, 2 GB RAM (~$0.034/hora)
+  - `db.t3.medium` - 1 vCPU, 4 GB RAM (~$0.068/hora)
+
+  **Família db.t4g (Graviton - mais barato):**
+  - `db.t4g.micro` - 1 vCPU, 1 GB RAM
+  - `db.t4g.small` - 1 vCPU, 2 GB RAM
+
+  **Família db.m5 (General Purpose:**
+  - `db.m5.large` - 2 vCPU, 8 GB RAM (~$0.175/hora)
+  - `db.m5.xlarge` - 4 vCPU, 16 GB RAM (~$0.350/hora)
+  - `db.m5.2xlarge` - 8 vCPU, 32 GB RAM (~$0.700/hora)
+
+  **Família db.r5 (Memory Optimized - Cache/Analytics):**
+  - `db.r5.large` - 2 vCPU, 16 GB RAM (~$0.280/hora)
+  - `db.r5.xlarge` - 4 vCPU, 32 GB RAM (~$0.560/hora)
+
+  ```yaml
+  dbInstanceClass: db.t3.micro
+  ```
+</ParamField>
+
+<ParamField path="spec.allocatedStorage" type="integer" required>
+  Espaço em armazenamento alocado em GB
+
+  **Intervalo:** 20 - 65.536 GB (depende do engine)
+
+  **Tipos de armazenamento:**
+  - **gp2** (General Purpose): 20-65.536 GB (padrão)
+  - **gp3** (General Purpose v3): 20-65.536 GB (recomendado, mais performance)
+  - **io1** (Provisioned IOPS): 100-65.536 GB (alta performance)
+  - **io2** (Provisioned IOPS v2): 100-65.536 GB (máxima performance)
+
+  ```yaml
+  allocatedStorage: 20
+  storageType: gp3
+  ```
+
+  **Nota:** Você pode aumentar tamanho depois, mas não pode diminuir
+</ParamField>
+
+<ParamField path="spec.masterUsername" type="string" required>
+  Nome de usuário administrativo do banco
+
+  **Regras:**
+  - 1 a 16 caracteres (depende do engine)
+  - Alfanuméricos apenas
+  - Não pode ser `admin`, `root`, `postgres` (alguns engines)
+  - Não pode começar com número
+
+  ```yaml
+  masterUsername: dbadmin
+  ```
+</ParamField>
+
+<ParamField path="spec.masterUserPasswordSecretRef" type="object" required>
+  Referência a Secret Kubernetes contendo a senha
+
+  <Expandable title="properties">
+    <ParamField path="name" type="string" required>
+      Nome do Secret Kubernetes
+    </ParamField>
+    <ParamField path="key" type="string" required>
+      Chave dentro do Secret
+    </ParamField>
+  </Expandable>
+
+  **Exemplo de Secret:**
+  ```yaml
+  apiVersion: v1
+  kind: Secret
+  metadata:
+    name: db-password
+    namespace: default
+  type: Opaque
+  stringData:
+    password: SuperSecurePassword123!
+  ```
+
+  **Regras de Senha:**
+  - Mínimo 8 caracteres
+  - Caracteres de: letras, números, símbolos especiais
+  - Não pode conter `@`, `/`, `"`, ou `\`
+</ParamField>
+
+### Campos Opcionais - Armazenamento
+
+<ParamField path="spec.storageType" type="string" default="gp2">
+  Tipo de armazenamento EBS
+
+  **Opções:**
+  - `gp2`: General Purpose SSD (padrão, bom para maioria)
+  - `gp3`: General Purpose SSD v3 (recomendado, mais performance)
+  - `io1`: Provisioned IOPS SSD (performance previsível)
+  - `io2`: Provisioned IOPS SSD v2 (máxima performance)
+
+  ```yaml
+  storageType: gp3
+  ```
+</ParamField>
+
+<ParamField path="spec.iops" type="integer">
+  IOPS provisionadas (apenas para io1/io2)
+
+  **Intervalo:** 1.000 - 64.000 IOPS
+
+  **Nota:** Para gp3, IOPS é configurado separadamente do tamanho
+
+  ```yaml
+  storageType: io1
+  allocatedStorage: 100
+  iops: 5000
+  ```
+</ParamField>
+
+<ParamField path="spec.storageThroughput" type="integer">
+  Throughput de armazenamento para gp3 (MB/s)
+
+  **Intervalo:** 125 - 1.000 MB/s
+
+  ```yaml
+  storageType: gp3
+  storageThroughput: 500
+  ```
+</ParamField>
+
+### Campos Opcionais - Rede e Segurança
+
+<ParamField path="spec.dbSubnetGroupName" type="string">
+  Nome do DB Subnet Group (subnets privadas)
+
+  **Importante:** DEVE existir previamente na AWS
+
+  ```yaml
+  dbSubnetGroupName: private-subnet-group
+  ```
+
+  **Criar subnet group via AWS CLI:**
+  ```bash
+  aws rds create-db-subnet-group \
+    --db-subnet-group-name private-subnet-group \
+    --db-subnet-group-description "Private subnets for RDS" \
+    --subnet-ids subnet-xxx subnet-yyy
+  ```
+</ParamField>
+
+<ParamField path="spec.vpcSecurityGroupRefs" type="array">
+  Referências a Security Groups Kubernetes para controle de acesso
+
+  <Expandable title="structure">
+    <ParamField path="name" type="string" required>
+      Nome do recurso SecurityGroup no Kubernetes
+    </ParamField>
+  </Expandable>
+
+  ```yaml
+  vpcSecurityGroupRefs:
+  - name: rds-security-group
+  ```
+
+  **Alternativa - usar IDs diretos:**
+  ```yaml
+  vpcSecurityGroupIds:
+  - sg-0123456789abcdef0
+  - sg-0123456789abcdef1
+  ```
+</ParamField>
+
+<ParamField path="spec.publiclyAccessible" type="boolean" default="false">
+  Se o banco é acessível via internet pública
+
+  **⚠️ Segurança:** Nunca habilite em produção!
+
+  ```yaml
+  publiclyAccessible: false  # Mantenha privado
+  ```
+</ParamField>
+
+<ParamField path="spec.deletionProtection" type="boolean" default="false">
+  Protege contra deleção acidental
+
+  **Recomendado:** true em produção
+
+  ```yaml
+  deletionProtection: true
+  ```
+</ParamField>
+
+### Campos Opcionais - Backups e Recuperação
+
+<ParamField path="spec.backupRetentionPeriod" type="integer" default="7">
+  Dias de retenção de backups automáticos
+
+  **Intervalo:** 1 - 35 dias
+
+  **Recomendações:**
+  - Desenvolvimento: 1-7 dias
+  - Staging: 7-14 dias
+  - Produção: 14-35 dias
+
+  ```yaml
+  backupRetentionPeriod: 30
+  ```
+
+  **Custo:** Aumenta com retenção
+</ParamField>
+
+<ParamField path="spec.preferredBackupWindow" type="string">
+  Janela de backup diária (UTC, formato HH:MM-HH:MM)
+
+  **Padrão:** Selecionado automaticamente
+
+  ```yaml
+  preferredBackupWindow: "03:00-04:00"  # 3AM-4AM UTC
+  ```
+
+  **Dica:** Escolha horário de baixo uso
+</ParamField>
+
+<ParamField path="spec.preferredMaintenanceWindow" type="string">
+  Janela de manutenção semanal para patches (formato: ddd:HH:MM-ddd:HH:MM)
+
+  **Padrão:** Selecionado automaticamente
+
+  ```yaml
+  preferredMaintenanceWindow: "sun:04:00-sun:05:00"
+  # Domingo, 4AM-5AM UTC
+  ```
+
+  **Dias válidos:** mon, tue, wed, thu, fri, sat, sun
+</ParamField>
+
+<ParamField path="spec.skipFinalSnapshot" type="boolean" default="false">
+  Não criar snapshot final ao deletar banco
+
+  **Cuidado:** true pode perder dados!
+
+  ```yaml
+  skipFinalSnapshot: false  # Sempre criar snapshot final
+  ```
+</ParamField>
+
+<ParamField path="spec.finalDBSnapshotIdentifier" type="string">
+  Identificador do snapshot final ao deletar
+
+  ```yaml
+  finalDBSnapshotIdentifier: app-db-final-snapshot-2025-11-22
+  ```
+</ParamField>
+
+### Campos Opcionais - Alta Disponibilidade e Replicação
+
+<ParamField path="spec.multiAZ" type="boolean" default="false">
+  Habilitar Multi-AZ (alta disponibilidade)
+
+  **Benefícios:**
+  - Failover automático em caso de falha (minutos)
+  - Sincronização síncrona para data integrity
+  - Aumento de ~50% no custo
+
+  **Recomendado:** true em produção
+
+  ```yaml
+  multiAZ: true
+  ```
+</ParamField>
+
+
+<ParamField path="spec.enableIAMDatabaseAuthentication" type="boolean" default="false">
+  Usar IAM para autenticação (em vez de senha)
+
+  ```yaml
+  enableIAMDatabaseAuthentication: true
+  ```
+
+  **Benefícios:**
+  - Sem senha hardcoded
+  - Tokens temporários
+  - Auditoria automática
+</ParamField>
+
+### Campos Opcionais - Criptografia
+
+<ParamField path="spec.storageEncrypted" type="boolean" default="true">
+  Habilitar criptografia em repouso
+
+  **Padrão:** true (recomendado)
+
+  ```yaml
+  storageEncrypted: true
+  ```
+</ParamField>
+
+<ParamField path="spec.kmsKeyId" type="string">
+  ARN da chave AWS KMS para criptografia
+
+  **Padrão:** Chave gerenciada pela AWS (sem custo)
+
+  ```yaml
+  storageEncrypted: true
+  kmsKeyId: arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012
+  ```
+</ParamField>
+
+### Campos Opcionais - Monitoramento e Otimização
+
+<ParamField path="spec.enablePerformanceInsights" type="boolean" default="false">
+  Habilitar Performance Insights (análise detalhada)
+
+  ```yaml
+  enablePerformanceInsights: true
+  ```
+
+  **Custo:** ~$0.02/hora adicional
+</ParamField>
+
+<ParamField path="spec.enableEnhancedMonitoring" type="boolean" default="false">
+  Habilitar Enhanced Monitoring (métricas de SO)
+
+  ```yaml
+  enableEnhancedMonitoring: true
+  monitoringInterval: 60  # A cada 60 segundos
+  ```
+
+  **Custo:** Baseado em intervalo
+</ParamField>
+
+<ParamField path="spec.monitoringInterval" type="integer" default="0">
+  Intervalo de Enhanced Monitoring (segundos)
+
+  **Opções:** 0 (desabilitado), 1, 5, 10, 15, 30, 60
+
+  ```yaml
+  monitoringInterval: 60
+  ```
+</ParamField>
+
+### Campos Opcionais - Outros
+
+<ParamField path="spec.tags" type="object">
+  Pares chave-valor para organização e billing
+
+  ```yaml
+  tags:
+    Environment: production
+    Application: web-app
+    Team: backend
+    CostCenter: engineering
+    ManagedBy: infra-operator
+  ```
+</ParamField>
+
+<ParamField path="spec.deletionPolicy" type="string" default="Delete">
+  O que acontece com a instância quando o CR é deletado
+
+  **Opções:**
+  - `Delete`: Instância é deletada da AWS
+  - `Retain`: Instância permanece na AWS mas não gerenciada
+  - `Orphan`: Remover apenas gerenciamento
+
+  ```yaml
+  deletionPolicy: Retain  # Para produção
+  ```
+</ParamField>
+
+## Campos de Status
+
+Após a instância ser criada, os seguintes campos de status são populados:
+
+<ResponseField name="status.dbInstanceArn" type="string">
+  ARN completo da instância RDS
+
+  ```
+  arn:aws:rds:us-east-1:123456789012:db:app-db-prod
+  ```
+</ResponseField>
+
+<ResponseField name="status.endpoint" type="object">
+  Informações de conexão ao banco
+
+  <Expandable title="properties">
+    <ResponseField name="address" type="string">
+      Hostname do banco para conexão
+
+      ```
+      app-db-prod.c9akciq32.us-east-1.rds.amazonaws.com
+      ```
+    </ResponseField>
+    <ResponseField name="port" type="integer">
+      Porta de conexão (padrão: 5432 PostgreSQL, 3306 MySQL)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="status.dbInstanceStatus" type="string">
+  Estado atual da instância
+
+  **Valores possíveis:**
+  - `creating` - Criando
+  - `available` - Disponível e pronto
+  - `deleting` - Sendo deletada
+  - `modifying` - Configuração sendo alterada
+  - `backing-up` - Backup em progresso
+  - `maintenance` - Manutenção agendada
+  - `failed` - Erro na criação
+</ResponseField>
+
+<ResponseField name="status.allocatedStorage" type="integer">
+  Espaço alocado em GB
+</ResponseField>
+
+<ResponseField name="status.engineVersion" type="string">
+  Versão do engine em execução
+</ResponseField>
+
+<ResponseField name="status.multiAZ" type="boolean">
+  Se Multi-AZ está habilitado
+</ResponseField>
+
+<ResponseField name="status.ready" type="boolean">
+  `true` quando a instância está `available` e pronta
+</ResponseField>
+
+<ResponseField name="status.lastSyncTime" type="string">
+  Timestamp da última sincronização com a AWS
+</ResponseField>
+
+## Exemplos
+
+### RDS PostgreSQL de Produção com Multi-AZ
+
+Banco de dados para aplicação web com alta disponibilidade:
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: RDSInstance
+metadata:
+  name: production-postgres
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  # Identificação
+  dbInstanceIdentifier: myapp-db-prod
+  engine: postgres
+  engineVersion: "15.4"
+
+  # Classe e armazenamento
+  dbInstanceClass: db.t3.small
+  allocatedStorage: 50
+  storageType: gp3
+  iops: 3000
+  storageThroughput: 250
+
+  # Credenciais
+  masterUsername: postgres
+  masterUserPasswordSecretRef:
+    name: db-password
+    key: password
+
+  # Rede
+  dbSubnetGroupName: private-subnet-group
+  vpcSecurityGroupRefs:
+  - name: rds-security-group
+  publiclyAccessible: false
+
+  # Alta Disponibilidade
+  multiAZ: true
+  deletionProtection: true
+
+  # Backups
+  backupRetentionPeriod: 30
+  preferredBackupWindow: "03:00-04:00"
+  preferredMaintenanceWindow: "sun:04:00-sun:05:00"
+
+  # Monitoramento
+  enablePerformanceInsights: true
+
+  # Segurança
+  storageEncrypted: true
+
+  # Tags
+  tags:
+    Environment: production
+    Application: myapp
+    Team: backend
+    CostCenter: engineering
+
+  deletionPolicy: Retain
+```
+
+### RDS MySQL para Desenvolvimento
+
+Banco de dados simples para desenvolvimento local:
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: RDSInstance
+metadata:
+  name: dev-mysql
+  namespace: default
+spec:
+  providerRef:
+    name: dev-aws
+
+  dbInstanceIdentifier: myapp-db-dev
+
+  engine: mysql
+  engineVersion: "8.0.35"
+
+  # Instância pequena para dev
+  dbInstanceClass: db.t3.micro
+  allocatedStorage: 20
+  storageType: gp3
+
+  masterUsername: admin
+  masterUserPasswordSecretRef:
+    name: dev-db-password
+    key: password
+
+  # Dev não precisa de Multi-AZ
+  multiAZ: false
+  deletionProtection: false
+
+  # Backups menos frequentes
+  backupRetentionPeriod: 7
+
+  tags:
+    Environment: development
+    Application: myapp
+
+  deletionPolicy: Delete
+```
+
+### RDS com Read Replica
+
+Banco principal com replicação de leitura para analytics:
+
+```yaml
+# Banco principal
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: RDSInstance
+metadata:
+  name: primary-db
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  dbInstanceIdentifier: myapp-db-primary
+  engine: postgres
+  engineVersion: "15.4"
+
+  dbInstanceClass: db.m5.large
+  allocatedStorage: 100
+  storageType: gp3
+
+  masterUsername: postgres
+  masterUserPasswordSecretRef:
+    name: db-password
+    key: password
+
+  multiAZ: true
+  backupRetentionPeriod: 35
+
+  # Habilitar backups (necessário para replicas)
+  backupRetentionPeriod: 7
+
+  tags:
+    Environment: production
+    Role: primary
+
+  deletionPolicy: Retain
+
+---
+# Read Replica (para analytics/reporting)
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: RDSInstance
+metadata:
+  name: read-replica-db
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  dbInstanceIdentifier: myapp-db-read-replica
+
+  # Criar a partir do banco principal
+  replicateSourceDb: myapp-db-primary
+
+  # Mesma engine, pode ser classe menor
+  dbInstanceClass: db.t3.small
+
+  # Sem necessidade de configurar senha (herda da principal)
+  # Replica em uma AZ diferente para HA
+  availabilityZone: us-east-1b
+
+  tags:
+    Environment: production
+    Role: read-replica
+
+  deletionPolicy: Delete
+```
+
+### RDS com Encryption e PITR Completo
+
+Banco crítico com máxima segurança e recuperação:
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: RDSInstance
+metadata:
+  name: critical-database
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  dbInstanceIdentifier: critical-db-prod
+
+  engine: postgres
+  engineVersion: "15.4"
+
+  dbInstanceClass: db.r5.xlarge  # Memory optimized
+  allocatedStorage: 500
+  storageType: io2
+  iops: 20000
+
+  masterUsername: postgres
+  masterUserPasswordSecretRef:
+    name: critical-db-password
+    key: password
+
+  # VPC privada com segurança
+  dbSubnetGroupName: critical-subnet-group
+  vpcSecurityGroupRefs:
+  - name: critical-rds-sg
+  publiclyAccessible: false
+
+  # HA e proteção
+  multiAZ: true
+  deletionProtection: true
+
+  # Backups com PITR completo
+  backupRetentionPeriod: 35
+  preferredBackupWindow: "02:00-03:00"
+  skipFinalSnapshot: false
+  finalDBSnapshotIdentifier: critical-db-final-backup
+
+  # Criptografia com KMS
+  storageEncrypted: true
+  kmsKeyId: arn:aws:kms:us-east-1:123456789012:key/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
+
+  # Monitoramento completo
+  enablePerformanceInsights: true
+  enableEnhancedMonitoring: true
+  monitoringInterval: 1
+
+  # Autenticação IAM
+  enableIAMDatabaseAuthentication: true
+
+  # Maintenance
+  preferredMaintenanceWindow: "sun:03:00-sun:04:00"
+
+  tags:
+    Environment: production
+    CriticalData: "true"
+    BackupRequired: "true"
+    Compliance: "required"
+
+  deletionPolicy: Retain
+```
+
+### RDS MariaDB para WordPress/CMS
+
+Banco de dados para aplicação web tradicional:
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: RDSInstance
+metadata:
+  name: wordpress-db
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  dbInstanceIdentifier: wordpress-db
+
+  engine: mariadb
+  engineVersion: "10.6.14"
+
+  dbInstanceClass: db.t3.small
+  allocatedStorage: 50
+  storageType: gp3
+
+  masterUsername: wordpress
+  masterUserPasswordSecretRef:
+    name: wordpress-db-password
+    key: password
+
+  dbSubnetGroupName: web-subnet-group
+  vpcSecurityGroupRefs:
+  - name: wordpress-rds-sg
+
+  multiAZ: true
+  backupRetentionPeriod: 14
+
+  tags:
+    Environment: production
+    Application: wordpress
+
+  deletionPolicy: Retain
+```
+
+## Verificação
+
+### Verificar Status via kubectl
+
+```bash
+# Listar todas as instâncias RDS
+kubectl get rdsinstances
+
+# Obter informações detalhadas
+kubectl get rdsinstance production-postgres -o yaml
+
+# Acompanhar criação em tempo real
+kubectl get rdsinstance production-postgres -w
+
+# Ver eventos e status
+kubectl describe rdsinstance production-postgres
+```
+
+### Verificar na AWS
+
+<Tabs>
+  <Tab title="AWS CLI">
+    ```bash
+    # Listar instâncias RDS
+    aws rds describe-db-instances \
+      --query 'DBInstances[].{Identifier:DBInstanceIdentifier,Status:DBInstanceStatus,Engine:Engine,Class:DBInstanceClass}' \
+      --output table
+
+    # Obter detalhes completos
+    aws rds describe-db-instances \
+      --db-instance-identifier app-db-prod \
+      --output json | jq '.DBInstances[0]'
+
+    # Ver endpoint de conexão
+    aws rds describe-db-instances \
+      --db-instance-identifier app-db-prod \
+      --query 'DBInstances[0].Endpoint'
+
+    # Testar conexão (PostgreSQL)
+    psql -h app-db-prod.c9akciq32.us-east-1.rds.amazonaws.com \
+         -U postgres \
+         -d postgres
+
+    # Ver backups
+    aws rds describe-db-snapshots \
+      --db-instance-identifier app-db-prod
+
+    # Ver multi-AZ status
+    aws rds describe-db-instances \
+      --db-instance-identifier app-db-prod \
+      --query 'DBInstances[0].MultiAZ'
+
+    ```
+  </Tab>
+
+  <Tab title="LocalStack">
+    ```bash
+    # Para testes com LocalStack
+    export AWS_ENDPOINT_URL=http://localhost:4566
+
+    aws rds describe-db-instances
+
+    aws rds describe-db-instances \
+      --db-instance-identifier app-db-prod
+    ```
+  </Tab>
+
+  <Tab title="psql (PostgreSQL)">
+    ```bash
+    # Conectar ao banco
+    psql -h <endpoint> -U postgres -d postgres
+
+    # Ver usuários
+    \du
+
+    # Ver bancos
+    \l
+
+    # Ver espaço usado
+    SELECT pg_database.datname,
+           pg_size_pretty(pg_database_size(pg_database.datname))
+    FROM pg_database;
+
+    # Desconectar
+    \q
+    ```
+  </Tab>
+
+  <Tab title="mysql (MySQL/MariaDB)">
+    ```bash
+    # Conectar ao banco
+    mysql -h <endpoint> -u admin -p
+
+    # Ver bancos
+    SHOW DATABASES;
+
+    # Ver usuários
+    SELECT user, host FROM mysql.user;
+
+    # Ver espaço usado
+    SELECT table_schema,
+           ROUND(SUM(data_length+index_length)/1024/1024,2) AS size_mb
+    FROM information_schema.tables
+    GROUP BY table_schema;
+
+    # Sair
+    EXIT;
+    ```
+  </Tab>
+</Tabs>
+
+### Saída Esperada
+
+```yaml
+status:
+  dbInstanceArn: arn:aws:rds:us-east-1:123456789012:db:app-db-prod
+  dbInstanceStatus: available
+  endpoint:
+    address: app-db-prod.c9akciq32.us-east-1.rds.amazonaws.com
+    port: 5432
+  engine: postgres
+  engineVersion: "15.4"
+  dbInstanceClass: db.t3.small
+  allocatedStorage: 50
+  multiAZ: true
+  storageEncrypted: true
+  ready: true
+  lastSyncTime: "2025-11-22T20:45:22Z"
+```
+
+## Resolução de Problemas
+
+<AccordionGroup>
+  <Accordion title="RDS travado em creating por mais de 30 minutos">
+    **Sintomas:** `dbInstanceStatus: creating` indefinidamente
+
+    **Causas comuns:**
+    1. Subnet group não existe ou inválido
+    2. Security group não encontrado
+    3. Quota de instâncias RDS atingida
+    4. Problema de conectividade com AWS
+
+    **Soluções:**
+    ```bash
+    # Verificar status detalhado
+    kubectl describe rdsinstance app-database
+
+    # Ver logs do operator
+    kubectl logs -n infra-operator-system \
+      deploy/infra-operator-controller-manager \
+      --tail=100 | grep -i rds
+
+    # Verificar se subnet group existe
+    aws rds describe-db-subnet-groups \
+      --db-subnet-group-name private-subnet-group
+
+    # Verificar AWSProvider está ready
+    kubectl get awsprovider
+    kubectl describe awsprovider production-aws
+
+    # Forçar sincronização
+    kubectl annotate rdsinstance app-database \
+      force-sync="$(date +%s)" --overwrite
+
+    # Último recurso: deletar e recria (com Retain)
+    kubectl patch rdsinstance app-database \
+      --type merge \
+      -p '{"spec":{"deletionPolicy":"Retain"}}'
+    ```
+  </Accordion>
+
+  <Accordion title="Connection timeout ao conectar no banco">
+    **Sintomas:** `psql: could not translate host name` ou `Connection refused`
+
+    **Causas comuns:**
+    1. Security group não permite conexão (porta bloqueada)
+    2. Database não está publicamente acessível e conectando de fora da VPC
+    3. Hostname/endpoint incorreto
+    4. Rede não roteada corretamente
+
+    **Soluções:**
+    ```bash
+    # Obter endpoint correto
+    aws rds describe-db-instances \
+      --db-instance-identifier app-db-prod \
+      --query 'DBInstances[0].Endpoint'
+
+    # Verificar security group permite entrada
+    aws ec2 describe-security-groups \
+      --group-ids sg-0123456789abcdef0 \
+      --query 'SecurityGroups[0].IpPermissions'
+
+    # DEVE ter rule como:
+    # IpProtocol: tcp, FromPort: 5432, ToPort: 5432
+    # CidrIp: 10.0.0.0/16 (sua VPC)
+
+    # Se conectando de fora da VPC:
+    # 1. Habilitar publiclyAccessible (não recomendado)
+    # 2. Ou usar bastion/jump host
+    # 3. Ou usar VPN
+
+    # Testar com telnet/nc
+    nc -zv app-db-prod.c9akciq32.us-east-1.rds.amazonaws.com 5432
+
+    # Testar com psql com verbose
+    psql -h app-db-prod.c9akciq32.us-east-1.rds.amazonaws.com \
+         -U postgres \
+         -d postgres \
+         -v
+
+    # Se usando Multi-AZ, failover pode estar em progresso
+    # Tente novamente em 5 minutos
+    ```
+  </Accordion>
+
+  <Accordion title="Falta de espaço em disco (storage full)">
+    **Sintomas:** Erro `Disk full` ao executar queries, aplicação fica lenta
+
+    **Causas:**
+    1. Dados cresceram além do previsto
+    2. Logs ou backups acumulados
+    3. Ausência de limpeza de dados antigos
+
+    **Soluções:**
+    ```bash
+    # Ver espaço disponível
+    aws rds describe-db-instances \
+      --db-instance-identifier app-db-prod \
+      --query 'DBInstances[0].AllocatedStorage'
+
+    # Aumentar storage (pode levar minutos)
+    kubectl patch rdsinstance app-database \
+      --type merge \
+      -p '{"spec":{"allocatedStorage":100}}'
+
+    # Ver progresso
+    kubectl get rdsinstance app-database -w
+
+    # Se PostgreSQL, limpar espaço
+    # Conectar ao banco:
+    psql -h <endpoint> -U postgres -d postgres
+
+    # Vacuum full (reclama espaço)
+    VACUUM FULL;
+    VACUUM ANALYZE;
+
+    # Se MySQL, otimizar tabelas
+    mysql -h <endpoint> -u admin -p
+
+    OPTIMIZE TABLE table_name;
+
+    # Ver tamanho do banco
+    SELECT pg_database.datname,
+           pg_size_pretty(pg_database_size(pg_database.datname))
+    FROM pg_database;
+    ```
+  </Accordion>
+
+  <Accordion title="Custos elevados de RDS">
+    **Sintomas:** Conta AWS com gastos de RDS inesperados
+
+    **Causas comuns:**
+    1. Instância class muito grande
+    2. IOPS provisionadas altas
+    3. Muitos backups retidos
+    4. Replicação entre regiões
+
+    **Soluções:**
+    ```bash
+    # Calcular custo atual
+    # Usar AWS Pricing Calculator
+    # t3.small: ~$0.034/hora * 730 = ~$25/mês
+    # gp3 storage: ~$0.12/GB/mês
+
+    # Reduzir classe (se possível)
+    kubectl patch rdsinstance app-database \
+      --type merge \
+      -p '{"spec":{"dbInstanceClass":"db.t3.micro"}}'
+
+    # Reduzir retention de backups
+    kubectl patch rdsinstance app-database \
+      --type merge \
+      -p '{"spec":{"backupRetentionPeriod":7}}'
+
+    # Deletar snapshots antigos não mais necessários
+    aws rds delete-db-snapshot \
+      --db-snapshot-identifier app-db-snapshot-old
+
+    # Para dev, deletar após uso
+    kubectl delete rdsinstance dev-database
+    ```
+  </Accordion>
+
+  <Accordion title="Backup falha ou toma muito tempo">
+    **Sintomas:** Backup status fica em `backing-up` por horas
+
+    **Causas:**
+    1. Banco muito grande
+    2. IO saturado durante backup
+    3. Muitas transações durante backup
+
+    **Soluções:**
+    ```bash
+    # Ver status de backup
+    aws rds describe-db-instances \
+      --db-instance-identifier app-db-prod \
+      --query 'DBInstances[0].LatestRestorableTime'
+
+    # Ver snapshots completados
+    aws rds describe-db-snapshots \
+      --db-instance-identifier app-db-prod
+
+    # Aumentar janela de backup
+    kubectl patch rdsinstance app-database \
+      --type merge \
+      -p '{"spec":{"preferredBackupWindow":"02:00-04:00"}}'
+
+    # Aumentar IOPS para performance durante backup
+    kubectl patch rdsinstance app-database \
+      --type merge \
+      -p '{"spec":{"iops":5000}}'
+
+    # Criar snapshot manual
+    aws rds create-db-snapshot \
+      --db-instance-identifier app-db-prod \
+      --db-snapshot-identifier manual-backup-$(date +%Y%m%d-%H%M%S)
+    ```
+  </Accordion>
+
+  <Accordion title="Multi-AZ failover lento ou falha">
+    **Sintomas:** Após falha, aplicação fica offline por 5+ minutos
+
+    **Causa:** Failover automático pode demorar, especível se Multi-AZ não bem configurado
+
+    **Soluções:**
+    ```bash
+    # Verificar Multi-AZ está habilitado
+    aws rds describe-db-instances \
+      --db-instance-identifier app-db-prod \
+      --query 'DBInstances[0].MultiAZ'
+
+    # Habilitar se não estiver
+    kubectl patch rdsinstance app-database \
+      --type merge \
+      -p '{"spec":{"multiAZ":true}}'
+
+    # Testar failover manualmente
+    # CUIDADO: Causa downtime!
+    aws rds reboot-db-instance \
+      --db-instance-identifier app-db-prod \
+      --force-failover
+
+    # Ver progresso de reboot
+    aws rds describe-db-instances \
+      --db-instance-identifier app-db-prod \
+      --query 'DBInstances[0].DBInstanceStatus'
+
+    # Implementar retry na aplicação
+    # Use connection pooling
+    # Configure application-level failover
+    ```
+  </Accordion>
+
+  <Accordion title="Read Replica não sincroniza ou fica atrasada">
+    **Sintomas:** Replica mostra dados defasados, não consegue conectar
+
+    **Causas:**
+    1. Replicação lag (atraso de rede)
+    2. Banco principal sob pressão de IO
+    3. Network problemas
+
+    **Soluções:**
+    ```bash
+    # Ver replica lag
+    aws rds describe-db-instances \
+      --db-instance-identifier myapp-db-read-replica \
+      --query 'DBInstances[0].StatusInfos'
+
+    # Aumentar class da replica se under-resourced
+    kubectl patch rdsinstance read-replica-db \
+      --type merge \
+      -p '{"spec":{"dbInstanceClass":"db.t3.small"}}'
+
+    # Aumentar IOPS na principal
+    kubectl patch rdsinstance primary-db \
+      --type merge \
+      -p '{"spec":{"iops":5000}}'
+
+    ```
+  </Accordion>
+
+  <Accordion title="Performance degradada (queries lentas)">
+    **Sintomas:** Queries normais ficam lentas, CPU/IO alta
+
+    **Causas:**
+    1. Missing indexes
+    2. Query plan subótimo
+    3. Falta de memória/CPU
+    4. Locks de transação
+
+    **Soluções:**
+    ```bash
+    # Habilitar Performance Insights
+    kubectl patch rdsinstance app-database \
+      --type merge \
+      -p '{"spec":{"enablePerformanceInsights":true}}'
+
+    # Usar AWS Performance Insights console para análise
+
+    # Aumentar memória/CPU se needed
+    kubectl patch rdsinstance app-database \
+      --type merge \
+      -p '{"spec":{"dbInstanceClass":"db.m5.large"}}'
+
+    # Conectar e analisar queries
+    psql -h <endpoint> -U postgres -d postgres
+
+    # Ver queries lentas (PostgreSQL)
+    SELECT query, calls, mean_exec_time, max_exec_time
+    FROM pg_stat_statements
+    ORDER BY mean_exec_time DESC
+    LIMIT 10;
+
+    # Ver índices faltando
+    SELECT schemaname, tablename
+    FROM pg_tables
+    WHERE schemaname NOT IN ('pg_catalog', 'information_schema')
+    ORDER BY schemaname, tablename;
+
+    # Criar índices apropriados
+    CREATE INDEX idx_users_email ON users(email);
+    CREATE INDEX idx_orders_date ON orders(created_at);
+    ```
+  </Accordion>
+
+  <Accordion title="Erro ao deletar banco (finalizer stuck)">
+    **Sintomas:** `kubectl delete rdsinstance` fica pendente indefinidamente
+
+    **Causa:** Finalizer não consegue deletar snapshot final ou banco
+
+    **Soluções:**
+    ```bash
+    # Ver detalhes
+    kubectl describe rdsinstance app-database
+
+    # Ver finalizers
+    kubectl get rdsinstance app-database -o yaml | grep finalizers
+
+    # Opção 1: Alterar deletionPolicy antes de deletar
+    kubectl patch rdsinstance app-database \
+      --type merge \
+      -p '{"spec":{"deletionPolicy":"Retain"}}'
+
+    # Depois deletar
+    kubectl delete rdsinstance app-database
+
+    # Opção 2: Deletar snapshot final manualmente
+    aws rds delete-db-snapshot \
+      --db-snapshot-identifier app-db-final-backup
+
+    # Depois forçar delete do CR
+    kubectl patch rdsinstance app-database \
+      -p '{"metadata":{"finalizers":[]}}' \
+      --type=merge
+
+    # Opção 3: Manter snapshot final, só remover CR
+    kubectl patch rdsinstance app-database \
+      --type merge \
+      -p '{"spec":{"skipFinalSnapshot":true}}'
+
+    kubectl delete rdsinstance app-database
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Melhores Práticas
+
+<CardGroup cols={2}>
+  <Card title="Multi-AZ em Produção" icon="network-wired">
+    - Habilitar Multi-AZ para HA automática
+    - Failover automático em minutos
+    - Custo ~50% maior, vale a pena para produção
+    - Sempre habilitar para dados críticos
+    - Testar failover regularmente
+  </Card>
+
+  <Card title="Criptografia Always On" icon="lock">
+    - Habilitar storage encryption (AES-256)
+    - Usar AWS KMS para chaves personalizadas
+    - SSL/TLS para conexões (automático)
+    - Criptografia de backup também
+    - Conformidade regulatória
+  </Card>
+
+  <Card title="Backups Automáticos" icon="database">
+    - Retenção 7-35 dias depende do criticidade
+    - Produção: mínimo 14 dias
+    - PITR (Point-in-Time Recovery) até 35 dias
+    - Testar restore regularmente
+    - Final snapshot ao deletar
+  </Card>
+
+  <Card title="Security Groups Restrito" icon="shield-halved">
+    - Apenas IPs/SGs necessários
+    - Nunca 0.0.0.0/0 (internet aberta)
+    - Segregar dev/staging/prod
+    - Auditoria de regras regularmente
+    - Usar security group como firewall
+  </Card>
+
+  <Card title="Subnets Privados" icon="lock-keyhole">
+    - RDS DEVE estar em subnet privada
+    - Nunca publicamente acessível em produção
+    - Use NAT gateway para outbound
+    - Bastion/jump host para acesso admin
+    - VPN para acesso remoto
+  </Card>
+
+  <Card title="Monitoramento Contínuo" icon="chart-line">
+    - Performance Insights para tuning
+    - Alertas para anomalias
+    - Dashboard para visibilidade
+    - Monitoramento de métricas de CPU, Storage, IOPS
+  </Card>
+
+  <Card title="Parameter Groups" icon="sliders">
+    - Customizar configurações por engine
+    - Shared buffers, work_mem para PostgreSQL
+    - max_connections para carga esperada
+    - Documentar razão de mudanças
+    - Testar em dev antes de produção
+  </Card>
+
+  <Card title="Tagging Consistente" icon="tags">
+    - Environment: dev/staging/prod
+    - Application ou projeto
+    - Cost center para alocação
+    - Owner ou team responsável
+    - Backup required: true/false
+  </Card>
+
+  <Card title="Scaling Planejado" icon="arrow-up-down">
+    - Começar com instância menor
+    - Monitorar crescimento
+    - Aumentar storage antes de ficar cheio
+    - Upgrade de classe quando needed
+    - Teste de capacity planning
+  </Card>
+
+  <Card title="Otimização de Custos" icon="dollar-sign">
+    - Usar t3/t4g para variável (mais barato)
+    - m5 para workloads previsíveis
+    - Deletar dev/staging após uso
+    - Backup retention apropriado
+    - Reserved instances para produção
+  </Card>
+
+  <Card title="Disaster Recovery" icon="rotate-ccw">
+    - Read replicas para DR regional
+    - Snapshots em outra região
+    - Test restore regularmente
+    - Dokumentar RTO/RPO
+    - Automação de failover
+  </Card>
+
+  <Card title="Compliance e Auditoria" icon="clipboard-check">
+    - CloudTrail para API calls
+    - CloudWatch Logs para queries (se necessário)
+    - Encryption obrigatório
+    - IAM database authentication
+    - Audit policies por compliance
+  </Card>
+
+  <Card title="Performance Tuning" icon="bolt">
+    - Performance Insights para gargalos
+    - Slow query logs para análise
+    - Index strategy apropriada
+    - Connection pooling na app
+    - Query optimization essencial
+  </Card>
+</CardGroup>
+
+## Casos de Uso
+
+### 1. Aplicação Web Transacional
+
+E-commerce ou SaaS com muitas transações pequenas:
+
+```yaml
+dbInstanceClass: db.t3.small
+allocatedStorage: 100
+multiAZ: true
+backupRetentionPeriod: 30
+# Índices em user_id, order_id, timestamps
+```
+
+### 2. E-commerce com Carrinhos e Pedidos
+
+Dados de alto volume com transações críticas:
+
+```yaml
+dbInstanceClass: db.m5.large
+allocatedStorage: 500
+storageType: io1
+iops: 10000
+multiAZ: true
+backupRetentionPeriod: 35
+# Read replica para analytics
+```
+
+### 3. CMS (WordPress, Drupal)
+
+Aplicações web com conteúdo dinâmico:
+
+```yaml
+engine: mysql  # ou mariadb
+dbInstanceClass: db.t3.small
+allocatedStorage: 50
+multiAZ: true
+enableCloudwatchLogsExports: [slowquery, error]
+```
+
+### 4. ERP/CRM com Alta Concorrência
+
+Múltiplos usuários acessando simultaneamente:
+
+```yaml
+dbInstanceClass: db.m5.2xlarge
+allocatedStorage: 1000
+storageType: io2
+iops: 64000
+multiAZ: true
+backupRetentionPeriod: 35
+enableEnhancedMonitoring: true
+```
+
+## Recursos Relacionados
+
+<CardGroup cols={2}>
+  <Card
+    title="VPC e Subnets"
+    icon="network-wired"
+    href="/services/networking/vpc"
+  >
+    Rede privada para banco de dados
+  </Card>
+
+  <Card
+    title="Security Groups"
+    icon="shield-halved"
+    href="/services/networking/security-group"
+  >
+    Controle de acesso de rede
+  </Card>
+
+  <Card
+    title="Secrets Manager"
+    icon="lock"
+    href="/services/security/secrets-manager"
+  >
+    Gerenciamento seguro de credenciais
+  </Card>
+
+  <Card
+    title="Lambda"
+    icon="bolt"
+    href="/services/compute/lambda"
+  >
+    Executar queries com Lambda
+  </Card>
+
+  <Card
+    title="DynamoDB"
+    icon="database"
+    href="/services/database/dynamodb"
+  >
+    Alternativa NoSQL para determinados casos
+  </Card>
+</CardGroup>
+
+---

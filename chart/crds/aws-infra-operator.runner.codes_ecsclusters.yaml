@@ -1,0 +1,223 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: ecsclusters.aws-infra-operator.runner.codes
+spec:
+  group: aws-infra-operator.runner.codes
+  names:
+    kind: ECSCluster
+    listKind: ECSClusterList
+    plural: ecsclusters
+    shortNames:
+    - ecscluster
+    - ecsclusters
+    singular: ecscluster
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.clusterName
+      name: Cluster Name
+      type: string
+    - jsonPath: .status.status
+      name: Status
+      type: string
+    - jsonPath: .status.ready
+      name: Ready
+      type: boolean
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: ECSCluster is the Schema for the ecsclusters API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: ECSClusterSpec defines the desired state of ECSCluster
+            properties:
+              capacityProviders:
+                description: CapacityProviders is a list of capacity providers to
+                  associate with the cluster
+                items:
+                  type: string
+                type: array
+              clusterName:
+                description: ClusterName is the name of the ECS cluster
+                maxLength: 255
+                minLength: 1
+                type: string
+              configuration:
+                description: Configuration for execute command functionality
+                properties:
+                  executeCommandConfiguration:
+                    description: ExecuteCommandConfiguration for the cluster
+                    properties:
+                      kmsKeyId:
+                        description: KmsKeyID for encryption
+                        type: string
+                      logConfiguration:
+                        description: LogConfiguration for CloudWatch Logs or S3
+                        properties:
+                          cloudWatchEncryptionEnabled:
+                            description: CloudWatchEncryptionEnabled enables encryption
+                            type: boolean
+                          cloudWatchLogGroupName:
+                            description: CloudWatchLogGroupName for CloudWatch Logs
+                            type: string
+                          s3BucketName:
+                            description: S3BucketName for S3 logs
+                            type: string
+                          s3EncryptionEnabled:
+                            description: S3EncryptionEnabled enables S3 encryption
+                            type: boolean
+                          s3KeyPrefix:
+                            description: S3KeyPrefix for S3 logs
+                            type: string
+                        type: object
+                      logging:
+                        description: Logging configuration
+                        type: string
+                    type: object
+                type: object
+              defaultCapacityProviderStrategy:
+                description: DefaultCapacityProviderStrategy defines the default capacity
+                  provider strategy for the cluster
+                items:
+                  description: CapacityProviderStrategyItem represents a capacity
+                    provider strategy
+                  properties:
+                    base:
+                      description: Base is the number of tasks to use this capacity
+                        provider for
+                      format: int32
+                      type: integer
+                    capacityProvider:
+                      description: CapacityProvider is the name of the capacity provider
+                      type: string
+                    weight:
+                      description: Weight is the relative percentage of the total
+                        number of tasks
+                      format: int32
+                      type: integer
+                  required:
+                  - capacityProvider
+                  type: object
+                type: array
+              deletionPolicy:
+                default: Delete
+                description: |-
+                  DeletionPolicy determines what happens to the cluster when the CR is deleted
+                  Valid values: Delete, Retain
+                enum:
+                - Delete
+                - Retain
+                type: string
+              providerRef:
+                description: ProviderRef references the AWSProvider for authentication
+                properties:
+                  name:
+                    description: Name of the AWSProvider
+                    type: string
+                  namespace:
+                    description: Namespace of the AWSProvider (if different from current
+                      namespace)
+                    type: string
+                required:
+                - name
+                type: object
+              serviceConnectDefaults:
+                description: ServiceConnectDefaults for the cluster
+                properties:
+                  namespace:
+                    description: Namespace for service connect
+                    type: string
+                required:
+                - namespace
+                type: object
+              settings:
+                description: Settings are the cluster settings (e.g., containerInsights)
+                items:
+                  description: ClusterSetting represents a cluster setting
+                  properties:
+                    name:
+                      description: |-
+                        Name of the cluster setting
+                        Valid values: containerInsights
+                      type: string
+                    value:
+                      description: Value of the cluster setting
+                      type: string
+                  required:
+                  - name
+                  - value
+                  type: object
+                type: array
+              tags:
+                additionalProperties:
+                  type: string
+                description: Tags to apply to the cluster
+                type: object
+            required:
+            - clusterName
+            - providerRef
+            type: object
+          status:
+            description: ECSClusterStatus defines the observed state of ECSCluster
+            properties:
+              activeServicesCount:
+                description: ActiveServicesCount is the number of active services
+                format: int32
+                type: integer
+              clusterARN:
+                description: ClusterARN is the ARN of the ECS cluster
+                type: string
+              lastSyncTime:
+                description: LastSyncTime is the last time the cluster was synced
+                format: date-time
+                type: string
+              pendingTasksCount:
+                description: PendingTasksCount is the number of pending tasks
+                format: int32
+                type: integer
+              ready:
+                description: Ready indicates if the cluster is active
+                type: boolean
+              registeredContainerInstancesCount:
+                description: RegisteredContainerInstancesCount is the number of registered
+                  container instances
+                format: int32
+                type: integer
+              runningTasksCount:
+                description: RunningTasksCount is the number of running tasks
+                format: int32
+                type: integer
+              status:
+                description: Status is the status of the cluster (ACTIVE, PROVISIONING,
+                  DEPROVISIONING, FAILED, INACTIVE)
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

@@ -1,0 +1,217 @@
+version: '3'
+
+vars:
+  DOCS_DIR: "{{.TASKFILE_DIR}}"
+  LOG_FILE: /tmp/mintlify.log
+
+tasks:
+  # Development Tasks
+  dev:
+    desc: "Start Mintlify dev server with live reload"
+    dir: "{{.DOCS_DIR}}"
+    cmds:
+      - mintlify dev 2>&1 | tee {{.LOG_FILE}}
+
+  dev:background:
+    desc: "Start Mintlify dev server in background"
+    dir: "{{.DOCS_DIR}}"
+    cmds:
+      - |
+        pkill -f "mintlify dev" 2>/dev/null || true
+        sleep 2
+        nohup mintlify dev > {{.LOG_FILE}} 2>&1 &
+        echo "Mintlify dev server started in background"
+        echo "Logs: tail -f {{.LOG_FILE}}"
+        sleep 3
+        echo "Server should be running at http://localhost:3000"
+
+  dev:stop:
+    desc: "Stop Mintlify dev server"
+    cmds:
+      - pkill -f "mintlify dev" 2>/dev/null || true
+      - echo "Mintlify dev server stopped"
+
+  dev:logs:
+    desc: "Show Mintlify dev server logs"
+    cmds:
+      - tail -f {{.LOG_FILE}}
+
+  dev:restart:
+    desc: "Restart Mintlify dev server"
+    cmds:
+      - task: dev:stop
+      - task: dev:background
+
+  # Validation Tasks
+  check:
+    desc: "Run all validation checks"
+    cmds:
+      - task: check:links
+      - task: check:a11y
+
+  check:links:
+    desc: "Check for broken internal links"
+    dir: "{{.DOCS_DIR}}"
+    cmds:
+      - mintlify broken-links 2>&1 | tee /tmp/broken-links.txt
+
+  check:a11y:
+    desc: "Check for accessibility issues"
+    dir: "{{.DOCS_DIR}}"
+    cmds:
+      - mintlify a11y 2>&1 | tee /tmp/a11y-check.txt
+
+  # Content Management
+  search:
+    desc: "Search for text in documentation files"
+    dir: "{{.DOCS_DIR}}"
+    cmds:
+      - |
+        if [ -z "{{.CLI_ARGS}}" ]; then
+          echo "Usage: task search -- <search-term>"
+          exit 1
+        fi
+        grep -r "{{.CLI_ARGS}}" --include="*.mdx" --include="*.md" .
+
+  search:replace:
+    desc: "Search and replace text in documentation (dry-run first)"
+    dir: "{{.DOCS_DIR}}"
+    cmds:
+      - |
+        if [ -z "{{.OLD}}" ] || [ -z "{{.NEW}}" ]; then
+          echo "Usage: task search:replace OLD=<old-text> NEW=<new-text>"
+          exit 1
+        fi
+        echo "This will replace '{{.OLD}}' with '{{.NEW}}' in all .mdx files"
+        echo "Files that will be changed:"
+        grep -rl "{{.OLD}}" --include="*.mdx" .
+        echo ""
+        read -p "Continue? (y/n) " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+          find . -name "*.mdx" -type f -exec sed -i '' 's/{{.OLD}}/{{.NEW}}/g' {} \;
+          echo "Replacement complete!"
+        else
+          echo "Cancelled"
+        fi
+
+  # Statistics and Analysis
+  stats:
+    desc: "Show documentation statistics"
+    dir: "{{.DOCS_DIR}}"
+    cmds:
+      - |
+        echo "📊 Documentation Statistics"
+        echo "=========================="
+        echo "Total MDX files: $(find . -name "*.mdx" | wc -l | tr -d ' ')"
+        echo "Total MD files: $(find . -name "*.md" | wc -l | tr -d ' ')"
+        echo "Total lines: $(find . -name "*.mdx" -o -name "*.md" | xargs wc -l | tail -1 | awk '{print $1}')"
+        echo ""
+        echo "📁 Files by Category:"
+        echo "  Networking: $(find services/networking -name "*.mdx" 2>/dev/null | wc -l | tr -d ' ')"
+        echo "  Compute: $(find services/compute -name "*.mdx" 2>/dev/null | wc -l | tr -d ' ')"
+        echo "  Database: $(find services/database -name "*.mdx" 2>/dev/null | wc -l | tr -d ' ')"
+        echo "  Storage: $(find services/storage -name "*.mdx" 2>/dev/null | wc -l | tr -d ' ')"
+        echo "  Security: $(find services/security -name "*.mdx" 2>/dev/null | wc -l | tr -d ' ')"
+        echo "  Messaging: $(find services/messaging -name "*.mdx" 2>/dev/null | wc -l | tr -d ' ')"
+        echo "  Container: $(find services/container -name "*.mdx" 2>/dev/null | wc -l | tr -d ' ')"
+        echo "  Caching: $(find services/caching -name "*.mdx" 2>/dev/null | wc -l | tr -d ' ')"
+
+  # Maintenance Tasks
+  clean:
+    desc: "Clean temporary files and caches"
+    cmds:
+      - rm -f {{.LOG_FILE}}
+      - rm -f /tmp/broken-links.txt
+      - rm -f /tmp/a11y-check.txt
+      - rm -rf .mintlify
+      - echo "Cleaned temporary files"
+
+  format:
+    desc: "Format markdown files (using prettier if available)"
+    dir: "{{.DOCS_DIR}}"
+    cmds:
+      - |
+        if command -v prettier &> /dev/null; then
+          prettier --write "**/*.{md,mdx}"
+        else
+          echo "Prettier not installed. Install with: npm install -g prettier"
+        fi
+
+  # Update and Version Management
+  update:
+    desc: "Update Mintlify CLI to latest version"
+    cmds:
+      - mintlify update
+      - mintlify version
+
+  version:
+    desc: "Show Mintlify CLI version"
+    cmds:
+      - mintlify version
+
+  # Preview and Testing
+  preview:
+    desc: "Open documentation in browser"
+    cmds:
+      - open http://localhost:3000 || xdg-open http://localhost:3000 || echo "Please open http://localhost:3000 manually"
+
+  # Deployment Helpers (if using Mintlify hosting)
+  deploy:check:
+    desc: "Pre-deployment checks"
+    cmds:
+      - task: check:links
+      - task: check:a11y
+      - echo "✅ All checks passed! Ready for deployment"
+
+  # Documentation Generation
+  toc:
+    desc: "Generate table of contents for all services"
+    dir: "{{.DOCS_DIR}}"
+    cmds:
+      - |
+        echo "# Documentation Index" > INDEX.md
+        echo "" >> INDEX.md
+        echo "## Services" >> INDEX.md
+        find services -name "*.mdx" | sort | while read -r file; do
+          title=$(grep "^title:" "$file" | head -1 | cut -d"'" -f2)
+          path=$(echo "$file" | sed 's/.mdx$//')
+          echo "- [$title](/$path)" >> INDEX.md
+        done
+        echo "Generated INDEX.md"
+
+  # Helper Tasks
+  help:
+    desc: "Show available tasks with descriptions"
+    cmds:
+      - task --list
+
+  open:
+    desc: "Open documentation directory in editor"
+    cmds:
+      - code {{.DOCS_DIR}} || echo "VSCode not found. Opening in default editor..."
+
+  # Diagnostic Tasks
+  diagnose:
+    desc: "Run diagnostics on documentation setup"
+    dir: "{{.DOCS_DIR}}"
+    cmds:
+      - |
+        echo "🔍 Mintlify Documentation Diagnostics"
+        echo "===================================="
+        echo ""
+        echo "📁 Working Directory: {{.DOCS_DIR}}"
+        echo "📝 Config File: $([ -f mint.json ] && echo '✅ mint.json exists' || echo '❌ mint.json not found')"
+        echo "🔧 Mintlify CLI: $(mintlify version 2>/dev/null || echo '❌ Not installed')"
+        echo ""
+        echo "📊 File Structure:"
+        tree -L 2 -I 'node_modules|.git' || ls -la
+        echo ""
+        echo "🔗 Broken Links: $(mintlify broken-links 2>&1 | grep -c 'broken links' || echo '0')"
+        echo ""
+        echo "🌐 Dev Server Status:"
+        if pgrep -f "mintlify dev" > /dev/null; then
+          echo "  ✅ Running on http://localhost:3000"
+        else
+          echo "  ❌ Not running (use 'task dev' to start)"
+        fi

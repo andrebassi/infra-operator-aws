@@ -1,0 +1,12 @@
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Certificate
+metadata:
+  name: test-cert
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  domainName: example.com
+  subjectAlternativeNames:
+    - "*.example.com"
+  validationMethod: DNS

@@ -1,0 +1,29 @@
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: CloudFront
+metadata:
+  name: test-cdn
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  comment: "Helm test CloudFront"
+  enabled: true
+  origins:
+    - id: test-origin
+      domainName: example.com
+      customOriginConfig:
+        httpPort: 80
+        httpsPort: 443
+        originProtocolPolicy: http-only
+  defaultCacheBehavior:
+    targetOriginId: test-origin
+    viewerProtocolPolicy: allow-all
+    allowedMethods:
+      - GET
+      - HEAD
+    cachedMethods:
+      - GET
+      - HEAD
+    minTTL: 0
+    maxTTL: 86400
+    defaultTTL: 3600

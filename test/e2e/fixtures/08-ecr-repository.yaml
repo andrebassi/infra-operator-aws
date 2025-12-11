@@ -1,0 +1,202 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: ecrrepositories.aws-infra-operator.runner.codes
+spec:
+  group: aws-infra-operator.runner.codes
+  names:
+    kind: ECRRepository
+    listKind: ECRRepositoryList
+    plural: ecrrepositories
+    singular: ecrrepository
+    shortNames:
+    - ecr
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            required:
+            - providerRef
+            - repositoryName
+            properties:
+              providerRef:
+                type: object
+                required:
+                - name
+                properties:
+                  name:
+                    type: string
+                    description: Name of the AWSProvider resource
+                  namespace:
+                    type: string
+                    description: Namespace of the AWSProvider resource (defaults to same namespace)
+              repositoryName:
+                type: string
+                description: Name of the ECR repository
+                pattern: '^[a-z0-9]+(?:[._-][a-z0-9]+)*$'
+                minLength: 2
+                maxLength: 256
+              imageTagMutability:
+                type: string
+                description: Image tag mutability setting (MUTABLE or IMMUTABLE)
+                enum:
+                - MUTABLE
+                - IMMUTABLE
+                default: MUTABLE
+              scanOnPush:
+                type: boolean
+                description: Enable image scanning on push
+                default: false
+              encryptionConfiguration:
+                type: object
+                properties:
+                  encryptionType:
+                    type: string
+                    description: Encryption type (AES256 or KMS)
+                    enum:
+                    - AES256
+                    - KMS
+                    default: AES256
+                  kmsKey:
+                    type: string
+                    description: KMS key ARN (required if encryptionType is KMS)
+              lifecyclePolicy:
+                type: object
+                properties:
+                  policyText:
+                    type: string
+                    description: JSON lifecycle policy document
+              tags:
+                type: object
+                additionalProperties:
+                  type: string
+                description: Tags to apply to the ECR repository
+              deletionPolicy:
+                type: string
+                description: What to do with the ECR repository when CR is deleted
+                enum:
+                - Delete
+                - Retain
+                - Orphan
+                default: Delete
+          status:
+            type: object
+            properties:
+              ready:
+                type: boolean
+                description: Whether the ECR repository is ready
+              repositoryArn:
+                type: string
+                description: ARN of the ECR repository
+              repositoryUri:
+                type: string
+                description: URI of the ECR repository
+              registryId:
+                type: string
+                description: Registry ID where the repository exists
+              imageCount:
+                type: integer
+                description: Number of images in the repository
+              createdAt:
+                type: string
+                format: date-time
+                description: When the repository was created
+              lastSyncTime:
+                type: string
+                format: date-time
+                description: Last time the repository was synced
+              message:
+                type: string
+                description: Status message
+    subresources:
+      status: {}
+    additionalPrinterColumns:
+    - name: Repository
+      type: string
+      jsonPath: .spec.repositoryName
+    - name: URI
+      type: string
+      jsonPath: .status.repositoryUri
+    - name: Images
+      type: integer
+      jsonPath: .status.imageCount
+    - name: Mutability
+      type: string
+      jsonPath: .spec.imageTagMutability
+    - name: Scan
+      type: boolean
+      jsonPath: .spec.scanOnPush
+    - name: Ready
+      type: boolean
+      jsonPath: .status.ready
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp
+
+---
+# Test ECR Repository 1: Simple repository with defaults
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: ECRRepository
+metadata:
+  name: e2e-app-images
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  repositoryName: e2e-app-images
+  imageTagMutability: MUTABLE
+  scanOnPush: true
+  encryptionConfiguration:
+    encryptionType: AES256
+  tags:
+    environment: test
+    managed-by: infra-operator
+    purpose: e2e-testing
+  deletionPolicy: Delete
+
+---
+# Test ECR Repository 2: Repository with lifecycle policy and immutable tags
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: ECRRepository
+metadata:
+  name: e2e-production-images
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  repositoryName: e2e-production-images
+  imageTagMutability: IMMUTABLE
+  scanOnPush: true
+  encryptionConfiguration:
+    encryptionType: AES256
+  lifecyclePolicy:
+    policyText: |
+      {
+        "rules": [
+          {
+            "rulePriority": 1,
+            "description": "Keep last 10 images",
+            "selection": {
+              "tagStatus": "any",
+              "countType": "imageCountMoreThan",
+              "countNumber": 10
+            },
+            "action": {
+              "type": "expire"
+            }
+          }
+        ]
+      }
+  tags:
+    environment: production
+    managed-by: infra-operator
+    purpose: e2e-testing
+  deletionPolicy: Delete

@@ -1,0 +1,532 @@
+---
+title: 'CLI Mode'
+description: 'Use o Infra Operator sem Kubernetes - gestao de infraestrutura AWS via linha de comando'
+---
+
+## Visao Geral
+
+O modo CLI permite usar o Infra Operator para criar, gerenciar e deletar recursos AWS **sem depender de um cluster Kubernetes**. Ideal para:
+
+- Desenvolvimento local
+- Testes com LocalStack
+- Scripts de automacao
+- Ambientes sem Kubernetes disponivel
+- Prototipagem rapida de infraestrutura
+
+O estado dos recursos e armazenado localmente em arquivos JSON no diretorio `~/.infra-operator/state/`.
+
+## Instalacao
+
+### Compilar do Fonte
+
+```bash
+# Clone o repositorio
+git clone https://github.com/andrebassi/infra-operator-aws.git
+cd infra-operator-aws
+
+# Compile o binario
+CGO_ENABLED=0 go build -o infra-operator cmd/main.go
+
+# Opcional: mova para PATH
+sudo mv infra-operator /usr/local/bin/
+```
+
+### Download do Release (em breve)
+
+```bash
+# Linux/macOS
+curl -LO https://github.com/andrebassi/infra-operator-aws/releases/latest/download/infra-operator-$(uname -s)-$(uname -m)
+chmod +x infra-operator-*
+sudo mv infra-operator-* /usr/local/bin/infra-operator
+```
+
+## Configuracao AWS
+
+O CLI usa a cadeia de credenciais padrao do AWS SDK:
+
+### Opcao 1: Variaveis de Ambiente
+
+```bash
+export AWS_ACCESS_KEY_ID="sua-access-key"
+export AWS_SECRET_ACCESS_KEY="sua-secret-key"
+export AWS_REGION="us-east-1"
+
+# Opcional: para LocalStack
+export AWS_ENDPOINT_URL="http://localhost:4566"
+```
+
+### Opcao 2: AWS Profile
+
+```bash
+# ~/.aws/credentials
+[meu-perfil]
+aws_access_key_id = AKIAXXXXXXXXXXXXXXXX
+aws_secret_access_key = xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+# ~/.aws/config
+[profile meu-perfil]
+region = us-east-1
+
+# Usar o perfil
+export AWS_PROFILE=meu-perfil
+```
+
+### Opcao 3: IAM Role (EC2/ECS/Lambda)
+
+Em ambientes AWS, o CLI usa automaticamente a IAM Role associada a instancia/task/funcao.
+
+### Opcao 4: AWSProvider no Manifesto
+
+```yaml
+---
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: AWSProvider
+metadata:
+  name: localstack
+spec:
+  region: us-east-1
+  endpoint: http://localhost:4566  # Para LocalStack
+```
+
+## Comandos
+
+### help - Ajuda
+
+```bash
+infra-operator help
+```
+
+**Saida:**
+```
+Infra Operator AWS - Modo CLI
+
+Uso:
+  infra-operator apply  -f <arquivo.yaml>  [flags]    Aplica recursos do YAML
+  infra-operator plan   -f <arquivo.yaml>  [flags]    Mostra plano de execucao
+  infra-operator delete -f <arquivo.yaml>  [flags]    Deleta recursos
+  infra-operator get    [kind]                        Lista recursos no estado
+
+Flags:
+  -f, --file string        Caminho para arquivo de manifesto YAML (pode ser repetido)
+  --region string          Regiao AWS (padrao: us-east-1 ou env AWS_REGION)
+  --endpoint string        URL do endpoint AWS (para LocalStack)
+  --state-dir string       Diretorio de estado (padrao: ~/.infra-operator/state)
+  --dry-run                Mostra o que seria feito sem fazer mudancas
+  -v, --verbose            Saida detalhada
+```
+
+### plan - Plano de Execucao
+
+Mostra o que sera criado/atualizado/deletado sem fazer mudancas:
+
+```bash
+infra-operator plan -f manifesto.yaml
+```
+
+**Saida:**
+```
+=== Plano de Execucao ===
+
+  + ComputeStack/dev-network (CRIAR)
+  + ComputeStack/staging-network (CRIAR)
+  ~ VPC/my-vpc (ATUALIZAR)
+  = Subnet/public-1 (SEM MUDANCA)
+
+Plano: 2 para criar, 1 para atualizar, 1 sem mudanca
+```
+
+### apply - Aplicar Recursos
+
+Cria ou atualiza recursos AWS conforme o manifesto:
+
+```bash
+infra-operator apply -f manifesto.yaml
+```
+
+**Saida:**
+```
+=== Aplicando recursos de 1 arquivo(s) ===
+
+  Criando VPC...
+    VPC: vpc-0f749cc7f23b5ba5b
+  Criando Internet Gateway...
+    IGW: igw-0f05ef98fc069682b
+  Criando Subnet Publica...
+    Subnet: subnet-039966749cb323b64
+  Criando Route Table...
+    Route Table: rtb-0bc8f81a94445bee6
+  Criando Security Group...
+    Security Group: sg-05fcf88aeea9a2dcc
+  Criando Instancia Bastion...
+    Instance: i-01fc8bc746072f649
+  Criado ComputeStack/dev-network
+    vpcId: vpc-0f749cc7f23b5ba5b
+    internetGatewayId: igw-0f05ef98fc069682b
+    publicSubnetId: subnet-039966749cb323b64
+```
+
+### get - Listar Recursos
+
+Lista recursos gerenciados pelo CLI:
+
+```bash
+# Listar todos os recursos
+infra-operator get
+
+# Listar por tipo
+infra-operator get ComputeStack
+infra-operator get VPC
+infra-operator get EC2Instance
+```
+
+**Saida:**
+```
+KIND                 NAME                           AWS ID                                   STATUS
+----------------------------------------------------------------------------------------------------
+ComputeStack         dev-network                    vpc-0f749cc7f23b5ba5b                    Ready
+ComputeStack         staging-network                vpc-0a123bc4d56e78901                    Ready
+```
+
+### delete - Deletar Recursos
+
+Remove recursos AWS e limpa o estado local:
+
+```bash
+infra-operator delete -f manifesto.yaml
+```
+
+**Saida:**
+```
+=== Deletando recursos de 1 arquivo(s) ===
+
+  Terminando instancia bastion i-01fc8bc746072f649...
+  Deletando security group sg-05fcf88aeea9a2dcc...
+  Deletando route table rtb-0bc8f81a94445bee6...
+  Deletando subnet subnet-039966749cb323b64...
+  Desanexando IGW igw-0f05ef98fc069682b...
+  Deletando IGW igw-0f05ef98fc069682b...
+  Deletando VPC vpc-0f749cc7f23b5ba5b...
+  Deletado ComputeStack/dev-network
+```
+
+## Exemplos Praticos
+
+### Exemplo 1: Criar VPC Completa com Bastion
+
+**Arquivo: `bastion-stack.yaml`**
+
+```yaml
+---
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: AWSProvider
+metadata:
+  name: aws-prod
+spec:
+  region: us-east-1
+---
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: ComputeStack
+metadata:
+  name: bastion-stack
+spec:
+  vpcCIDR: "10.0.0.0/16"
+  providerRef:
+    name: aws-prod
+  bastionInstance:
+    enabled: true
+    instanceType: t3.micro
+    publicIP: true
+    userData: |
+      #!/bin/bash
+      yum update -y
+      yum install -y htop vim
+```
+
+**Executar:**
+
+```bash
+# Ver plano
+infra-operator plan -f bastion-stack.yaml
+
+# Aplicar
+infra-operator apply -f bastion-stack.yaml
+
+# Verificar
+infra-operator get ComputeStack
+```
+
+### Exemplo 2: Multiplos Ambientes no Mesmo Arquivo
+
+**Arquivo: `multi-env.yaml`**
+
+```yaml
+---
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: AWSProvider
+metadata:
+  name: aws-default
+spec:
+  region: us-east-1
+---
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: ComputeStack
+metadata:
+  name: dev-network
+spec:
+  vpcCIDR: "10.10.0.0/16"
+  providerRef:
+    name: aws-default
+  bastionInstance:
+    enabled: true
+    instanceType: t3.micro
+---
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: ComputeStack
+metadata:
+  name: staging-network
+spec:
+  vpcCIDR: "10.20.0.0/16"
+  providerRef:
+    name: aws-default
+  bastionInstance:
+    enabled: true
+    instanceType: t3.small
+---
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: ComputeStack
+metadata:
+  name: prod-network
+spec:
+  vpcCIDR: "10.30.0.0/16"
+  providerRef:
+    name: aws-default
+  bastionInstance:
+    enabled: true
+    instanceType: t3.medium
+```
+
+### Exemplo 3: Usar com LocalStack
+
+**Iniciar LocalStack:**
+
+```bash
+docker run -d \
+  --name localstack \
+  -p 4566:4566 \
+  -e SERVICES=ec2,vpc,iam,sts \
+  localstack/localstack
+```
+
+**Arquivo: `localstack-test.yaml`**
+
+```yaml
+---
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: AWSProvider
+metadata:
+  name: localstack
+spec:
+  region: us-east-1
+  endpoint: http://localhost:4566
+---
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: ComputeStack
+metadata:
+  name: local-test
+spec:
+  vpcCIDR: "10.100.0.0/16"
+  providerRef:
+    name: localstack
+  bastionInstance:
+    enabled: true
+    instanceType: t3.micro
+```
+
+**Executar:**
+
+```bash
+# Configurar credenciais fake para LocalStack
+export AWS_ACCESS_KEY_ID=test
+export AWS_SECRET_ACCESS_KEY=test
+
+# Aplicar
+infra-operator apply -f localstack-test.yaml --endpoint http://localhost:4566
+
+# Verificar
+infra-operator get
+```
+
+### Exemplo 4: CloudInit com Scripts Complexos
+
+```yaml
+---
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: ComputeStack
+metadata:
+  name: cloudinit-docker
+spec:
+  vpcCIDR: "10.50.0.0/16"
+  providerRef:
+    name: aws-prod
+  bastionInstance:
+    enabled: true
+    instanceType: t3.medium
+    publicIP: true
+    userData: |
+      #!/bin/bash
+      set -e
+
+      # Update system
+      yum update -y
+
+      # Install Docker
+      amazon-linux-extras install docker -y
+      systemctl start docker
+      systemctl enable docker
+      usermod -aG docker ec2-user
+
+      # Install Docker Compose
+      curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+      chmod +x /usr/local/bin/docker-compose
+
+      # Create marker file
+      echo "Setup complete: $(date)" > /home/ec2-user/setup-complete.txt
+```
+
+## Flags Globais
+
+| Flag | Descricao | Exemplo |
+|------|-----------|---------|
+| `-f, --file` | Arquivo YAML (pode repetir) | `-f vpc.yaml -f ec2.yaml` |
+| `--region` | Regiao AWS | `--region us-west-2` |
+| `--endpoint` | Endpoint AWS customizado | `--endpoint http://localhost:4566` |
+| `--state-dir` | Diretorio de estado | `--state-dir /opt/infra/state` |
+| `--dry-run` | Modo simulacao | `--dry-run` |
+| `-v, --verbose` | Saida detalhada | `-v` |
+
+## Estrutura do Estado
+
+O CLI armazena estado em `~/.infra-operator/state/`:
+
+```
+~/.infra-operator/
+└── state/
+    ├── ComputeStack/
+    │   └── default/
+    │       ├── dev-network.json
+    │       └── staging-network.json
+    ├── VPC/
+    │   └── default/
+    │       └── my-vpc.json
+    └── EC2Instance/
+        └── default/
+            └── bastion.json
+```
+
+**Formato do arquivo de estado:**
+
+```json
+{
+  "apiVersion": "aws-infra-operator.runner.codes/v1alpha1",
+  "kind": "ComputeStack",
+  "name": "dev-network",
+  "spec": {
+    "vpcCIDR": "10.10.0.0/16",
+    "providerRef": { "name": "aws-prod" },
+    "bastionInstance": { "enabled": true, "instanceType": "t3.micro" }
+  },
+  "status": {
+    "phase": "Ready",
+    "ready": true,
+    "vpc": { "id": "vpc-0f749cc7f23b5ba5b", "state": "available" }
+  },
+  "awsResources": {
+    "vpcId": "vpc-0f749cc7f23b5ba5b",
+    "internetGatewayId": "igw-0f05ef98fc069682b",
+    "publicSubnetId": "subnet-039966749cb323b64",
+    "routeTableId": "rtb-0bc8f81a94445bee6",
+    "bastionSecurityGroupId": "sg-05fcf88aeea9a2dcc",
+    "bastionInstanceId": "i-01fc8bc746072f649"
+  },
+  "createdAt": "2025-11-26T12:06:01.995731-03:00",
+  "updatedAt": "2025-11-26T12:06:01.995731-03:00"
+}
+```
+
+## Ordem de Recursos
+
+O CLI aplica recursos respeitando dependencias:
+
+1. AWSProvider
+2. VPC
+3. InternetGateway
+4. Subnet
+5. ElasticIP
+6. NATGateway
+7. RouteTable
+8. SecurityGroup
+9. IAMRole
+10. KMSKey
+11. SecretsManagerSecret
+12. S3Bucket
+13. ECRRepository
+14. RDSInstance
+15. DynamoDBTable
+16. ElastiCacheCluster
+17. SQSQueue
+18. SNSTopic
+19. LambdaFunction
+20. EC2Instance, EC2KeyPair
+21. ALB, NLB
+22. EKSCluster, ECSCluster
+23. APIGateway
+24. Certificate
+25. CloudFront
+26. Route53HostedZone
+27. Route53RecordSet
+28. ComputeStack (alta nivel)
+
+## Troubleshooting
+
+### Erro: "no valid credentials found"
+
+```bash
+# Verifique as credenciais
+aws sts get-caller-identity
+
+# Ou exporte explicitamente
+export AWS_ACCESS_KEY_ID="..."
+export AWS_SECRET_ACCESS_KEY="..."
+```
+
+### Erro: "resource not found in state"
+
+O recurso pode ter sido deletado manualmente na AWS. Use `--verbose` para ver detalhes:
+
+```bash
+infra-operator delete -f manifesto.yaml -v
+```
+
+### Erro: "nenhum recurso encontrado nos arquivos"
+
+Verifique se o YAML esta correto e contem `apiVersion` e `kind`:
+
+```bash
+cat manifesto.yaml | head -20
+```
+
+### Limpar Estado Local
+
+```bash
+# Remover estado de um tipo
+rm -rf ~/.infra-operator/state/ComputeStack/
+
+# Remover todo o estado
+rm -rf ~/.infra-operator/state/
+```
+
+## Proximos Passos
+
+- [ComputeStack](/services/compute/ec2#computestack) - Recurso de alto nivel para infraestrutura completa
+- [Drift Detection](/features/drift-detection) - Deteccao de mudancas manuais
+- [Prometheus Metrics](/features/prometheus-metrics) - Monitoramento da infraestrutura

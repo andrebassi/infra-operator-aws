@@ -1,0 +1,2627 @@
+---
+title: 'EC2 Instance - Máquinas Virtuais'
+description: 'Crie e gerencie instâncias EC2 (máquinas virtuais escaláveis) através de recursos Kubernetes'
+icon: 'server'
+---
+
+Crie e gerencie instâncias EC2 (máquinas virtuais) na AWS de forma declarativa usando recursos Kubernetes. Execute qualquer carga de trabalho que requer máquinas virtuais completas com controle total do sistema operacional.
+
+## Pré-requisito: Configuração do AWSProvider
+
+Antes de criar qualquer recurso AWS, você precisa configurar um **AWSProvider** que gerencia as credenciais e autenticação com a AWS.
+
+<CodeGroup>
+```yaml IRSA
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: AWSProvider
+metadata:
+  name: production-aws
+  namespace: default
+spec:
+  region: us-east-1
+  roleARN: arn:aws:iam::123456789012:role/infra-operator-role
+  defaultTags:
+    managed-by: infra-operator
+    environment: production
+```
+
+```yaml Credenciais Estáticas
+apiVersion: v1
+kind: Secret
+metadata:
+  name: aws-credentials
+  namespace: default
+type: Opaque
+stringData:
+  access-key-id: test
+  secret-access-key: test
+---
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: AWSProvider
+metadata:
+  name: localstack
+  namespace: default
+spec:
+  region: us-east-1
+  accessKeyIDRef:
+    name: aws-credentials
+    key: access-key-id
+  secretAccessKeyRef:
+    name: aws-credentials
+    key: secret-access-key
+  defaultTags:
+    managed-by: infra-operator
+    environment: test
+```
+
+```bash Verificar Status
+kubectl get awsprovider
+kubectl describe awsprovider production-aws
+```
+</CodeGroup>
+
+<Warning>
+  Para produção, sempre use **IRSA** (IAM Roles for Service Accounts) ao invés de credenciais estáticas.
+</Warning>
+
+### Criar IAM Role para IRSA
+
+Para usar IRSA em produção, você precisa criar uma IAM Role com as permissões necessárias:
+
+<CodeGroup>
+```json Trust Policy (trust-policy.json)
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::123456789012:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B71EXAMPLE"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "oidc.eks.us-east-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B71EXAMPLE:sub": "system:serviceaccount:infra-operator-system:infra-operator-controller-manager",
+          "oidc.eks.us-east-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B71EXAMPLE:aud": "sts.amazonaws.com"
+        }
+      }
+    }
+  ]
+}
+```
+
+```json IAM Policy - EC2 (ec2-policy.json)
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ec2:RunInstances",
+        "ec2:TerminateInstances",
+        "ec2:DescribeInstances",
+        "ec2:DescribeInstanceStatus",
+        "ec2:StartInstances",
+        "ec2:StopInstances",
+        "ec2:RebootInstances",
+        "ec2:ModifyInstanceAttribute",
+        "ec2:CreateTags",
+        "ec2:DeleteTags",
+        "ec2:DescribeTags",
+        "ec2:DescribeVolumes",
+        "ec2:CreateVolume",
+        "ec2:DeleteVolume",
+        "ec2:AttachVolume",
+        "ec2:DetachVolume"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "iam:PassRole"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": "ec2.amazonaws.com"
+        }
+      }
+    }
+  ]
+}
+```
+
+```bash Criar Role com AWS CLI
+# 1. Obter OIDC Provider do cluster EKS
+export CLUSTER_NAME=my-cluster
+export AWS_REGION=us-east-1
+export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+
+OIDC_PROVIDER=$(aws eks describe-cluster \
+  --name $CLUSTER_NAME \
+  --region $AWS_REGION \
+  --query "cluster.identity.oidc.issuer" \
+  --output text | sed -e "s/^https:\/\///")
+
+# 2. Atualizar trust-policy.json com valores corretos
+cat > trust-policy.json <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::${AWS_ACCOUNT_ID}:oidc-provider/${OIDC_PROVIDER}"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "${OIDC_PROVIDER}:sub": "system:serviceaccount:infra-operator-system:infra-operator-controller-manager",
+          "${OIDC_PROVIDER}:aud": "sts.amazonaws.com"
+        }
+      }
+    }
+  ]
+}
+EOF
+
+# 3. Criar IAM Role
+aws iam create-role \
+  --role-name infra-operator-ec2-role \
+  --assume-role-policy-document file://trust-policy.json \
+  --description "Role for Infra Operator EC2 management"
+
+# 4. Criar e anexar policy
+aws iam put-role-policy \
+  --role-name infra-operator-ec2-role \
+  --policy-name EC2Management \
+  --policy-document file://ec2-policy.json
+
+# 5. Obter ARN da Role
+aws iam get-role \
+  --role-name infra-operator-ec2-role \
+  --query 'Role.Arn' \
+  --output text
+```
+
+```bash Anotar ServiceAccount do Operator
+# Adicionar annotation ao ServiceAccount do operator
+kubectl annotate serviceaccount infra-operator-controller-manager \
+  -n infra-operator-system \
+  eks.amazonaws.com/role-arn=arn:aws:iam::123456789012:role/infra-operator-ec2-role
+```
+</CodeGroup>
+
+<Note>
+  Substitua `123456789012` pelo seu AWS Account ID e `EXAMPLED539D4633E53DE1B71EXAMPLE` pelo ID do seu OIDC provider.
+</Note>
+
+## Visão Geral
+
+AWS EC2 (Elastic Compute Cloud) fornece máquinas virtuais escaláveis sob demanda. Diferente do Lambda (serverless), EC2 oferece controle completo do sistema operacional, permitindo instalar qualquer software, gerenciar kernel e ter acesso SSH direto. Você paga por hora/segundo de uso, com opções de economia através de Reserved Instances ou Spot Instances.
+
+**Características:**
+- Máquinas virtuais (instâncias) com controle total do SO
+- Múltiplas famílias de instâncias: T (burstable), M (propósito geral), C (otimizada para CPU), R (otimizada para memória), I (otimizada para I/O), P (GPU para ML), H (high disk throughput)
+- Amazon Machine Images (AMIs) - imagens pré-configuradas (Linux, Windows, etc)
+- Escalabilidade através de Auto Scaling Groups
+- Volumes EBS (Elastic Block Store) para armazenamento persistente
+- Elastic IPs para endereços IP públicos estáticos
+- Security Groups para firewall
+- IAM Instance Profiles para credenciais temporárias
+- User Data scripts para inicialização customizada
+- VPC isolation com subnets públicas/privadas
+- Spot Instances para economia (até 90% de desconto)
+- Backup com snapshots EBS
+
+## Início Rápido
+
+<CodeGroup>
+```yaml EC2 Básica
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: EC2Instance
+metadata:
+  name: e2e-test-instance
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  instanceName: e2e-test-vm
+  instanceType: t3.micro
+  imageID: ami-12345678
+  tags:
+    environment: test
+    managed-by: infra-operator
+    purpose: e2e-testing
+  deletionPolicy: Delete
+```
+
+```yaml EC2 com Volume EBS
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: EC2Instance
+metadata:
+  name: e2e-storage-instance
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  instanceName: e2e-storage-vm
+  instanceType: t3.small
+  imageID: ami-87654321
+  blockDeviceMappings:
+  - deviceName: /dev/xvdf
+    ebs:
+      volumeSize: 100
+      volumeType: gp3
+      encrypted: true
+      deleteOnTermination: true
+  monitoring: true
+  ebsOptimized: true
+  tags:
+    environment: test
+    managed-by: infra-operator
+    storage: enabled
+    purpose: e2e-testing
+  deletionPolicy: Stop
+```
+
+```yaml EC2 de Produção
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: EC2Instance
+metadata:
+  name: web-server
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  # Nome da instância
+  instanceName: web-server-1
+
+  # ID da imagem AMI (Amazon Machine Image)
+  # ami-0c55b159cbfafe1f0 = Amazon Linux 2
+  imageID: ami-0c55b159cbfafe1f0
+
+  # Tipo de instância (familia.tamanho)
+  instanceType: t3.medium
+
+  # Par de chaves para SSH (criar no EC2)
+  keyName: my-keypair
+
+  # ID da subnet (subrede)
+  subnetID: subnet-0123456789abcdef0
+
+  # IDs dos grupos de segurança (firewall)
+  securityGroupIDs:
+  - sg-0123456789abcdef0
+
+  # Profile IAM para credenciais na instância
+  iamInstanceProfile: ec2-role
+
+  # Script executado na inicialização
+  userData: |
+    #!/bin/bash
+    yum update -y
+    yum install -y httpd
+    systemctl start httpd
+    systemctl enable httpd
+
+  # Tags para organização
+  tags:
+    Name: web-server-1
+    Environment: production
+    Application: web
+
+  # Política de deleção
+  deletionPolicy: Retain
+```
+
+```bash Aplicar
+kubectl apply -f ec2.yaml
+```
+
+```bash Verificar Status
+kubectl get ec2instances
+kubectl describe ec2instance e2e-test-instance
+kubectl get ec2instance e2e-test-instance -o yaml
+```
+
+```bash Conectar via SSH
+# Obter IP público da instância
+INSTANCE_IP=$(kubectl get ec2instance web-server -o jsonpath='{.status.publicIP}')
+
+# Conectar via SSH
+ssh -i ~/.ssh/my-keypair.pem ec2-user@$INSTANCE_IP
+
+# Para Ubuntu AMI use: ubuntu@$INSTANCE_IP
+# Para Windows use: RDP ou AWS Systems Manager Session Manager
+```
+</CodeGroup>
+
+## Referência de Configuração
+
+### Campos Obrigatórios
+
+<ParamField path="spec.providerRef" type="object" required>
+  Referência ao recurso AWSProvider para autenticação
+
+  <Expandable title="properties">
+    <ParamField path="name" type="string" required>
+      Nome do recurso AWSProvider
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="spec.imageId" type="string" required>
+  ID da AMI (Amazon Machine Image) a usar
+
+  **Exemplos de AMIs públicas:**
+  - `ami-0c55b159cbfafe1f0` - Amazon Linux 2 (x86_64, gratuita)
+  - `ami-0a8e758f5e873d1c1` - Ubuntu 24.04 LTS
+  - `ami-0a887e401f7654935` - CentOS Stream 9
+  - `ami-0a699202c56c5957f` - Debian 12
+  - `ami-0c94855ba95c574c8` - Windows Server 2022
+
+  Para encontrar AMIs:
+  ```bash
+  # Listar AMIs Amazon Linux 2
+  aws ec2 describe-images \
+    --owners amazon \
+    --filters "Name=name,Values=amzn2-ami-hvm-*" \
+    --query 'Images[0].ImageId'
+  ```
+</ParamField>
+
+<ParamField path="spec.instanceType" type="string" required>
+  Tipo de instância que define CPU, memória e capacidade de rede
+
+  **Famílias comuns:**
+  - `t3.micro`, `t3.small`, `t3.medium`, `t3.large` - Burstable (variável), barato
+  - `t4g.micro`, `t4g.small` - ARM Graviton, mais barato
+  - `m6i.large`, `m6i.xlarge`, `m6i.2xlarge` - Propósito geral
+  - `c6i.large`, `c6i.2xlarge` - Otimizada para CPU (apps web, batch)
+  - `r6i.large`, `r6i.2xlarge` - Otimizada para memória (bancos dados, cache)
+  - `i3.large`, `i3.2xlarge` - Otimizada para I/O (NoSQL, data warehouses)
+  - `g4dn.xlarge` - GPU NVIDIA (ML, gaming)
+  - `h1.2xlarge` - Alto throughput de disco (big data)
+
+  **Dica para economia:**
+  - T3 é ótimo para cargas variáveis com picos ocasionais
+  - ARM (t4g, m7g) é 20% mais barato
+  - Usar Spot Instances para cargas não críticas (economize 90%)
+</ParamField>
+
+### Campos Opcionais
+
+<ParamField path="spec.keyName" type="string">
+  Nome da chave de par EC2 para SSH
+
+  **Importante:** A chave deve existir na AWS na mesma região. Você pode criar via CRD EC2KeyPair (recomendado) ou via AWS CLI.
+
+  ```yaml
+  keyName: my-keypair
+  ```
+</ParamField>
+
+## EC2KeyPair - Gerenciamento de Chaves SSH via CRD
+
+O recurso **EC2KeyPair** permite criar e gerenciar pares de chaves SSH diretamente via Kubernetes, sem precisar usar AWS CLI. A chave privada é armazenada automaticamente em um Secret.
+
+### Criar Par de Chaves
+
+<CodeGroup>
+```yaml EC2KeyPair Básico
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: EC2KeyPair
+metadata:
+  name: my-keypair
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+  # Nome da chave na AWS (opcional, usa metadata.name se não especificado)
+  keyName: my-keypair
+  # Secret onde a chave privada será armazenada
+  secretRef:
+    name: my-keypair-ssh
+  tags:
+    Environment: production
+```
+
+```yaml EC2KeyPair com Import de Chave Pública
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: EC2KeyPair
+metadata:
+  name: imported-keypair
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+  keyName: imported-keypair
+  # Importar chave pública existente (não gera nova chave)
+  publicKeyMaterial: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQ... user@host"
+  tags:
+    Environment: production
+```
+
+```bash Verificar Status
+# Listar KeyPairs
+kubectl get ec2keypairs
+
+# Ver detalhes
+kubectl describe ec2keypair my-keypair
+
+# Verificar Secret criado
+kubectl get secret my-keypair-ssh -o yaml
+```
+</CodeGroup>
+
+### Usar a Chave Privada para SSH
+
+```bash
+# 1. Extrair chave privada do Secret
+kubectl get secret my-keypair-ssh -o jsonpath='{.data.private-key}' | base64 -d > my-keypair.pem
+
+# 2. Ajustar permissões
+chmod 600 my-keypair.pem
+
+# 3. Conectar via SSH
+ssh -i my-keypair.pem ec2-user@<IP_DA_EC2>
+```
+
+### Exemplo Completo: EC2 com KeyPair e Security Group
+
+Para acessar uma EC2 via SSH, você precisa de:
+1. **EC2KeyPair** - Para gerar a chave SSH
+2. **SecurityGroup** - Para liberar porta 22 (SSH)
+3. **EC2Instance** - Referenciando ambos
+
+<CodeGroup>
+```yaml 1. Criar KeyPair
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: EC2KeyPair
+metadata:
+  name: bastion-keypair
+  namespace: infra-operator
+spec:
+  providerRef:
+    name: aws-develop
+  secretRef:
+    name: bastion-keypair-ssh
+  tags:
+    Purpose: bastion-access
+```
+
+```yaml 2. Criar Security Group com SSH
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: SecurityGroup
+metadata:
+  name: bastion-sg
+  namespace: infra-operator
+spec:
+  providerRef:
+    name: aws-develop
+  vpcID: vpc-xxxxxxxxx
+  groupName: bastion-ssh-sg
+  description: Security group for SSH access to bastion
+  ingressRules:
+    - protocol: tcp
+      fromPort: 22
+      toPort: 22
+      cidrBlocks:
+        - "0.0.0.0/0"  # Ou use seu IP específico para maior segurança
+      description: SSH access
+  egressRules:
+    - protocol: "-1"
+      fromPort: 0
+      toPort: 0
+      cidrBlocks:
+        - "0.0.0.0/0"
+      description: Allow all outbound
+```
+
+```yaml 3. Criar EC2 Instance
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: EC2Instance
+metadata:
+  name: bastion-host
+  namespace: infra-operator
+spec:
+  providerRef:
+    name: aws-develop
+  instanceName: bastion-host
+  instanceType: t3.micro
+  imageID: ami-0c02fb55956c7d316  # Amazon Linux 2
+  subnetID: subnet-xxxxxxxxx      # Subnet pública
+  keyName: bastion-keypair        # Nome da KeyPair criada
+  securityGroupIDs:
+    - sg-xxxxxxxxx                # ID do Security Group criado
+  tags:
+    Purpose: bastion
+```
+
+```bash 4. Conectar via SSH
+# Aguardar EC2 ficar pronta
+kubectl get ec2instance bastion-host -w
+
+# Obter IP público
+BASTION_IP=$(kubectl get ec2instance bastion-host -o jsonpath='{.status.publicIP}')
+
+# Extrair chave privada
+kubectl get secret bastion-keypair-ssh -n infra-operator \
+  -o jsonpath='{.data.private-key}' | base64 -d > bastion.pem
+chmod 600 bastion.pem
+
+# Conectar
+ssh -i bastion.pem ec2-user@$BASTION_IP
+```
+</CodeGroup>
+
+### Campos do EC2KeyPair
+
+<ParamField path="spec.providerRef" type="object" required>
+  Referência ao recurso AWSProvider para autenticação
+</ParamField>
+
+<ParamField path="spec.keyName" type="string">
+  Nome do par de chaves na AWS. Se não especificado, usa `metadata.name`
+</ParamField>
+
+<ParamField path="spec.publicKeyMaterial" type="string">
+  Chave pública para importar (formato OpenSSH). Se não especificado, a AWS gera um novo par de chaves.
+</ParamField>
+
+<ParamField path="spec.secretRef" type="object">
+  Referência ao Secret onde armazenar a chave privada (apenas para chaves geradas pela AWS)
+
+  <Expandable title="properties">
+    <ParamField path="name" type="string" required>
+      Nome do Secret a ser criado
+    </ParamField>
+    <ParamField path="namespace" type="string">
+      Namespace do Secret (padrão: namespace do KeyPair)
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="spec.deletionPolicy" type="string" default="Delete">
+  Comportamento ao deletar o CR:
+  - `Delete`: Deleta a chave na AWS
+  - `Retain`: Mantém a chave na AWS
+</ParamField>
+
+### Status do EC2KeyPair
+
+<ResponseField name="status.keyPairID" type="string">
+  ID do par de chaves na AWS (ex: `key-0123456789abcdef0`)
+</ResponseField>
+
+<ResponseField name="status.keyName" type="string">
+  Nome do par de chaves na AWS
+</ResponseField>
+
+<ResponseField name="status.keyFingerprint" type="string">
+  Fingerprint da chave para verificação
+</ResponseField>
+
+<ResponseField name="status.keyType" type="string">
+  Tipo da chave: `rsa` ou `ed25519`
+</ResponseField>
+
+<ResponseField name="status.secretCreated" type="boolean">
+  Indica se o Secret com a chave privada foi criado
+</ResponseField>
+
+<ResponseField name="status.ready" type="boolean">
+  `true` quando o par de chaves está disponível na AWS
+</ResponseField>
+
+<Warning>
+  A chave privada só é retornada pela AWS uma vez, no momento da criação. O operator armazena automaticamente no Secret especificado. Se você deletar o Secret, não será possível recuperar a chave privada.
+</Warning>
+
+<ParamField path="spec.subnetRef" type="object">
+  Referência à subnet (subrede) onde instância será lançada
+
+  ```yaml
+  subnetRef:
+    name: public-subnet-1a  # Subnet na zona de disponibilidade 1a
+  ```
+
+  **Importante:** Deixar em branco para usar VPC padrão e subnet padrão
+</ParamField>
+
+<ParamField path="spec.securityGroupRefs" type="array of objects">
+  Lista de referências a grupos de segurança (firewall)
+
+  ```yaml
+  securityGroupRefs:
+  - name: web-sg          # Allow 80, 443
+  - name: ssh-sg          # Allow 22
+  ```
+
+  Se não especificado, usa security group padrão da VPC (geralmente sem acesso)
+
+  **Exemplo de regras:**
+  ```bash
+  # Criar security group com HTTP/HTTPS
+  aws ec2 create-security-group \
+    --group-name web-sg \
+    --description "Allow web traffic"
+
+  # Permitir HTTP
+  aws ec2 authorize-security-group-ingress \
+    --group-name web-sg \
+    --protocol tcp --port 80 --cidr 0.0.0.0/0
+
+  # Permitir HTTPS
+  aws ec2 authorize-security-group-ingress \
+    --group-name web-sg \
+    --protocol tcp --port 443 --cidr 0.0.0.0/0
+
+  # Permitir SSH de seu IP
+  aws ec2 authorize-security-group-ingress \
+    --group-name web-sg \
+    --protocol tcp --port 22 --cidr YOUR_IP/32
+  ```
+</ParamField>
+
+<ParamField path="spec.iamInstanceProfile" type="string">
+  Nome do IAM Instance Profile para credenciais AWS na instância
+
+  Permite que aplicações na instância usem credenciais temporárias AWS sem armazenar chaves de acesso
+
+  ```yaml
+  iamInstanceProfile: ec2-role
+  ```
+
+  **Criar Instance Profile:**
+  ```bash
+  # 1. Criar IAM Role
+  aws iam create-role --role-name ec2-role \
+    --assume-role-policy-document '{
+      "Version": "2012-10-17",
+      "Statement": [{
+        "Effect": "Allow",
+        "Principal": {"Service": "ec2.amazonaws.com"},
+        "Action": "sts:AssumeRole"
+      }]
+    }'
+
+  # 2. Anexar policy (exemplo: acesso a S3)
+  aws iam attach-role-policy --role-name ec2-role \
+    --policy-arn arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+
+  # 3. Criar Instance Profile
+  aws iam create-instance-profile --instance-profile-name ec2-role
+  aws iam add-role-to-instance-profile \
+    --instance-profile-name ec2-role \
+    --role-name ec2-role
+  ```
+</ParamField>
+
+<ParamField path="spec.userData" type="string">
+  Script shell executado na inicialização da instância (apenas uma vez)
+
+  Útil para instalação de pacotes, start de serviços, configuração de aplicações
+
+  ```yaml
+  userData: |
+    #!/bin/bash
+    set -e  # Exit se qualquer comando falhar
+    exec > >(tee /var/log/user-data.log)
+    exec 2>&1
+
+    # Update sistema
+    yum update -y
+
+    # Instalar Docker
+    amazon-linux-extras install docker -y
+    systemctl start docker
+    systemctl enable docker
+
+    # Instalar Docker Compose
+    curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" \
+      -o /usr/local/bin/docker-compose
+    chmod +x /usr/local/bin/docker-compose
+
+    # Criar aplicação
+    mkdir -p /app
+    cat > /app/docker-compose.yml <<'EOF'
+version: '3.8'
+services:
+  web:
+    image: nginx:latest
+    ports:
+      - "80:80"
+EOF
+
+    cd /app
+    docker-compose up -d
+
+    # Enviar sucesso para EC2 (para Auto Scaling)
+    /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} \
+      --resource EC2Instance --region ${AWS::Region}
+  ```
+
+  **Dica importante:** User Data é executado como root e pode demorar (veja /var/log/cloud-init-output.log para debug)
+</ParamField>
+
+<ParamField path="spec.ebsOptimized" type="boolean" default="false">
+  Otimizar performance de EBS (volumes de armazenamento)
+
+  Aloca banda dedicada para EBS, melhora IOPS e throughput
+
+  ```yaml
+  ebsOptimized: true
+  ```
+
+  **Recomendado para:**
+  - Bancos de dados
+  - Data warehouses
+  - Cargas que fazem I/O intensivo
+</ParamField>
+
+
+<ParamField path="spec.tags" type="object">
+  Pares chave-valor para organizar e controlar custos
+
+  ```yaml
+  tags:
+    Name: web-server-prod-1
+    Environment: production
+    Application: web-api
+    Team: backend
+    CostCenter: engineering
+    ManagedBy: terraform
+  ```
+
+  **Convenções úteis:**
+  - `Name`: Nome amigável (aparece no console)
+  - `Environment`: production, staging, development
+  - `Application`: nome da aplicação
+  - `Team`: equipe responsável
+  - `CostCenter`: para billing/alocação de custos
+</ParamField>
+
+<ParamField path="spec.volumeSize" type="integer" default="30">
+  Tamanho do volume raiz em GB
+
+  ```yaml
+  volumeSize: 50  # 50 GB de disco
+  ```
+
+  **Recomendações:**
+  - AMI padrão: 30-50 GB
+  - Aplicações pesadas: 100+ GB
+  - Bancos de dados: dimensionar conforme necessário
+</ParamField>
+
+<ParamField path="spec.volumeType" type="string" default="gp3">
+  Tipo de volume EBS
+
+  **Opções:**
+  - `gp3` - General Purpose (padrão, melhor relação custo/performance)
+  - `gp2` - General Purpose antigo
+  - `io1` - High IOPS (bancos dados)
+  - `io2` - Ultra alta performance
+  - `st1` - Throughput otimizado (big data)
+  - `sc1` - Throughput cold (arquivos, backup)
+
+  ```yaml
+  volumeType: gp3
+  volumeSize: 100
+  iops: 3000        # Apenas para gp3, io1, io2
+  throughput: 125   # Apenas para gp3 (MB/s)
+  ```
+</ParamField>
+
+<ParamField path="spec.volumeEncrypted" type="boolean" default="true">
+  Criptografar volume raiz com KMS (AWS managed key é gratuita)
+
+  ```yaml
+  volumeEncrypted: true  # Recomendado para produção
+  ```
+</ParamField>
+
+<ParamField path="spec.deleteOnTermination" type="boolean" default="true">
+  Deletar volume raiz quando instância é terminada
+
+  ```yaml
+  deleteOnTermination: true
+  ```
+</ParamField>
+
+<ParamField path="spec.associatePublicIpAddress" type="boolean" default="false">
+  Associar IP público automaticamente
+
+  Necessário se instância precisa acessar internet ou ser acessada diretamente
+
+  ```yaml
+  associatePublicIpAddress: true
+  ```
+</ParamField>
+
+<ParamField path="spec.deletionPolicy" type="string" default="Delete">
+  O que acontece quando o CR é deletado
+
+  **Opções:**
+  - `Delete`: Instância é terminada e volume deletado
+  - `Retain`: Instância continua rodando, não mais gerenciada pelo operator
+  - `Stop`: Instância é parada (não terminada), estado preservado para restart
+
+  ```yaml
+  deletionPolicy: Stop  # Parar instância para economizar
+  ```
+
+  **Dica:** Para produção, considere usar `Stop` ou `Retain` para evitar perda acidental
+</ParamField>
+
+<ParamField path="spec.creditSpecification" type="object">
+  Configuração de créditos para instâncias T (burstable)
+
+  <Expandable title="properties">
+    <ParamField path="cpuCredits" type="string" default="standard">
+      Como gerenciar créditos de CPU
+
+      **Opções:**
+      - `standard` - Acumula créditos (máximo: 24h de uso completo)
+      - `unlimited` - Usa "créditos emprestados" se acabar (custo adicional)
+
+      ```yaml
+      creditSpecification:
+        cpuCredits: standard  # Economizar
+      ```
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+## Campos de Status
+
+Após a instância ser criada, os seguintes campos de status são populados:
+
+<ResponseField name="status.instanceId" type="string">
+  ID único da instância na AWS
+
+  ```
+  i-0123456789abcdef0
+  ```
+
+  Use para identificar a instância na AWS CLI/Console
+</ResponseField>
+
+<ResponseField name="status.publicIp" type="string">
+  Endereço IP público da instância (se `associatePublicIpAddress: true`)
+
+  ```
+  203.0.113.42
+  ```
+
+  Use para SSH: `ssh -i key.pem ec2-user@203.0.113.42`
+</ResponseField>
+
+<ResponseField name="status.privateIp" type="string">
+  Endereço IP privado dentro da VPC
+
+  ```
+  10.0.1.50
+  ```
+
+  Use para comunicação interna entre instâncias
+</ResponseField>
+
+<ResponseField name="status.publicDnsName" type="string">
+  Nome DNS público (se em subnet pública)
+
+  ```
+  ec2-203-0-113-42.compute-1.amazonaws.com
+  ```
+
+  Muda quando instância é reiniciada
+</ResponseField>
+
+<ResponseField name="status.state" type="string">
+  Estado atual da instância
+
+  - `pending` - Instância está iniciando
+  - `running` - Instância está ativa
+  - `stopping` - Instância está sendo parada
+  - `stopped` - Instância parada
+  - `shutting-down` - Instância está sendo terminada
+  - `terminated` - Instância foi deletada
+</ResponseField>
+
+<ResponseField name="status.launchTime" type="string">
+  Timestamp quando instância foi lançada
+
+  ```
+  2025-11-22T15:30:00Z
+  ```
+</ResponseField>
+
+<ResponseField name="status.ready" type="boolean">
+  `true` quando instância está em estado `running` e pronta para uso
+</ResponseField>
+
+<ResponseField name="status.statusChecks" type="object">
+  Resultado dos system status checks da AWS
+
+  - `systemStatus` - Hardware/infraestrutura ok?
+  - `instanceStatus` - SO e aplicação ok?
+</ResponseField>
+
+<ResponseField name="status.consoleOutput" type="string">
+  Logs do console da instância EC2 (kernel, boot, serviços)
+
+  Preenchido apenas quando `spec.enableConsoleOutput: true`
+
+  ```
+  [    0.000000] Linux version 6.6.54-talos...
+  [    1.203061] [talos] task startSyslogd (4/5): done
+  [    1.205186] [talos] service[auditd](Starting): Starting service
+  ```
+</ResponseField>
+
+<ResponseField name="status.consoleOutputTimestamp" type="string">
+  Timestamp do último console output coletado
+
+  ```
+  2025-11-26T14:30:00Z
+  ```
+</ResponseField>
+
+## Console Output - Logs da Instância
+
+O Infra Operator permite coletar e visualizar os logs do console da instância EC2 diretamente via Kubernetes. Isso é útil para:
+- Depurar problemas de boot
+- Verificar mensagens do kernel
+- Monitorar inicialização de serviços
+- Diagnosticar falhas sem precisar de SSH
+
+### Habilitar Console Output
+
+Para habilitar a coleta de logs, adicione `enableConsoleOutput: true` no spec:
+
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: EC2Instance
+metadata:
+  name: minha-ec2
+  namespace: default
+spec:
+  providerRef:
+    name: aws-provider
+  instanceName: minha-ec2
+  imageID: ami-12345678
+  instanceType: t3.micro
+  enableConsoleOutput: true  # Habilita coleta de logs
+  tags:
+    Environment: development
+```
+
+### Visualizar Console Output
+
+<CodeGroup>
+```bash Via kubectl get
+# Ver as últimas 100 linhas do console
+kubectl get ec2instance minha-ec2 -o jsonpath='{.status.consoleOutput}'
+
+# Ver com timestamp
+kubectl get ec2instance minha-ec2 -o jsonpath='Timestamp: {.status.consoleOutputTimestamp}\n\n{.status.consoleOutput}'
+```
+
+```bash Via kubectl describe
+# Mostra todos os campos de status incluindo consoleOutput
+kubectl describe ec2instance minha-ec2
+```
+
+```bash Salvar em arquivo
+# Salvar logs em arquivo para análise
+kubectl get ec2instance minha-ec2 -o jsonpath='{.status.consoleOutput}' > console.log
+```
+</CodeGroup>
+
+### Exemplo de Saída
+
+```
+[    0.000000] Linux version 6.6.54-talos (...)
+[    0.000000] Command line: init_on_alloc=1 slab_nomerge pti=on (...)
+[    0.001000] BIOS-provided physical RAM map:
+[    0.002000] BIOS-e820: [mem 0x0000000000000000-0x000000000009fbff] usable
+...
+[    1.203061] [talos] task startSyslogd (4/5): done, 43.534039ms
+[    1.205186] [talos] service[auditd](Starting): Starting service
+[    1.207893] [talos] service[auditd](Running): Started service
+[    1.210000] [talos] task startAuditd (5/5): done, 4.773039ms
+```
+
+<Note>
+  Os logs são atualizados a cada reconciliação do controller (aproximadamente a cada 5 minutos). O operator armazena as últimas 100 linhas para evitar sobrecarga no etcd.
+</Note>
+
+## Exemplos
+
+### Web Server com Apache
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: EC2Instance
+metadata:
+  name: apache-web-server
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  imageId: ami-0c55b159cbfafe1f0        # Amazon Linux 2
+  instanceType: t3.small                 # Burstable, barato
+  keyName: web-server-key
+
+  subnetRef:
+    name: public-subnet-1a
+
+  securityGroupRefs:
+  - name: web-sg
+
+  associatePublicIpAddress: true
+
+  userData: |
+    #!/bin/bash
+    set -e
+    exec > >(tee /var/log/user-data.log) 2>&1
+
+    # Update
+    yum update -y
+
+    # Instalar Apache
+    yum install -y httpd
+
+    # Criar página
+    cat > /var/www/html/index.html <<'EOF'
+    <h1>Welcome to Apache Server</h1>
+    <p>Instance ID: $(ec2-metadata --instance-id | cut -d " " -f 2)</p>
+    EOF
+
+    # Enable e start
+    systemctl enable httpd
+    systemctl start httpd
+
+  iamInstanceProfile: ec2-role
+
+  tags:
+    Name: apache-web-prod
+    Application: web-server
+    Environment: production
+    Type: web-tier
+```
+
+### Application Server com Docker e Node.js
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: EC2Instance
+metadata:
+  name: nodejs-app-server
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  imageId: ami-0c55b159cbfafe1f0
+  instanceType: t3.medium                # Mais recursos para app
+  keyName: app-server-key
+
+  subnetRef:
+    name: private-subnet-1a             # Sem IP público
+
+  securityGroupRefs:
+  - name: app-sg                        # Porta 3000
+
+  # Não associar IP público (no private subnet)
+  associatePublicIpAddress: false
+
+  volumeSize: 50
+  volumeEncrypted: true
+
+  monitoring: true
+
+  userData: |
+    #!/bin/bash
+    set -e
+    exec > >(tee /var/log/user-data.log) 2>&1
+
+    # Update
+    yum update -y
+
+    # Instalar Docker
+    amazon-linux-extras install docker -y
+    usermod -a -G docker ec2-user
+
+    # Instalar Docker Compose
+    curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" \
+      -o /usr/local/bin/docker-compose
+    chmod +x /usr/local/bin/docker-compose
+
+    # Start Docker
+    systemctl enable docker
+    systemctl start docker
+
+    # Deploy aplicação
+    mkdir -p /app
+    cd /app
+
+    # Usar repo Git (exemplo)
+    yum install -y git
+    git clone https://github.com/mycompany/myapp.git .
+
+    # Ou usar Docker Hub para imagem
+    cat > /app/docker-compose.yml <<'EOF'
+version: '3.8'
+services:
+  app:
+    image: myrepo/myapp:latest
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://user:pass@db.internal:5432/mydb
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+EOF
+
+    docker-compose up -d
+
+  iamInstanceProfile: app-server-role    # Acesso a S3, RDS, etc
+
+  tags:
+    Name: nodejs-app-prod
+    Application: api
+    Environment: production
+    Tier: application
+```
+
+### Bastion Host (Jump Host) para SSH Seguro
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: EC2Instance
+metadata:
+  name: bastion-host
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  imageId: ami-0c55b159cbfafe1f0
+  instanceType: t3.micro                # Mínimo necessário
+  keyName: bastion-key
+
+  subnetRef:
+    name: public-subnet-1a              # Em subnet pública
+
+  securityGroupRefs:
+  - name: bastion-sg                    # Apenas SSH do IP corporativo
+
+  associatePublicIpAddress: true
+
+  userData: |
+    #!/bin/bash
+    set -e
+
+    # Instalar SSH server (já vem instalado)
+    # Apenas fazer update do sistema
+    yum update -y
+
+    # Desabilitar password auth e usar apenas keys
+    sed -i 's/^#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
+    sed -i 's/^PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
+    systemctl restart sshd
+
+    # Instalar ferramentas úteis
+    yum install -y git vim curl wget jq awscli
+
+  # Bastion só precisa de acesso SSH, sem aplicação rodando
+  ebsOptimized: false
+
+  tags:
+    Name: bastion-prod
+    Type: bastion
+    Environment: production
+    Purpose: SSH-jump-host
+```
+
+### EC2 com EBS Volumes Adicionais
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: EC2Instance
+metadata:
+  name: database-server
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  imageId: ami-0c55b159cbfafe1f0
+  instanceType: m6i.2xlarge              # Generosa para DB
+  keyName: db-server-key
+
+  subnetRef:
+    name: private-subnet-1a
+
+  securityGroupRefs:
+  - name: db-sg                         # Porta 5432, 3306, etc
+
+  # Volume raiz para SO
+  volumeSize: 30
+  volumeType: gp3
+  volumeEncrypted: true
+  iops: 3000
+  throughput: 125
+
+  # NOTA: Este CR não suporta múltiplos volumes ainda
+  # Para volumes adicionais, criar via CRD separado ou AWS CLI
+  # aws ec2 create-volume --size 100 --volume-type io1 --iops 1000 ...
+
+  ebsOptimized: true                    # Importante para DB
+
+  userData: |
+    #!/bin/bash
+    set -e
+
+    yum update -y
+
+    # Instalar PostgreSQL
+    yum install -y postgresql-server postgresql-contrib
+
+    # Iniciar serviço
+    systemctl enable postgresql
+    systemctl start postgresql
+
+  iamInstanceProfile: db-backup-role    # Acesso a S3 para backups
+
+  deletionPolicy: Stop                  # NUNCA deletar DB
+
+  tags:
+    Name: postgresql-prod
+    Application: database
+    Environment: production
+    Backup: daily
+```
+
+### EC2 Spot Instance (Economia 90%)
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: EC2Instance
+metadata:
+  name: batch-processor-spot
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  # Spot Instances podem ser interrompidas, não use para workloads críticas
+  imageId: ami-0c55b159cbfafe1f0
+  instanceType: c6i.2xlarge             # CPU otimizado para processamento
+
+  # NOTA: Este CR não suporta Spot Instances diretamente
+  # Para usar Spot, criar Launch Template + Auto Scaling Group via AWS CLI
+
+  associatePublicIpAddress: false
+
+  userData: |
+    #!/bin/bash
+    set -e
+
+    # Instalar ferramentas de processamento
+    yum update -y
+    yum install -y python3 pip3
+
+    # Script que processa dados e se prepara para interrupção
+    cat > /opt/graceful-shutdown.sh <<'EOF'
+#!/bin/bash
+# Escuta meta-data de interrupção (2 minutos antes)
+while true; do
+  if curl -s http://169.254.169.254/latest/meta-data/spot/instance-action | grep -q action; then
+    echo "Instance will be interrupted in 2 minutes"
+    # Pause novos jobs
+    # Espere por jobs em progresso
+    systemctl stop myapp
+    break
+  fi
+  sleep 5
+done
+EOF
+
+    chmod +x /opt/graceful-shutdown.sh
+
+  tags:
+    Name: batch-spot
+    Type: spot-instance
+    Environment: batch-processing
+    CostOptimization: spot-pricing
+```
+
+## Verificação
+
+### Verificar Status da Instância
+
+```bash
+# Listar todas as instâncias EC2
+kubectl get ec2instances
+
+# Obter informações detalhadas
+kubectl get ec2instance web-server -o yaml
+
+# Acompanhar criação em tempo real
+kubectl get ec2instance web-server -w
+
+# Ver todos os campos de status
+kubectl describe ec2instance web-server
+
+# Extrair campos específicos
+kubectl get ec2instance web-server \
+  -o jsonpath='{.status.publicIp}'
+
+kubectl get ec2instance web-server \
+  -o jsonpath='{.status.state},{.status.publicIp},{.status.privateIp}'
+```
+
+### Verificar na AWS
+
+<Tabs>
+  <Tab title="AWS CLI">
+    ```bash
+    # Listar instâncias
+    aws ec2 describe-instances --query 'Reservations[*].Instances[*].[InstanceId,State.Name,PublicIpAddress,PrivateIpAddress,InstanceType]'
+
+    # Obter detalhes de uma instância
+    aws ec2 describe-instances \
+      --instance-ids i-0123456789abcdef0 \
+      --query 'Reservations[0].Instances[0]' \
+      --output json | jq '.'
+
+    # Verificar status de um instância
+    aws ec2 describe-instance-status \
+      --instance-ids i-0123456789abcdef0
+
+    # Obter log do console (user data output)
+    aws ec2 get-console-output \
+      --instance-id i-0123456789abcdef0
+
+    # Ver logs do user data
+    aws ssm start-session --target i-0123456789abcdef0
+    # Dentro da sessão:
+    tail -f /var/log/cloud-init-output.log
+    ```
+  </Tab>
+
+  <Tab title="LocalStack">
+    ```bash
+    # Para testes com LocalStack
+    export AWS_ENDPOINT_URL=http://localhost:4566
+
+    aws ec2 describe-instances
+
+    # Obter status
+    aws ec2 describe-instance-status \
+      --instance-ids i-0123456789abcdef0
+
+    # Ver console output
+    aws ec2 get-console-output \
+      --instance-id i-0123456789abcdef0
+
+    # SSH via Session Manager (não disponível em LocalStack)
+    # Usar IP direto + chave
+    ```
+  </Tab>
+
+  <Tab title="AWS Console">
+    ```
+    1. Ir em EC2 Dashboard
+    2. Clicar em Instances
+    3. Procurar pelo Instance ID ou Name tag
+    4. Verificar:
+       - State (running, stopped, etc)
+       - Public IPv4 address
+       - Instance Type
+       - Availability Zone
+       - Security Groups
+    5. Clicar em "Connect" para SSH via Session Manager
+    ```
+  </Tab>
+</Tabs>
+
+### Conectar via SSH
+
+```bash
+# 1. Obter IP público
+INSTANCE_IP=$(kubectl get ec2instance web-server \
+  -o jsonpath='{.status.publicIp}')
+
+# 2. Conectar via SSH
+ssh -i ~/.ssh/my-keypair.pem ec2-user@$INSTANCE_IP
+
+# 3. Comandos úteis dentro da instância
+# Ver logs do user data
+tail -f /var/log/cloud-init-output.log
+
+# Ver processos rodando
+ps aux
+
+# Verificar espaço em disco
+df -h
+
+# Verificar memória
+free -h
+
+# Ver IPs
+ip addr show
+```
+
+### Saída Esperada
+
+```yaml
+status:
+  instanceId: i-0123456789abcdef0
+  publicIp: 203.0.113.42
+  privateIp: 10.0.1.50
+  publicDnsName: ec2-203-0-113-42.compute-1.amazonaws.com
+  state: running
+  launchTime: "2025-11-22T15:30:00Z"
+  statusChecks:
+    systemStatus: ok
+    instanceStatus: ok
+  ready: true
+  lastSyncTime: "2025-11-22T15:35:00Z"
+```
+
+## Resolução de Problemas
+
+<AccordionGroup>
+  <Accordion title="Instance não inicia (status: pending)">
+    **Sintomas:** Instância fica em estado `pending` por mais de 5 minutos
+
+    **Causas comuns:**
+    1. Subnet não tem acesso à internet
+    2. Instance type indisponível na AZ
+    3. VPC endpoint ou gateway faltando
+    4. Conta AWS atingiu limite de instâncias
+
+    **Soluções:**
+    ```bash
+    # Ver status detalhado
+    kubectl describe ec2instance web-server
+
+    # Ver erro do lado AWS
+    aws ec2 describe-instance-status \
+      --instance-ids i-xxx \
+      --query 'InstanceStatuses[0].StatusChecks'
+
+    # Tentar deletar e criar novamente
+    kubectl delete ec2instance web-server
+    # Esperar alguns segundos
+    kubectl apply -f ec2.yaml
+
+    # Se instance type indisponível, tentar tipo similar
+    kubectl patch ec2instance web-server --type merge \
+      -p '{"spec":{"instanceType":"t3.medium"}}'
+    ```
+  </Accordion>
+
+  <Accordion title="SSH connection refused (porta 22 fechada)">
+    **Sintomas:** `ssh: connect to host X.X.X.X port 22: Connection refused`
+
+    **Causas comuns:**
+    1. Security group não permite SSH (porta 22)
+    2. Instância ainda está inicializando (user data em progresso)
+    3. SSH service não rodando
+    4. IP público não foi associado
+
+    **Soluções:**
+    ```bash
+    # 1. Verificar security group permite SSH
+    aws ec2 describe-security-groups --group-ids sg-xxx \
+      --query 'SecurityGroups[0].IpPermissions' | jq '.'
+
+    # Deve ter entrada como:
+    # {
+    #   "IpProtocol": "tcp",
+    #   "FromPort": 22,
+    #   "ToPort": 22,
+    #   "IpRanges": [{"CidrIp": "0.0.0.0/0"}]  # Ou seu IP específico
+    # }
+
+    # 2. Adicionar acesso SSH se não existir
+    aws ec2 authorize-security-group-ingress \
+      --group-id sg-xxx \
+      --protocol tcp --port 22 --cidr YOUR_IP/32
+
+    # 3. Verificar IP público foi associado
+    aws ec2 describe-instances --instance-ids i-xxx \
+      --query 'Reservations[0].Instances[0].PublicIpAddress'
+
+    # Se vazio, associar um:
+    aws ec2 allocate-address --domain vpc
+    aws ec2 associate-address \
+      --instance-id i-xxx \
+      --allocation-id eipalloc-xxx
+
+    # 4. Esperar mais tempo (user data pode demorar 5-10 min)
+    aws ec2 get-console-output --instance-id i-xxx \
+      | tail -20
+
+    # 5. Usar Systems Manager Session Manager (sem SSH)
+    aws ssm start-session --target i-xxx
+    ```
+  </Accordion>
+
+  <Accordion title="Status checks failed (sistema fora do ar)">
+    **Sintomas:** Instance Status Check ou System Status Check falhando
+
+    **Causas comuns:**
+    1. Hardware underlying com problemas
+    2. EBS volume corrompido
+    3. Kernel panic ou crash
+    4. Recursos esgotados (memória, CPU)
+
+    **Soluções:**
+    ```bash
+    # Ver status detalhado
+    aws ec2 describe-instance-status --instance-ids i-xxx
+
+    # Se System Status Check falha (hardware):
+    # - Pode ser problema na infraestrutura AWS (raro)
+    # - Tentar parar e reinicar
+    kubectl patch ec2instance web-server --type merge \
+      -p '{"spec":{"state":"stopped"}}'
+
+    # Esperar uns segundos
+    kubectl patch ec2instance web-server --type merge \
+      -p '{"spec":{"state":"running"}}'
+
+    # Se Instance Status Check falha (SO/app):
+    # - Conectar e diagnosticar
+    aws ssm start-session --target i-xxx
+
+    # Dentro da sessão, verificar:
+    dmesg | tail -50  # Kernel messages
+    systemctl status  # Status de serviços
+    free -h           # Memória
+    df -h             # Disco
+    ```
+  </Accordion>
+
+  <Accordion title="CPU créditos esgotados (T3/T4g burst)">
+    **Sintomas:** Performance cai drasticamente, instância fica lenta
+
+    **Causa:** Instâncias T3/T4g são burstable - acumulam créditos lentamente e consomem rapidamente
+
+    **Soluções:**
+    ```bash
+    # 1. Trocar para unlimited (custa mais)
+    kubectl patch ec2instance web-server --type merge \
+      -p '{"spec":{"creditSpecification":{"cpuCredits":"unlimited"}}}'
+
+    # 2. Escalar para tipo maior não-burstable
+    kubectl patch ec2instance web-server --type merge \
+      -p '{"spec":{"instanceType":"m6i.large"}}'
+
+    # 3. Otimizar aplicação para usar menos CPU
+    # - Aumentar cache
+    # - Usar compressão
+    # - Otimizar queries
+    # - Usar CDN para assets estáticos
+
+    ```
+  </Accordion>
+
+  <Accordion title="EBS volume full (disco cheio)">
+    **Sintomas:** Aplicação pode não escrever logs, banco de dados falha, SO com problemas
+
+    **Causas comuns:**
+    1. Logs crescendo muito
+    2. Banco de dados com dados temporários
+    3. Pacotes não limpados
+    4. Volume dimensionado muito pequeno
+
+    **Soluções:**
+    ```bash
+    # 1. Verificar espaço
+    ssh -i key.pem ec2-user@IP
+    df -h                           # Disco
+    du -sh /var/log/*               # Logs
+    du -sh /tmp/*                   # Temporário
+    du -sh /*                       # Raiz
+
+    # 2. Limpar logs antigos
+    # Dentro da instância:
+    journalctl --vacuum=10d         # Logs do sistema > 10 dias
+    find /var/log -type f -mtime +30 -delete  # Logs > 30 dias
+
+    # 3. Expandir volume (sem downtime com EBS elastic)
+    # Modifique o CR:
+    kubectl patch ec2instance web-server --type merge \
+      -p '{"spec":{"volumeSize":100}}'
+
+    # Dentro da instância, expandir partição:
+    sudo growpart /dev/xvda 1
+    sudo resize2fs /dev/xvda1
+
+    # 4. Configurar log rotation
+    # /etc/logrotate.conf para manter logs sob controle
+    ```
+  </Accordion>
+
+  <Accordion title="User data script não executou ou falhou">
+    **Sintomas:** Pacotes não instalados, serviços não rodando, configurações não aplicadas
+
+    **Causas comuns:**
+    1. Erro de sintaxe no script bash
+    2. Comando falhou mas script continuou (falta `set -e`)
+    3. Arquivo muito grande (limite de 16 KB)
+    4. Encoding incorreto
+
+    **Soluções:**
+    ```bash
+    # 1. Ver logs do user data
+    ssh -i key.pem ec2-user@IP
+    tail -f /var/log/cloud-init-output.log
+    tail -f /var/log/cloud-init.log
+
+    # 2. Verificar se user data foi executado
+    cloud-init status  # should show 'done'
+
+    # 3. Testar script localmente antes
+    bash -n /seu/script.sh  # Syntax check sem executar
+
+    # 4. Usar #!/bin/bash -x para verbose output
+    userData: |
+      #!/bin/bash -x
+      set -e
+      exec > >(tee /var/log/user-data.log) 2>&1
+      ...
+
+    # 5. Se arquivo muito grande, usar S3
+    userData: |
+      #!/bin/bash
+      aws s3 cp s3://my-bucket/setup.sh /tmp/setup.sh
+      bash /tmp/setup.sh
+
+    # 6. Recriar instância se tudo falhou
+    kubectl delete ec2instance web-server
+    # Fix o YAML
+    kubectl apply -f ec2.yaml
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Melhores Práticas
+
+### Segurança
+
+- **IMDSv2 Obrigatório**: Usar metadata service v2 (mais seguro)
+- **Security Groups Mínimos**: Abrir apenas portas necessárias, fechar por IP específico quando possível
+- **IAM Roles não Keys**: Usar Instance Profiles em vez de armazenar AWS credentials na instância
+- **Criptografia de Volume**: Sempre ativar encryption de EBS em produção
+- **SSH Key Management**:
+  - Nunca commitar chaves no Git
+  - Usar AWS Secrets Manager ou Parameter Store
+  - Rotação regular de chaves
+  - Diferentes chaves por ambiente
+
+### Performance
+
+- **Auto Scaling**: Usar ASG para cargas variáveis
+- **Right-sizing**: Começar pequeno, aumentar conforme necessidade
+- **EBS Optimization**: Ativar para cargas I/O intensivas
+- **Placement Groups**: Para clusters de alta performance
+
+### Custo
+
+- **Reserved Instances**: Para cargas previsíveis (30-40% economia)
+- **Spot Instances**: Para workloads tolerantes a interrupção (70-90% economia)
+- **Right-sizing**: Não pagar por capacidade não usada
+- **Scheduled Actions**: Parar instâncias fora do horário comercial
+- **ARM Graviton**: 20% mais barato que x86 (t4g, m7g, etc)
+
+### Operações
+
+- **Snapshots Regulares**: EBS snapshots incrementais para backup
+- **Load Balancing**: ALB/NLB para distribuir tráfego
+- **Immutable Infrastructure**: Usar AMIs pré-configuradas, não SSH para mudar
+- **Infrastructure as Code**: Sempre definir em YAML/Terraform, não clicando console
+- **Tagging**: Consistente para billing, organização, busca
+
+
+## Padrões de Arquitetura
+
+### Web Tier com Load Balancer
+
+Arquitetura escalável com Application Load Balancer distribuindo tráfego entre múltiplas instâncias EC2 em Auto Scaling Group:
+
+```mermaid
+%%{init: {'theme':'base', 'themeVariables': {
+  'primaryColor':'#4a9eff',
+  'primaryTextColor':'#fff',
+  'primaryBorderColor':'#2563eb',
+  'lineColor':'#60a5fa',
+  'secondaryColor':'#8b5cf6',
+  'tertiaryColor':'#10b981',
+  'noteBkgColor':'#1f2937',
+  'noteTextColor':'#fff',
+  'noteBorderColor':'#6b7280',
+  'background':'#1f2937',
+  'mainBkg':'#374151',
+  'secondBkg':'#4b5563',
+  'clusterBkg':'#1f2937',
+  'clusterBorder':'#6b7280',
+  'titleColor':'#fff',
+  'edgeLabelBackground':'#374151',
+  'nodeTextColor':'#fff'
+}}}%%
+graph TB
+    Internet((Internet))
+
+    subgraph AWS["AWS Cloud"]
+        subgraph PublicSubnet["Public Subnet"]
+            ALB["Application Load Balancer<br/>Port 80/443"]
+        end
+
+        subgraph ASG["Auto Scaling Group"]
+            subgraph AZ1["Availability Zone 1a"]
+                EC2_1["EC2 Web-1<br/>t3.small"]
+                EBS_1["EBS 20GB<br/>gp3"]
+                EC2_1 --> EBS_1
+            end
+
+            subgraph AZ2["Availability Zone 1b"]
+                EC2_2["EC2 Web-2<br/>t3.small"]
+                EBS_2["EBS 20GB<br/>gp3"]
+                EC2_2 --> EBS_2
+            end
+
+            subgraph AZ3["Availability Zone 1c"]
+                EC2_3["EC2 Web-3<br/>t3.small"]
+                EBS_3["EBS 20GB<br/>gp3"]
+                EC2_3 --> EBS_3
+            end
+
+            subgraph AZ4["Availability Zone 1d"]
+                EC2_4["EC2 Web-4<br/>t3.small"]
+                EBS_4["EBS 20GB<br/>gp3"]
+                EC2_4 --> EBS_4
+            end
+        end
+    end
+
+    Internet --> ALB
+    ALB --> EC2_1
+    ALB --> EC2_2
+    ALB --> EC2_3
+    ALB --> EC2_4
+
+    style AWS fill:#fff8e1,stroke:#f9a825,stroke-width:3px
+    style PublicSubnet fill:#e1f5ff,stroke:#0066cc,stroke-width:2px
+    style ASG fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    style AZ1 fill:#fff4e6,stroke:#ff9800,stroke-width:1px
+    style AZ2 fill:#fff4e6,stroke:#ff9800,stroke-width:1px
+    style AZ3 fill:#fff4e6,stroke:#ff9800,stroke-width:1px
+    style AZ4 fill:#fff4e6,stroke:#ff9800,stroke-width:1px
+    style ALB fill:#bbdefb,stroke:#2196f3,stroke-width:2px
+    style EC2_1 fill:#c8e6c9,stroke:#4caf50,stroke-width:2px
+    style EC2_2 fill:#c8e6c9,stroke:#4caf50,stroke-width:2px
+    style EC2_3 fill:#c8e6c9,stroke:#4caf50,stroke-width:2px
+    style EC2_4 fill:#c8e6c9,stroke:#4caf50,stroke-width:2px
+    style EBS_1 fill:#ffcdd2,stroke:#f44336,stroke-width:2px
+    style EBS_2 fill:#ffcdd2,stroke:#f44336,stroke-width:2px
+    style EBS_3 fill:#ffcdd2,stroke:#f44336,stroke-width:2px
+    style EBS_4 fill:#ffcdd2,stroke:#f44336,stroke-width:2px
+```
+
+### Bastion/Jump Host Pattern
+
+Padrão de acesso seguro usando host intermediário para acessar recursos em subnet privada:
+
+```mermaid
+%%{init: {'theme':'base', 'themeVariables': {
+  'primaryColor':'#4a9eff',
+  'primaryTextColor':'#fff',
+  'primaryBorderColor':'#2563eb',
+  'lineColor':'#60a5fa',
+  'secondaryColor':'#8b5cf6',
+  'tertiaryColor':'#10b981',
+  'noteBkgColor':'#1f2937',
+  'noteTextColor':'#fff',
+  'noteBorderColor':'#6b7280',
+  'background':'#1f2937',
+  'mainBkg':'#374151',
+  'secondBkg':'#4b5563',
+  'clusterBkg':'#1f2937',
+  'clusterBorder':'#6b7280',
+  'titleColor':'#fff',
+  'edgeLabelBackground':'#374151',
+  'nodeTextColor':'#fff'
+}}}%%
+graph LR
+    DEV["Developer<br/>Laptop"]
+
+    subgraph AWS["AWS Cloud"]
+        subgraph PublicSubnet["Public Subnet"]
+            BASTION["Bastion Host<br/>t3.micro<br/>Public IP"]
+        end
+
+        subgraph PrivateSubnet["Private Subnet"]
+            APP["App Server<br/>t3.medium<br/>Private IP only"]
+            DB["DB Server<br/>r6i.large<br/>Private IP only"]
+        end
+    end
+
+    DEV -->|"SSH Port 22<br/>(Public Internet)"| BASTION
+    BASTION -->|"SSH Port 22<br/>(Internal VPC)"| APP
+    BASTION -->|"SSH Port 22<br/>(Internal VPC)"| DB
+
+    style AWS fill:#fff8e1,stroke:#f9a825,stroke-width:3px
+    style PublicSubnet fill:#c8e6c9,stroke:#4caf50,stroke-width:2px
+    style PrivateSubnet fill:#ffcdd2,stroke:#f44336,stroke-width:2px
+    style DEV fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    style BASTION fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    style APP fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    style DB fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+```
+
+### CI/CD Runner
+
+Arquitetura de pipeline automatizado com runner EC2 para build e deploy:
+
+```mermaid
+%%{init: {'theme':'base', 'themeVariables': {
+  'primaryColor':'#4a9eff',
+  'primaryTextColor':'#fff',
+  'primaryBorderColor':'#2563eb',
+  'lineColor':'#60a5fa',
+  'secondaryColor':'#8b5cf6',
+  'tertiaryColor':'#10b981',
+  'noteBkgColor':'#1f2937',
+  'noteTextColor':'#fff',
+  'noteBorderColor':'#6b7280',
+  'background':'#1f2937',
+  'mainBkg':'#374151',
+  'secondBkg':'#4b5563',
+  'clusterBkg':'#1f2937',
+  'clusterBorder':'#6b7280',
+  'titleColor':'#fff',
+  'edgeLabelBackground':'#374151',
+  'nodeTextColor':'#fff'
+}}}%%
+graph TB
+    GIT["GitLab / GitHub<br/>Source Code Repository"]
+
+    subgraph AWS["AWS Cloud"]
+        subgraph PrivateSubnet["Private Subnet"]
+            RUNNER["EC2 Runner Instance<br/>t3.large"]
+
+            subgraph RunnerComponents["Runner Components"]
+                DOCKER["Docker Engine"]
+                GITLAB_R["GitLab Runner /<br/>GitHub Actions"]
+            end
+
+            RUNNER --> RunnerComponents
+        end
+
+        subgraph Deploy["Deployment Targets"]
+            ECS["Amazon ECS"]
+            K8S["Kubernetes<br/>(EKS)"]
+            S3["S3 Artifacts"]
+        end
+    end
+
+    GIT -->|"Webhook<br/>on Push/PR"| RUNNER
+    RUNNER -->|"Deploy Containers"| ECS
+    RUNNER -->|"Deploy Pods"| K8S
+    RUNNER -->|"Upload Builds"| S3
+
+    style AWS fill:#fff8e1,stroke:#f9a825,stroke-width:3px
+    style PrivateSubnet fill:#e1f5ff,stroke:#0066cc,stroke-width:2px
+    style RunnerComponents fill:#fff4e6,stroke:#ff9800,stroke-width:2px
+    style Deploy fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    style GIT fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    style RUNNER fill:#c8e6c9,stroke:#4caf50,stroke-width:2px
+    style DOCKER fill:#bbdefb,stroke:#2196f3,stroke-width:2px
+    style GITLAB_R fill:#bbdefb,stroke:#2196f3,stroke-width:2px
+    style ECS fill:#d1c4e9,stroke:#673ab7,stroke-width:2px
+    style K8S fill:#d1c4e9,stroke:#673ab7,stroke-width:2px
+    style S3 fill:#d1c4e9,stroke:#673ab7,stroke-width:2px
+```
+
+### Game Server
+
+Arquitetura otimizada para game server com baixa latência e alta performance:
+
+```mermaid
+%%{init: {'theme':'base', 'themeVariables': {
+  'primaryColor':'#4a9eff',
+  'primaryTextColor':'#fff',
+  'primaryBorderColor':'#2563eb',
+  'lineColor':'#60a5fa',
+  'secondaryColor':'#8b5cf6',
+  'tertiaryColor':'#10b981',
+  'noteBkgColor':'#1f2937',
+  'noteTextColor':'#fff',
+  'noteBorderColor':'#6b7280',
+  'background':'#1f2937',
+  'mainBkg':'#374151',
+  'secondBkg':'#4b5563',
+  'clusterBkg':'#1f2937',
+  'clusterBorder':'#6b7280',
+  'titleColor':'#fff',
+  'edgeLabelBackground':'#374151',
+  'nodeTextColor':'#fff'
+}}}%%
+graph TB
+    Players["Players on Internet<br/>Multiplayer Game Clients"]
+
+    subgraph AWS["AWS Cloud"]
+        subgraph PublicSubnet["Public Subnet"]
+            GAME["Game Server Instance<br/>c5.large / i3.xlarge"]
+
+            subgraph GameComponents["Server Components"]
+                ENGINE["Game Engine<br/>(Unity/Unreal)"]
+                STATE["State Manager"]
+                SYNC["Real-time Sync"]
+            end
+
+            GAME --> GameComponents
+
+            EBS["High IOPS EBS<br/>io2 Volume<br/>Low Latency Storage"]
+            GAME --> EBS
+        end
+
+        subgraph Backend["Backend Services"]
+            DDB["DynamoDB<br/>Player Data"]
+            S3_ASSETS["S3<br/>Game Assets"]
+        end
+    end
+
+    Players -->|"UDP/TCP<br/>Low Latency<br/>Persistent Connection"| GAME
+    GAME -->|"Player Stats"| DDB
+    GAME -->|"Load Assets"| S3_ASSETS
+
+    style AWS fill:#fff8e1,stroke:#f9a825,stroke-width:3px
+    style PublicSubnet fill:#c8e6c9,stroke:#4caf50,stroke-width:2px
+    style GameComponents fill:#fff4e6,stroke:#ff9800,stroke-width:2px
+    style Backend fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    style Players fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    style GAME fill:#ffcdd2,stroke:#f44336,stroke-width:2px
+    style ENGINE fill:#d1c4e9,stroke:#673ab7,stroke-width:2px
+    style STATE fill:#d1c4e9,stroke:#673ab7,stroke-width:2px
+    style SYNC fill:#d1c4e9,stroke:#673ab7,stroke-width:2px
+    style EBS fill:#ffecb3,stroke:#ffa000,stroke-width:2px
+    style DDB fill:#bbdefb,stroke:#2196f3,stroke-width:2px
+    style S3_ASSETS fill:#bbdefb,stroke:#2196f3,stroke-width:2px
+```
+
+## Talos Linux - Sistema Operacional Imutável para Kubernetes
+
+[Talos Linux](https://www.talos.dev/) é um sistema operacional moderno projetado especificamente para rodar Kubernetes. Ele é:
+- **Imutável**: Sistema de arquivos read-only, mais seguro
+- **API-driven**: Configurado via API, sem SSH
+- **Minimalista**: Apenas componentes essenciais para K8s
+- **Seguro**: Hardened por padrão, sem shell
+
+O Infra Operator suporta deploy de Talos Linux na AWS com monitoramento de logs de boot via `enableConsoleOutput`.
+
+### AMIs do Talos Linux
+
+Para encontrar a AMI mais recente do Talos Linux na sua região:
+
+```bash
+# Listar AMIs oficiais do Talos Linux (us-east-1)
+aws ec2 describe-images \
+  --owners 540036508848 \
+  --filters "Name=name,Values=talos-v*-amd64" \
+  --query 'Images | sort_by(@, &CreationDate) | [-1].[ImageId,Name]' \
+  --output text
+
+# Exemplo de saída:
+# ami-069bd0875ff9cae9c  talos-v1.11.5-amd64
+```
+
+**AMIs oficiais do Talos Linux (Novembro 2025)**:
+- `ami-069bd0875ff9cae9c` - Talos v1.11.5 (amd64) - us-east-1
+- Para outras regiões, consulte: https://www.talos.dev/v1.11/talos-guides/install/cloud-platforms/aws/
+
+### Criar Instância Talos Linux
+
+<CodeGroup>
+```yaml Talos Control Plane / Worker
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: EC2Instance
+metadata:
+  name: talos-linux-cp-worker-example
+  namespace: infra-operator
+spec:
+  providerRef:
+    name: aws-develop
+
+  # Nome da instância
+  instanceName: talos-linux-cp-worker-example
+
+  # AMI oficial do Talos Linux v1.11.5 (amd64)
+  imageID: ami-069bd0875ff9cae9c
+
+  # Mínimo recomendado: t3.medium (2 vCPU, 4GB RAM)
+  instanceType: t3.medium
+
+  # Subnet e Security Group existentes
+  subnetID: subnet-xxxxxxxxx
+  securityGroupIDs:
+    - sg-xxxxxxxxx
+
+  # Habilita coleta de logs do console (essencial para debug de boot)
+  enableConsoleOutput: true
+
+  # Volume raiz - Talos requer mínimo 10GB
+  blockDeviceMappings:
+    - deviceName: /dev/xvda
+      ebs:
+        volumeSize: 20
+        volumeType: gp3
+        deleteOnTermination: true
+
+  tags:
+    Environment: develop
+    OS: talos-linux
+    Version: v1.11.5
+    Role: control-plane
+```
+
+```yaml Talos com Machine Config (userData)
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: EC2Instance
+metadata:
+  name: talos-node
+  namespace: infra-operator
+spec:
+  providerRef:
+    name: aws-production
+
+  instanceName: talos-node-01
+  imageID: ami-069bd0875ff9cae9c
+  instanceType: t3.large
+  subnetID: subnet-xxxxxxxxx
+  securityGroupIDs:
+    - sg-xxxxxxxxx
+
+  enableConsoleOutput: true
+
+  # Machine config do Talos (base64 encoded ou plain YAML)
+  # Gere com: talosctl gen config my-cluster https://endpoint:6443
+  userData: |
+    version: v1alpha1
+    machine:
+      type: worker
+      token: abc123.xyz789
+      ca:
+        crt: LS0tLS1CRUdJTi...
+    cluster:
+      controlPlane:
+        endpoint: https://10.0.1.100:6443
+
+  blockDeviceMappings:
+    - deviceName: /dev/xvda
+      ebs:
+        volumeSize: 50
+        volumeType: gp3
+        deleteOnTermination: true
+
+  tags:
+    Environment: production
+    OS: talos-linux
+    Role: worker
+```
+</CodeGroup>
+
+### Monitorar Boot do Talos via Console Output
+
+Após criar a instância, use os comandos abaixo para monitorar o processo de boot:
+
+```bash
+# 1. Aguardar instância ficar Running
+kubectl get ec2instance talos-linux-cp-worker-example -n infra-operator -w
+
+# 2. Ver logs do console (kernel, talos init, serviços)
+kubectl get ec2instance talos-linux-cp-worker-example -n infra-operator \
+  -o jsonpath='{.status.consoleOutput}'
+
+# 3. Ver com formatação melhor
+kubectl get ec2instance talos-linux-cp-worker-example -n infra-operator \
+  -o jsonpath='{.status.consoleOutput}' | less
+
+# 4. Verificar timestamp do último log
+kubectl get ec2instance talos-linux-cp-worker-example -n infra-operator \
+  -o jsonpath='Última atualização: {.status.consoleOutputTimestamp}'
+```
+
+### Exemplo de Console Output do Talos
+
+```
+[    0.000000] Linux version 6.6.54-talos (...)
+[    0.000000] Command line: init_on_alloc=1 slab_nomerge pti=on (...)
+[    0.097234] ACPI: RSDP 0x00000000BFFF0000 (...)
+[    0.500000] Freeing initrd memory: 14208K
+[    0.750000] [talos] starting Talos v1.11.5
+[    0.755000] [talos] reading machine config from AWS metadata
+[    0.800000] [talos] task initializeCNI (1/5): starting
+[    0.900000] [talos] task initializeCNI (1/5): done, 100.123ms
+[    1.000000] [talos] task startContainerd (2/5): starting
+[    1.100000] [talos] task startContainerd (2/5): done, 50.456ms
+[    1.150000] [talos] task startKubelet (3/5): starting
+[    1.203061] [talos] task startSyslogd (4/5): done, 43.534039ms
+[    1.205186] [talos] service[auditd](Starting): Starting service
+[    1.207893] [talos] service[auditd](Running): Started service
+[    1.210000] [talos] task startAuditd (5/5): done, 4.773039ms
+[    2.000000] [talos] service[kubelet](Running): Started service
+[    2.500000] [talos] bootstrap complete
+```
+
+### Troubleshooting Talos
+
+<AccordionGroup>
+  <Accordion title="Instância não aparece no cluster Kubernetes">
+    **Sintomas:** Instância está Running mas não se registra no cluster K8s
+
+    **Verificar via Console Output:**
+    ```bash
+    kubectl get ec2instance talos-node -n infra-operator \
+      -o jsonpath='{.status.consoleOutput}' | grep -E "(error|failed|timeout)"
+    ```
+
+    **Causas comuns:**
+    1. Machine config inválido no userData
+    2. Endpoint do control plane inacessível
+    3. Token de bootstrap expirado
+    4. Security group bloqueando portas 6443/10250
+
+    **Solução:**
+    - Verificar conectividade com control plane
+    - Regenerar machine config: `talosctl gen config`
+    - Verificar Security Groups permitem tráfego K8s
+  </Accordion>
+
+  <Accordion title="Boot fica travado em 'reading machine config'">
+    **Sintomas:** Console mostra `reading machine config from AWS metadata` por muito tempo
+
+    **Causas:**
+    1. userData não configurado ou inválido
+    2. IMDS (metadata service) bloqueado
+
+    **Verificar:**
+    ```bash
+    # Ver se há erros no console
+    kubectl get ec2instance talos-node -n infra-operator \
+      -o jsonpath='{.status.consoleOutput}' | tail -20
+    ```
+
+    **Solução:**
+    - Verificar userData contém machine config válido
+    - Verificar instância tem acesso ao IMDS (169.254.169.254)
+  </Accordion>
+
+  <Accordion title="Erro 'certificate has expired' nos logs">
+    **Sintomas:** Logs mostram erros de certificado expirado
+
+    **Solução:**
+    ```bash
+    # Regenerar certificados
+    talosctl gen config my-cluster https://endpoint:6443 --force
+
+    # Recriar instância com novo userData
+    kubectl delete ec2instance talos-node -n infra-operator
+    # Atualizar YAML com novo userData
+    kubectl apply -f talos-node.yaml
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Portas Necessárias no Security Group
+
+Para um cluster Talos funcionar, o Security Group deve permitir:
+
+| Porta | Protocolo | Descrição |
+|-------|-----------|-----------|
+| 6443 | TCP | Kubernetes API Server |
+| 10250 | TCP | Kubelet API |
+| 10257 | TCP | Kube Controller Manager |
+| 10259 | TCP | Kube Scheduler |
+| 50000 | TCP | Talos API |
+| 50001 | TCP | Talos Trustd |
+| 51820 | UDP | Wireguard (CNI) |
+
+<Warning>
+  Talos Linux não possui SSH por design. Todo gerenciamento é feito via `talosctl` na porta 50000. Habilite `enableConsoleOutput: true` para debug de problemas de boot.
+</Warning>
+
+## ComputeStack com Bastion (Infraestrutura Completa)
+
+O **ComputeStack** permite criar toda a infraestrutura de rede + uma instância EC2 Bastion em um único recurso. Ideal para ambientes que precisam de acesso SSH rápido a recursos na VPC.
+
+### O que o ComputeStack cria automaticamente
+
+- VPC com CIDR configurável
+- **Subnet pública** (criada automaticamente se não especificada)
+- Internet Gateway
+- Route Table com rota para IGW
+- Security Group para SSH (porta 22)
+- **Key Pair SSH** (gerado automaticamente se não especificado)
+- **Secret Kubernetes** com a chave privada SSH
+- Instância EC2 Bastion com IP público
+
+### Exemplo Mínimo (100% Automático)
+
+O ComputeStack pode criar tudo automaticamente com configuração mínima:
+
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: ComputeStack
+metadata:
+  name: auto-stack
+  namespace: infra-operator
+spec:
+  providerRef:
+    name: aws-develop
+  vpcCIDR: "10.200.0.0/16"
+  bastionInstance:
+    enabled: true
+    instanceType: t3.micro
+```
+
+<Note>
+  **Auto-criação habilitada**: Quando você não especifica `publicSubnets`, o ComputeStack cria automaticamente uma subnet pública com CIDR calculado (ex: VPC `10.200.0.0/16` → Subnet `10.200.1.0/24`). Quando você não especifica `keyName`, o ComputeStack gera automaticamente um Key Pair SSH e armazena a chave privada em um Secret Kubernetes.
+</Note>
+
+### Exemplo Completo (Configuração Explícita)
+
+<CodeGroup>
+```yaml ComputeStack com Bastion
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: ComputeStack
+metadata:
+  name: bastion-stack
+  namespace: infra-operator
+spec:
+  providerRef:
+    name: aws-develop
+
+  # VPC
+  vpcCIDR: "10.250.0.0/16"
+  vpcName: bastion-vpc
+
+  # Availability Zone
+  availabilityZones:
+    - us-east-1a
+
+  # Subnet pública (opcional - criada automaticamente se não especificada)
+  publicSubnets:
+    - cidr: "10.250.1.0/24"
+      availabilityZone: us-east-1a
+      name: bastion-public-subnet
+
+  # Configuração do Bastion
+  bastionInstance:
+    enabled: true
+    instanceType: t3.micro
+    # keyName: my-existing-keypair  # Opcional - se não especificado, gera automaticamente
+    sshAllowedCIDRs:
+      - "0.0.0.0/0"  # Para testes (restringir em produção)
+    rootVolumeSize: 8
+    associatePublicIP: true
+
+  enableDNSHostnames: true
+  enableDNSSupport: true
+
+  tags:
+    Environment: development
+    ManagedBy: infra-operator
+
+  deletionPolicy: Delete
+```
+
+```bash Aplicar e Monitorar
+# 1. Aplicar ComputeStack
+kubectl apply -f computestack-bastion.yaml
+
+# 2. Acompanhar fases de criação
+kubectl get computestack bastion-stack -n infra-operator -w
+
+# Fases: CreatingVPC -> CreatingSubnets -> CreatingIGW ->
+#        CreatingRoutes -> CreatingBastionSG -> CreatingBastion ->
+#        WaitingBastionInstance -> Ready
+
+# 3. Obter comando SSH
+kubectl get computestack bastion-stack -n infra-operator \
+  -o jsonpath='{.status.bastionInstance.sshCommand}'
+
+# 4. Obter IP público
+kubectl get computestack bastion-stack -n infra-operator \
+  -o jsonpath='{.status.bastionInstance.publicIP}'
+```
+
+```yaml Status Esperado (com Key Pair auto-gerado)
+status:
+  phase: Ready
+  ready: true
+  message: "ComputeStack created successfully. SSH: kubectl get secret auto-stack-ssh-key..."
+
+  vpc:
+    id: vpc-0d52bc042f8ef3e38
+    cidr: 10.250.0.0/16
+    state: available
+
+  publicSubnets:
+    - id: subnet-0c0ef82c08a87cc45
+      cidr: 10.250.1.0/24
+      availabilityZone: us-east-1a
+      type: public
+      state: available
+
+  bastionInstance:
+    id: i-0e87528705d46ee48
+    name: auto-stack-bastion
+    state: running
+    instanceType: t3.micro
+    privateIP: 10.250.1.224
+    publicIP: 44.204.0.225
+    # Campos de Key Pair auto-gerado:
+    keyPairGenerated: true
+    keyPairName: auto-stack-bastion-key
+    sshKeySecretName: auto-stack-ssh-key
+    sshCommand: "kubectl get secret auto-stack-ssh-key -n infra-operator -o jsonpath='{.data.private-key}' | base64 -d > /tmp/auto-stack.pem && chmod 600 /tmp/auto-stack.pem && ssh -i /tmp/auto-stack.pem ec2-user@44.204.0.225"
+```
+</CodeGroup>
+
+### Configurações do Bastion
+
+| Campo | Tipo | Descrição |
+|-------|------|-----------|
+| `enabled` | bool | Habilita criação do Bastion |
+| `instanceType` | string | Tipo da instância (ex: t3.micro) |
+| `keyName` | string | Nome de Key Pair existente (opcional - se não especificado, gera automaticamente) |
+| `sshAllowedCIDRs` | []string | CIDRs permitidos para SSH |
+| `rootVolumeSize` | int | Tamanho do volume raiz em GB |
+| `associatePublicIP` | bool | Associa IP público automaticamente |
+
+<Warning>
+  **Segurança**: Em produção, nunca use `0.0.0.0/0` em `sshAllowedCIDRs`. Restrinja ao IP da sua rede corporativa ou VPN.
+</Warning>
+
+### Cloud-Init / UserData - Scripts de Inicialização
+
+O ComputeStack suporta **cloud-init** através do campo `userData` no Bastion. Isso permite executar scripts de inicialização automaticamente quando a instância é criada.
+
+<CodeGroup>
+```yaml ComputeStack com Cloud-Init (Neofetch)
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: ComputeStack
+metadata:
+  name: cloudinit-test
+  namespace: infra-operator
+spec:
+  providerRef:
+    name: aws-develop
+  vpcCIDR: "10.231.0.0/16"
+  bastionInstance:
+    enabled: true
+    instanceType: t3.micro
+    rootVolumeSize: 10
+    userData: |
+      #!/bin/bash
+      set -ex
+      exec > /var/log/user-data.log 2>&1
+      echo "Starting cloud-init at $(date)"
+
+      # Instalar git
+      yum install -y git
+
+      # Instalar neofetch
+      git clone https://github.com/dylanaraps/neofetch.git /opt/neofetch
+      cd /opt/neofetch && make install
+
+      # Executar neofetch e salvar output
+      neofetch --stdout > /home/ec2-user/neofetch-output.txt
+
+      echo "Cloud-init completed at $(date)" >> /home/ec2-user/neofetch-output.txt
+      chown ec2-user:ec2-user /home/ec2-user/neofetch-output.txt
+```
+
+```yaml Cloud-Init com Docker
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: ComputeStack
+metadata:
+  name: docker-stack
+  namespace: infra-operator
+spec:
+  providerRef:
+    name: aws-develop
+  vpcCIDR: "10.232.0.0/16"
+  bastionInstance:
+    enabled: true
+    instanceType: t3.small
+    rootVolumeSize: 20
+    userData: |
+      #!/bin/bash
+      set -ex
+      exec > /var/log/user-data.log 2>&1
+
+      # Instalar Docker
+      amazon-linux-extras install docker -y
+      systemctl start docker
+      systemctl enable docker
+      usermod -a -G docker ec2-user
+
+      # Instalar Docker Compose
+      curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" \
+        -o /usr/local/bin/docker-compose
+      chmod +x /usr/local/bin/docker-compose
+
+      echo "Docker installation completed!"
+```
+
+```yaml Cloud-Init via Secret (Dados Sensíveis)
+# 1. Criar Secret com o userData
+apiVersion: v1
+kind: Secret
+metadata:
+  name: my-cloudinit-script
+  namespace: infra-operator
+type: Opaque
+stringData:
+  userData: |
+    #!/bin/bash
+    set -ex
+    # Script com dados sensíveis
+    export DB_PASSWORD="minha-senha-secreta"
+    # ... resto do script
+---
+# 2. Referenciar o Secret no ComputeStack
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: ComputeStack
+metadata:
+  name: secret-cloudinit-stack
+  namespace: infra-operator
+spec:
+  providerRef:
+    name: aws-develop
+  vpcCIDR: "10.233.0.0/16"
+  bastionInstance:
+    enabled: true
+    instanceType: t3.micro
+    # Referência ao Secret ao invés de userData inline
+    userDataSecretRef:
+      name: my-cloudinit-script
+      key: userData  # default se não especificado
+```
+
+```bash Verificar Cloud-Init
+# 1. Aguardar stack ficar Ready
+kubectl get computestack cloudinit-test -n infra-operator -w
+
+# 2. Extrair chave SSH
+kubectl get secret cloudinit-test-ssh-key -n infra-operator \
+  -o jsonpath='{.data.private-key}' | base64 -d > /tmp/cloudinit.pem
+chmod 600 /tmp/cloudinit.pem
+
+# 3. Obter IP do bastion
+BASTION_IP=$(kubectl get computestack cloudinit-test -n infra-operator \
+  -o jsonpath='{.status.bastionInstance.publicIP}')
+
+# 4. Conectar e verificar resultado do cloud-init
+ssh -i /tmp/cloudinit.pem ec2-user@$BASTION_IP \
+  "cat /home/ec2-user/neofetch-output.txt"
+
+# 5. Ver logs do cloud-init
+ssh -i /tmp/cloudinit.pem ec2-user@$BASTION_IP \
+  "sudo cat /var/log/user-data.log"
+```
+</CodeGroup>
+
+**Exemplo de output do Neofetch instalado via Cloud-Init:**
+
+```
+root@ip-10-231-1-76.ec2.internal
+--------------------------------
+OS: Amazon Linux 2 x86_64
+Host: Amazon EC2
+Kernel: 4.14.355-280.708.amzn2.x86_64
+Uptime: 29 secs
+Packages: 462 (rpm)
+CPU: Intel Xeon Platinum 8259CL (2) @ 2.500GHz
+Memory: 375MiB / 944MiB
+
+Cloud-init completed at Wed Nov 26 14:32:56 UTC 2025
+```
+
+<Note>
+  **Formas de passar userData:**
+  - `userData`: Script inline no YAML (para scripts pequenos)
+  - `userDataSecretRef`: Referência a um Secret Kubernetes (para scripts grandes ou com dados sensíveis)
+
+  O userData é automaticamente codificado em base64 pelo operator antes de enviar para a AWS.
+</Note>
+
+### Conectar via SSH
+
+**Opção 1: Com Key Pair auto-gerado** (quando `keyName` não foi especificado):
+
+```bash
+# 1. O comando SSH completo está disponível no status:
+kubectl get computestack auto-stack -n infra-operator \
+  -o jsonpath='{.status.bastionInstance.sshCommand}'
+
+# 2. Ou execute manualmente:
+# Extrair chave privada do Secret
+kubectl get secret auto-stack-ssh-key -n infra-operator \
+  -o jsonpath='{.data.private-key}' | base64 -d > /tmp/auto-stack.pem
+
+# Ajustar permissões
+chmod 600 /tmp/auto-stack.pem
+
+# Conectar
+BASTION_IP=$(kubectl get computestack auto-stack -n infra-operator \
+  -o jsonpath='{.status.bastionInstance.publicIP}')
+ssh -i /tmp/auto-stack.pem ec2-user@$BASTION_IP
+```
+
+**Opção 2: Com Key Pair existente** (quando `keyName` foi especificado):
+
+```bash
+# O Bastion usa a AMI padrão do Amazon Linux 2
+# Usuário padrão: ec2-user
+ssh -i ~/.ssh/sua-chave.pem ec2-user@<IP_PUBLICO>
+```
+
+### Key Pair Auto-gerado - Detalhes
+
+Quando você não especifica `keyName` no spec do Bastion:
+
+1. O operator cria um Key Pair na AWS com nome `<stack-name>-bastion-key`
+2. A chave privada é armazenada em um Secret Kubernetes: `<stack-name>-ssh-key`
+3. O Secret tem OwnerReference para o ComputeStack (deletado automaticamente com o stack)
+4. O status mostra `keyPairGenerated: true` e o nome do Secret
+
+**Campos do status relacionados ao Key Pair:**
+- `bastionInstance.keyPairGenerated`: `true` se foi auto-gerado
+- `bastionInstance.keyPairName`: Nome do Key Pair na AWS
+- `bastionInstance.sshKeySecretName`: Nome do Secret com a chave privada
+- `bastionInstance.sshCommand`: Comando completo para SSH (inclui extração da chave)
+
+<Note>
+  Veja mais exemplos em `samples/29-computestack.yaml` incluindo configuração de produção com NAT Gateway e múltiplas AZs.
+</Note>
+
+## Recursos Relacionados
+
+- **VPC & Subnet**: Necessário para networking
+- **Security Groups**: Firewall/controle de acesso
+- **IAM Roles**: Credenciais para instância
+- **EBS Volumes**: Armazenamento persistente
+- **Elastic IPs**: IP público estático
+- **Auto Scaling Groups**: Escalabilidade automática
+- **Application Load Balancer (ALB)**: Distribuição de carga
+- **S3**: Armazenamento para backups e código
+- **ComputeStack**: Infraestrutura de rede completa com Bastion
+
+## Próximos Passos
+
+1. **Criar primeira instância EC2 com manifesto YAML**
+2. **Configurar Security Groups e SSH access**
+3. **Instalar aplicação via userData script**
+4. **Escalar com Auto Scaling Groups**
+5. **Adicionar Load Balancer na frente**
+6. **Implementar CI/CD para deploy automático**

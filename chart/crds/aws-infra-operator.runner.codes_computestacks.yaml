@@ -1,0 +1,652 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: computestacks.aws-infra-operator.runner.codes
+spec:
+  group: aws-infra-operator.runner.codes
+  names:
+    kind: ComputeStack
+    listKind: ComputeStackList
+    plural: computestacks
+    shortNames:
+    - cs
+    - cstack
+    singular: computestack
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - description: VPC ID
+      jsonPath: .status.vpc.id
+      name: VPC
+      type: string
+    - description: VPC CIDR
+      jsonPath: .spec.vpcCIDR
+      name: CIDR
+      type: string
+    - description: Current phase
+      jsonPath: .status.phase
+      name: Phase
+      type: string
+    - description: Stack ready
+      jsonPath: .status.ready
+      name: Ready
+      type: boolean
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          ComputeStack é o Schema para a API computestacks
+          Cria toda a infraestrutura de rede AWS em um único recurso:
+          VPC, Subnets, Internet Gateway, NAT Gateway, Route Tables e Security Groups
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              ComputeStackSpec define o estado desejado do ComputeStack
+              Um ComputeStack cria toda a infraestrutura de rede necessária:
+              VPC, Subnets, Internet Gateway, NAT Gateway, Route Tables e Security Groups
+              Todos os campos são opcionais se você passar os IDs de recursos existentes
+            properties:
+              availabilityZones:
+                description: |-
+                  AvailabilityZones lista as AZs onde criar subnets
+                  Obrigatório apenas se não especificar existingSubnetIDs
+                items:
+                  type: string
+                maxItems: 6
+                type: array
+              bastionInstance:
+                description: BastionInstance configura uma instância EC2 bastion para
+                  acesso SSH
+                properties:
+                  associatePublicIP:
+                    default: true
+                    description: AssociatePublicIP associa um IP público à instância
+                    type: boolean
+                  enabled:
+                    default: false
+                    description: Enabled habilita a criação de uma instância bastion
+                    type: boolean
+                  imageID:
+                    description: ImageID é o ID da AMI para usar (opcional, usa Amazon
+                      Linux 2 se não especificado)
+                    type: string
+                  instanceType:
+                    default: t3.micro
+                    description: 'InstanceType é o tipo da instância EC2 (ex: t3.micro,
+                      t3.small)'
+                    type: string
+                  keyName:
+                    description: KeyName é o nome do Key Pair para acesso SSH (obrigatório
+                      se enabled=true)
+                    type: string
+                  name:
+                    description: Name é o nome da instância (opcional, usa metadata.name-bastion
+                      se não especificado)
+                    type: string
+                  rootVolumeSize:
+                    default: 20
+                    description: RootVolumeSize é o tamanho do volume root em GB
+                    format: int32
+                    maximum: 16384
+                    minimum: 8
+                    type: integer
+                  sshAllowedCIDRs:
+                    default:
+                    - 0.0.0.0/0
+                    description: SSHAllowedCIDRs são os blocos CIDR permitidos para
+                      SSH (porta 22)
+                    items:
+                      type: string
+                    type: array
+                  tags:
+                    additionalProperties:
+                      type: string
+                    description: Tags são tags específicas da instância bastion
+                    type: object
+                  userData:
+                    description: |-
+                      UserData é o script cloud-init para executar no boot da instância
+                      Suporta shell scripts (#!) ou cloud-config YAML (#cloud-config)
+                      O conteúdo será automaticamente codificado em base64
+                    type: string
+                  userDataSecretRef:
+                    description: |-
+                      UserDataSecretRef referencia um Secret contendo o userData
+                      Alternativa ao campo userData para scripts maiores ou sensíveis
+                      O Secret deve ter uma chave "userData" com o conteúdo do script
+                    properties:
+                      key:
+                        default: userData
+                        description: 'Key é a chave dentro do Secret (default: "userData")'
+                        type: string
+                      name:
+                        description: Name é o nome do Secret
+                        type: string
+                      namespace:
+                        description: Namespace é o namespace do Secret (opcional,
+                          usa o namespace do CR se não especificado)
+                        type: string
+                    required:
+                    - name
+                    type: object
+                type: object
+              defaultSecurityGroups:
+                description: DefaultSecurityGroups define security groups padrão a
+                  serem criados
+                items:
+                  description: SecurityGroupConfig define a configuração de um Security
+                    Group
+                  properties:
+                    description:
+                      description: Description é a descrição do Security Group
+                      type: string
+                    egressRules:
+                      description: EgressRules são as regras de saída
+                      items:
+                        description: SecurityGroupRuleConfig define uma regra de Security
+                          Group simplificada
+                        properties:
+                          cidr:
+                            description: 'CIDR é o bloco CIDR permitido (ex: 0.0.0.0/0)'
+                            type: string
+                          description:
+                            description: Description é a descrição da regra
+                            type: string
+                          port:
+                            description: Port é a porta (ou porta inicial se toPort
+                              especificado)
+                            format: int32
+                            maximum: 65535
+                            minimum: 0
+                            type: integer
+                          protocol:
+                            description: Protocol é o protocolo (tcp, udp, icmp, -1
+                              para todos)
+                            type: string
+                          toPort:
+                            description: ToPort é a porta final (opcional, usa Port
+                              se não especificado)
+                            format: int32
+                            maximum: 65535
+                            minimum: 0
+                            type: integer
+                        required:
+                        - cidr
+                        - port
+                        - protocol
+                        type: object
+                      type: array
+                    ingressRules:
+                      description: IngressRules são as regras de entrada
+                      items:
+                        description: SecurityGroupRuleConfig define uma regra de Security
+                          Group simplificada
+                        properties:
+                          cidr:
+                            description: 'CIDR é o bloco CIDR permitido (ex: 0.0.0.0/0)'
+                            type: string
+                          description:
+                            description: Description é a descrição da regra
+                            type: string
+                          port:
+                            description: Port é a porta (ou porta inicial se toPort
+                              especificado)
+                            format: int32
+                            maximum: 65535
+                            minimum: 0
+                            type: integer
+                          protocol:
+                            description: Protocol é o protocolo (tcp, udp, icmp, -1
+                              para todos)
+                            type: string
+                          toPort:
+                            description: ToPort é a porta final (opcional, usa Port
+                              se não especificado)
+                            format: int32
+                            maximum: 65535
+                            minimum: 0
+                            type: integer
+                        required:
+                        - cidr
+                        - port
+                        - protocol
+                        type: object
+                      type: array
+                    name:
+                      description: Name é o nome do Security Group
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
+              deletionPolicy:
+                default: Delete
+                description: DeletionPolicy define o comportamento ao deletar o CR
+                enum:
+                - Delete
+                - Retain
+                type: string
+              enableDNSHostnames:
+                default: true
+                description: EnableDNSHostnames habilita DNS hostnames na VPC
+                type: boolean
+              enableDNSSupport:
+                default: true
+                description: EnableDNSSupport habilita suporte a DNS na VPC
+                type: boolean
+              existingInternetGatewayID:
+                description: |-
+                  ExistingInternetGatewayID é o ID de um Internet Gateway existente
+                  Se especificado, não cria novo IGW
+                type: string
+              existingNATGatewayIDs:
+                description: |-
+                  ExistingNATGatewayIDs são IDs de NAT Gateways existentes
+                  Se especificado, não cria novos NAT Gateways
+                items:
+                  type: string
+                type: array
+              existingRouteTableIDs:
+                description: |-
+                  ExistingRouteTableIDs são IDs de Route Tables existentes
+                  Se especificado, não cria novas Route Tables
+                items:
+                  type: string
+                type: array
+              existingSecurityGroupIDs:
+                description: |-
+                  ExistingSecurityGroupIDs são IDs de Security Groups existentes
+                  Se especificado, não cria novos Security Groups
+                items:
+                  type: string
+                type: array
+              existingSubnetIDs:
+                description: |-
+                  ExistingSubnetIDs são IDs de subnets existentes para usar
+                  Se especificado, não cria novas subnets e ignora publicSubnets/privateSubnets
+                items:
+                  type: string
+                type: array
+              existingVpcID:
+                description: |-
+                  ExistingVpcID é o ID de uma VPC existente para usar
+                  Se especificado, não cria nova VPC e ignora vpcCIDR/vpcName
+                type: string
+              natGateway:
+                description: NATGateway configura o NAT Gateway para subnets privadas
+                properties:
+                  enabled:
+                    default: true
+                    description: Enabled habilita a criação de NAT Gateway
+                    type: boolean
+                  highAvailability:
+                    default: false
+                    description: |-
+                      HighAvailability cria um NAT Gateway por AZ (mais caro, mais resiliente)
+                      Se false, cria apenas um NAT Gateway compartilhado
+                    type: boolean
+                type: object
+              privateSubnets:
+                description: PrivateSubnets define as subnets privadas (com acesso
+                  à internet via NAT)
+                items:
+                  description: SubnetConfig define a configuração de uma subnet
+                  properties:
+                    availabilityZone:
+                      description: AvailabilityZone é a AZ onde criar a subnet
+                      type: string
+                    cidr:
+                      description: 'CIDR é o bloco CIDR da subnet (ex: 10.0.1.0/24)'
+                      pattern: ^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$
+                      type: string
+                    name:
+                      description: Name é o nome da subnet (opcional)
+                      type: string
+                    tags:
+                      additionalProperties:
+                        type: string
+                      description: Tags são tags específicas desta subnet
+                      type: object
+                  required:
+                  - availabilityZone
+                  - cidr
+                  type: object
+                type: array
+              providerRef:
+                description: ProviderRef referencia o AWSProvider para autenticação
+                properties:
+                  name:
+                    description: Name of the AWSProvider
+                    type: string
+                  namespace:
+                    description: Namespace of the AWSProvider (if different from current
+                      namespace)
+                    type: string
+                required:
+                - name
+                type: object
+              publicSubnets:
+                description: |-
+                  PublicSubnets define as subnets públicas (com acesso à internet via IGW)
+                  Obrigatório apenas se não especificar existingSubnetIDs
+                items:
+                  description: SubnetConfig define a configuração de uma subnet
+                  properties:
+                    availabilityZone:
+                      description: AvailabilityZone é a AZ onde criar a subnet
+                      type: string
+                    cidr:
+                      description: 'CIDR é o bloco CIDR da subnet (ex: 10.0.1.0/24)'
+                      pattern: ^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$
+                      type: string
+                    name:
+                      description: Name é o nome da subnet (opcional)
+                      type: string
+                    tags:
+                      additionalProperties:
+                        type: string
+                      description: Tags são tags específicas desta subnet
+                      type: object
+                  required:
+                  - availabilityZone
+                  - cidr
+                  type: object
+                type: array
+              tags:
+                additionalProperties:
+                  type: string
+                description: Tags são tags adicionais aplicadas a todos os recursos
+                type: object
+              vpcCIDR:
+                description: |-
+                  VpcCIDR é o bloco CIDR da VPC (ex: 10.0.0.0/16)
+                  Obrigatório apenas se não especificar existingVpcID
+                pattern: ^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$
+                type: string
+              vpcName:
+                description: VpcName é o nome da VPC (opcional, usa metadata.name
+                  se não especificado)
+                type: string
+            required:
+            - providerRef
+            type: object
+          status:
+            description: ComputeStackStatus define o estado observado do ComputeStack
+            properties:
+              bastionInstance:
+                description: BastionInstance contém informações da instância bastion
+                  EC2
+                properties:
+                  availabilityZone:
+                    description: AvailabilityZone é a AZ onde a instância está rodando
+                    type: string
+                  id:
+                    description: ID é o ID da instância EC2 na AWS
+                    type: string
+                  instanceType:
+                    description: InstanceType é o tipo da instância
+                    type: string
+                  keyPairGenerated:
+                    description: KeyPairGenerated indica se o key pair foi gerado
+                      automaticamente pelo operator
+                    type: boolean
+                  keyPairName:
+                    description: KeyPairName é o nome do key pair usado (pode ser
+                      gerado automaticamente)
+                    type: string
+                  name:
+                    description: Name é o nome da instância
+                    type: string
+                  privateIP:
+                    description: PrivateIP é o IP privado da instância
+                    type: string
+                  publicIP:
+                    description: PublicIP é o IP público da instância
+                    type: string
+                  sshCommand:
+                    description: SSHCommand é o comando SSH para conectar na instância
+                    type: string
+                  sshKeySecretName:
+                    description: SSHKeySecretName é o nome do Secret que contém a
+                      chave privada SSH (se gerada)
+                    type: string
+                  state:
+                    description: State é o estado da instância (pending, running,
+                      stopped, terminated)
+                    type: string
+                type: object
+              bastionSecurityGroup:
+                description: BastionSecurityGroup contém informações do Security Group
+                  do bastion
+                properties:
+                  id:
+                    description: ID é o ID do Security Group na AWS
+                    type: string
+                  name:
+                    description: Name é o nome do Security Group
+                    type: string
+                type: object
+              conditions:
+                description: Conditions são as condições do recurso
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              internetGateway:
+                description: InternetGateway contém informações do Internet Gateway
+                properties:
+                  id:
+                    description: ID é o ID do Internet Gateway na AWS
+                    type: string
+                  state:
+                    description: State é o estado do IGW
+                    type: string
+                type: object
+              lastSyncTime:
+                description: LastSyncTime é o timestamp da última sincronização
+                format: date-time
+                type: string
+              message:
+                description: Message contém mensagem de status ou erro
+                type: string
+              natGateways:
+                description: NATGateways contém informações dos NAT Gateways
+                items:
+                  description: NATGatewayStatusInfo contém informações de status do
+                    NAT Gateway
+                  properties:
+                    allocationID:
+                      description: AllocationID é o ID do Elastic IP
+                      type: string
+                    elasticIP:
+                      description: ElasticIP é o IP elástico associado
+                      type: string
+                    id:
+                      description: ID é o ID do NAT Gateway na AWS
+                      type: string
+                    state:
+                      description: State é o estado do NAT Gateway
+                      type: string
+                    subnetID:
+                      description: SubnetID é a subnet onde o NAT está
+                      type: string
+                  type: object
+                type: array
+              phase:
+                description: Phase indica a fase atual da stack
+                type: string
+              privateSubnets:
+                description: PrivateSubnets contém informações das subnets privadas
+                items:
+                  description: SubnetStatusInfo contém informações de status de uma
+                    subnet
+                  properties:
+                    availabilityZone:
+                      description: AvailabilityZone é a AZ da subnet
+                      type: string
+                    cidr:
+                      description: CIDR é o bloco CIDR da subnet
+                      type: string
+                    id:
+                      description: ID é o ID da subnet na AWS
+                      type: string
+                    state:
+                      description: State é o estado da subnet
+                      type: string
+                    type:
+                      description: Type é o tipo da subnet (public/private)
+                      type: string
+                  type: object
+                type: array
+              publicSubnets:
+                description: PublicSubnets contém informações das subnets públicas
+                items:
+                  description: SubnetStatusInfo contém informações de status de uma
+                    subnet
+                  properties:
+                    availabilityZone:
+                      description: AvailabilityZone é a AZ da subnet
+                      type: string
+                    cidr:
+                      description: CIDR é o bloco CIDR da subnet
+                      type: string
+                    id:
+                      description: ID é o ID da subnet na AWS
+                      type: string
+                    state:
+                      description: State é o estado da subnet
+                      type: string
+                    type:
+                      description: Type é o tipo da subnet (public/private)
+                      type: string
+                  type: object
+                type: array
+              ready:
+                description: Ready indica se toda a stack está pronta
+                type: boolean
+              routeTables:
+                description: RouteTables contém informações das Route Tables
+                items:
+                  description: RouteTableStatusInfo contém informações de status da
+                    Route Table
+                  properties:
+                    associatedSubnets:
+                      description: AssociatedSubnets são as subnets associadas
+                      items:
+                        type: string
+                      type: array
+                    id:
+                      description: ID é o ID da Route Table na AWS
+                      type: string
+                    type:
+                      description: Type é o tipo (public/private)
+                      type: string
+                  type: object
+                type: array
+              securityGroups:
+                description: SecurityGroups contém informações dos Security Groups
+                items:
+                  description: SecurityGroupStatusInfo contém informações de status
+                    do Security Group
+                  properties:
+                    id:
+                      description: ID é o ID do Security Group na AWS
+                      type: string
+                    name:
+                      description: Name é o nome do Security Group
+                      type: string
+                  type: object
+                type: array
+              vpc:
+                description: VPC contém informações da VPC criada
+                properties:
+                  cidr:
+                    description: CIDR é o bloco CIDR da VPC
+                    type: string
+                  id:
+                    description: VPCID é o ID da VPC na AWS
+                    type: string
+                  state:
+                    description: State é o estado da VPC
+                    type: string
+                type: object
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

@@ -1,0 +1,526 @@
+# ==============================================================================
+# SetupEKS - Exemplos de configuração
+# Cria toda a infraestrutura AWS necessária para um cluster EKS:
+# VPC, Subnets, NAT Gateway, IAM Roles, Security Groups, EKS Cluster e Node Groups
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# Exemplo 1: Cluster EKS Mínimo
+# Cria VPC, 2 subnets públicas, 2 subnets privadas, NAT Gateway e cluster EKS
+# ------------------------------------------------------------------------------
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: SetupEKS
+metadata:
+  name: eks-minimal
+  namespace: infra-operator
+spec:
+  providerRef:
+    name: aws-develop
+
+  # VPC CIDR (obrigatório)
+  vpcCIDR: "10.100.0.0/16"
+
+  # Kubernetes 1.29 (padrão)
+  kubernetesVersion: "1.29"
+
+  # Node Pools (obrigatório pelo menos 1)
+  nodePools:
+    - name: general
+      instanceTypes:
+        - t3.medium
+      scalingConfig:
+        minSize: 1
+        maxSize: 3
+        desiredSize: 2
+
+---
+# ------------------------------------------------------------------------------
+# Exemplo 2: Cluster EKS de Produção
+# Alta disponibilidade com NAT Gateways por AZ e logging habilitado
+# ------------------------------------------------------------------------------
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: SetupEKS
+metadata:
+  name: eks-production
+  namespace: infra-operator
+spec:
+  providerRef:
+    name: aws-production
+
+  clusterName: my-production-cluster
+  kubernetesVersion: "1.30"
+  vpcCIDR: "10.200.0.0/16"
+
+  # Alta disponibilidade: NAT Gateway em cada AZ
+  natGatewayMode: HighAvailability
+
+  # Especificar AZs manualmente
+  availabilityZones:
+    - us-east-1a
+    - us-east-1b
+    - us-east-1c
+
+  # Acesso ao endpoint
+  endpointAccess:
+    publicAccess: true
+    privateAccess: true
+    publicAccessCIDRs:
+      - "0.0.0.0/0"
+
+  # Logging no CloudWatch
+  clusterLogging:
+    apiServer: true
+    audit: true
+    authenticator: true
+    controllerManager: true
+    scheduler: true
+
+  # Criptografia de secrets com KMS
+  encryptionConfig:
+    enabled: true
+
+  # IRSA habilitado
+  enableIRSA: true
+
+  # Node Pools
+  nodePools:
+    # Pool para workloads gerais
+    - name: system
+      instanceTypes:
+        - m5.large
+        - m5a.large
+      capacityType: ON_DEMAND
+      amiType: AL2_x86_64
+      diskSize: 100
+      scalingConfig:
+        minSize: 2
+        maxSize: 5
+        desiredSize: 3
+      labels:
+        node-role: system
+      taints:
+        - key: CriticalAddonsOnly
+          value: "true"
+          effect: NO_SCHEDULE
+      subnetSelector: private
+
+    # Pool para aplicações
+    - name: apps
+      instanceTypes:
+        - m5.xlarge
+        - m5a.xlarge
+        - m6i.xlarge
+      capacityType: ON_DEMAND
+      amiType: AL2_x86_64
+      diskSize: 100
+      scalingConfig:
+        minSize: 2
+        maxSize: 20
+        desiredSize: 4
+      labels:
+        node-role: apps
+      subnetSelector: private
+      updateConfig:
+        maxUnavailablePercentage: 25
+
+  # Add-ons
+  installDefaultAddons: true
+  addons:
+    - name: aws-ebs-csi-driver
+      resolveConflicts: OVERWRITE
+
+  # Tags
+  tags:
+    Environment: production
+    Team: platform
+    CostCenter: engineering
+
+---
+# ------------------------------------------------------------------------------
+# Exemplo 3: Cluster EKS com SPOT Instances
+# Economiza custos usando instâncias SPOT para workloads tolerantes a interrupções
+# ------------------------------------------------------------------------------
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: SetupEKS
+metadata:
+  name: eks-spot
+  namespace: infra-operator
+spec:
+  providerRef:
+    name: aws-develop
+
+  vpcCIDR: "10.150.0.0/16"
+  kubernetesVersion: "1.29"
+
+  # NAT Gateway único (economia)
+  natGatewayMode: Single
+
+  nodePools:
+    # Pool ON_DEMAND para workloads críticos
+    - name: on-demand
+      instanceTypes:
+        - t3.medium
+      capacityType: ON_DEMAND
+      scalingConfig:
+        minSize: 1
+        maxSize: 3
+        desiredSize: 2
+      labels:
+        capacity-type: on-demand
+        priority: high
+
+    # Pool SPOT para workloads tolerantes
+    - name: spot
+      instanceTypes:
+        - t3.large
+        - t3.xlarge
+        - m5.large
+        - m5a.large
+      capacityType: SPOT
+      scalingConfig:
+        minSize: 0
+        maxSize: 10
+        desiredSize: 3
+      labels:
+        capacity-type: spot
+        priority: low
+      taints:
+        - key: spot
+          value: "true"
+          effect: PREFER_NO_SCHEDULE
+
+  tags:
+    Environment: development
+    CostOptimized: "true"
+
+---
+# ------------------------------------------------------------------------------
+# Exemplo 4: Cluster EKS com VPC Existente
+# Usa uma VPC já existente ao invés de criar nova
+# ------------------------------------------------------------------------------
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: SetupEKS
+metadata:
+  name: eks-existing-vpc
+  namespace: infra-operator
+spec:
+  providerRef:
+    name: aws-develop
+
+  # Usar VPC existente
+  existingVpcID: vpc-0123456789abcdef0
+
+  # Usar subnets existentes (mínimo 2 em AZs diferentes)
+  existingSubnetIDs:
+    - subnet-0123456789abcdef1
+    - subnet-0123456789abcdef2
+    - subnet-0123456789abcdef3
+    - subnet-0123456789abcdef4
+
+  # Não precisa de VPC CIDR quando usando VPC existente
+  vpcCIDR: "10.0.0.0/16"  # Ignorado quando existingVpcID é especificado
+
+  kubernetesVersion: "1.29"
+
+  nodePools:
+    - name: workers
+      instanceTypes:
+        - t3.large
+      scalingConfig:
+        minSize: 2
+        maxSize: 6
+        desiredSize: 3
+
+---
+# ------------------------------------------------------------------------------
+# Exemplo 5: Cluster EKS com ARM64 (Graviton)
+# Usa instâncias ARM64 para melhor custo-benefício
+# ------------------------------------------------------------------------------
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: SetupEKS
+metadata:
+  name: eks-graviton
+  namespace: infra-operator
+spec:
+  providerRef:
+    name: aws-develop
+
+  vpcCIDR: "10.160.0.0/16"
+  kubernetesVersion: "1.29"
+
+  nodePools:
+    - name: graviton
+      instanceTypes:
+        - t4g.medium
+        - t4g.large
+        - m6g.medium
+        - m6g.large
+      amiType: AL2_ARM_64
+      capacityType: ON_DEMAND
+      diskSize: 50
+      scalingConfig:
+        minSize: 2
+        maxSize: 10
+        desiredSize: 3
+      labels:
+        arch: arm64
+
+  tags:
+    Architecture: arm64
+
+---
+# ------------------------------------------------------------------------------
+# Exemplo 6: Cluster EKS com Bottlerocket
+# Usa Bottlerocket OS para maior segurança e performance
+# ------------------------------------------------------------------------------
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: SetupEKS
+metadata:
+  name: eks-bottlerocket
+  namespace: infra-operator
+spec:
+  providerRef:
+    name: aws-develop
+
+  vpcCIDR: "10.170.0.0/16"
+  kubernetesVersion: "1.29"
+
+  nodePools:
+    - name: bottlerocket
+      instanceTypes:
+        - m5.large
+        - m5.xlarge
+      amiType: BOTTLEROCKET_x86_64
+      capacityType: ON_DEMAND
+      diskSize: 50
+      scalingConfig:
+        minSize: 2
+        maxSize: 8
+        desiredSize: 3
+      labels:
+        os: bottlerocket
+
+  tags:
+    OS: bottlerocket
+    Security: enhanced
+
+---
+# ------------------------------------------------------------------------------
+# Exemplo 7: Cluster EKS Apenas Endpoint Privado
+# Cluster sem acesso público, apenas via VPC
+# ------------------------------------------------------------------------------
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: SetupEKS
+metadata:
+  name: eks-private
+  namespace: infra-operator
+spec:
+  providerRef:
+    name: aws-production
+
+  vpcCIDR: "10.180.0.0/16"
+  kubernetesVersion: "1.29"
+
+  # Apenas acesso privado
+  endpointAccess:
+    publicAccess: false
+    privateAccess: true
+
+  # NAT Gateway para nodes acessarem internet
+  natGatewayMode: Single
+
+  nodePools:
+    - name: private-nodes
+      instanceTypes:
+        - t3.medium
+      subnetSelector: private
+      scalingConfig:
+        minSize: 2
+        maxSize: 6
+        desiredSize: 3
+
+  tags:
+    NetworkType: private-only
+
+---
+# ------------------------------------------------------------------------------
+# Exemplo 8: Cluster EKS com Múltiplos Node Pools Especializados
+# Diferentes pools para diferentes tipos de workloads
+# ------------------------------------------------------------------------------
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: SetupEKS
+metadata:
+  name: eks-specialized
+  namespace: infra-operator
+spec:
+  providerRef:
+    name: aws-production
+
+  clusterName: specialized-cluster
+  vpcCIDR: "10.190.0.0/16"
+  kubernetesVersion: "1.30"
+  natGatewayMode: HighAvailability
+
+  # Configurações padrão para todos os node pools
+  defaultNodePool:
+    diskSize: 100
+    amiType: AL2_x86_64
+    capacityType: ON_DEMAND
+    labels:
+      cluster: specialized
+
+  nodePools:
+    # Pool para aplicações web
+    - name: web
+      instanceTypes:
+        - m5.large
+        - m5a.large
+      scalingConfig:
+        minSize: 2
+        maxSize: 10
+        desiredSize: 3
+      labels:
+        workload-type: web
+        tier: frontend
+      subnetSelector: private
+
+    # Pool para APIs
+    - name: api
+      instanceTypes:
+        - m5.xlarge
+        - m5a.xlarge
+      scalingConfig:
+        minSize: 2
+        maxSize: 15
+        desiredSize: 4
+      labels:
+        workload-type: api
+        tier: backend
+      subnetSelector: private
+
+    # Pool para workers/jobs
+    - name: workers
+      instanceTypes:
+        - c5.xlarge
+        - c5a.xlarge
+      capacityType: SPOT
+      scalingConfig:
+        minSize: 0
+        maxSize: 20
+        desiredSize: 5
+      labels:
+        workload-type: worker
+        tier: processing
+      taints:
+        - key: workload
+          value: worker
+          effect: NO_SCHEDULE
+      subnetSelector: private
+
+    # Pool para machine learning
+    - name: ml
+      instanceTypes:
+        - p3.2xlarge
+        - g4dn.xlarge
+      amiType: AL2_x86_64_GPU
+      diskSize: 200
+      scalingConfig:
+        minSize: 0
+        maxSize: 5
+        desiredSize: 1
+      labels:
+        workload-type: ml
+        accelerator: gpu
+      taints:
+        - key: nvidia.com/gpu
+          value: "true"
+          effect: NO_SCHEDULE
+      subnetSelector: private
+
+  # Add-ons para ML
+  addons:
+    - name: aws-ebs-csi-driver
+    - name: aws-efs-csi-driver
+
+  tags:
+    Environment: production
+    UseCase: multi-workload
+
+---
+# ------------------------------------------------------------------------------
+# Exemplo 9: Cluster EKS sem NAT Gateway
+# Nós em subnets públicas (não recomendado para produção)
+# ------------------------------------------------------------------------------
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: SetupEKS
+metadata:
+  name: eks-no-nat
+  namespace: infra-operator
+spec:
+  providerRef:
+    name: aws-develop
+
+  vpcCIDR: "10.195.0.0/16"
+  kubernetesVersion: "1.29"
+
+  # Sem NAT Gateway (economia, mas menos seguro)
+  natGatewayMode: None
+
+  nodePools:
+    - name: public-nodes
+      instanceTypes:
+        - t3.medium
+      # Nós em subnets públicas
+      subnetSelector: public
+      scalingConfig:
+        minSize: 1
+        maxSize: 3
+        desiredSize: 2
+
+  tags:
+    Environment: development
+    Network: public-only
+
+---
+# ------------------------------------------------------------------------------
+# Exemplo 10: Cluster EKS com Access Entries (RBAC via IAM)
+# Configura acesso ao cluster via IAM roles/users
+# ------------------------------------------------------------------------------
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: SetupEKS
+metadata:
+  name: eks-with-access
+  namespace: infra-operator
+spec:
+  providerRef:
+    name: aws-production
+
+  vpcCIDR: "10.210.0.0/16"
+  kubernetesVersion: "1.30"
+
+  # Access Entries - quem pode acessar o cluster
+  accessEntries:
+    - principalARN: arn:aws:iam::123456789012:role/AdminRole
+      type: STANDARD
+      kubernetesGroups:
+        - system:masters
+    - principalARN: arn:aws:iam::123456789012:role/DeveloperRole
+      type: STANDARD
+      kubernetesGroups:
+        - developers
+    - principalARN: arn:aws:iam::123456789012:user/ci-bot
+      type: STANDARD
+      kubernetesGroups:
+        - ci-cd
+
+  nodePools:
+    - name: workers
+      instanceTypes:
+        - t3.large
+      scalingConfig:
+        minSize: 2
+        maxSize: 6
+        desiredSize: 3
+
+  tags:
+    AccessControl: iam-based

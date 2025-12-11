@@ -1,0 +1,285 @@
+---
+title: 'Network Load Balancer (NLB)'
+description: 'Manage AWS Network Load Balancers with Kubernetes'
+icon: 'network-wired'
+---
+
+## Overview
+
+The **NLB** resource manages AWS Network Load Balancers (NLB), providing ultra-low latency Layer 4 (TCP/UDP) load balancing.
+
+## Use Cases
+
+- **High Performance**: Millions of requests per second with ultra-low latency
+- **Static IP**: Use Elastic IPs for whitelisting
+- **TCP/UDP**: Support for non-HTTP protocols
+- **Long Connections**: WebSocket, gaming, streaming
+
+## Basic Example
+
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: NLB
+metadata:
+  name: my-nlb
+  namespace: default
+spec:
+  providerRef:
+    name: aws-provider
+
+  # Load balancer name
+  loadBalancerName: my-network-lb
+
+  # Scheme: internet-facing or internal
+  scheme: internet-facing
+
+  # Subnets (minimum 1, multi-AZ recommended)
+  subnets:
+    - subnet-abc123
+    - subnet-def456
+
+  # Security groups (optional for NLB)
+  securityGroups:
+    - sg-12345678
+
+  # Cross-zone load balancing
+  enableCrossZoneLoadBalancing: true
+
+  # Tags
+  tags:
+    Environment: production
+    Application: api
+
+  # Deletion policy
+  deletionPolicy: Delete
+```
+
+## Spec Fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `providerRef` | Object | Yes | Reference to AWSProvider |
+| `loadBalancerName` | String | Yes | Name of the load balancer |
+| `scheme` | String | No | `internet-facing` (default) or `internal` |
+| `subnets` | Array | Yes | Subnet IDs (min 1) |
+| `securityGroups` | Array | No | Security group IDs |
+| `enableCrossZoneLoadBalancing` | Boolean | No | Enable cross-AZ balancing (default: false) |
+| `ipAddressType` | String | No | `ipv4` or `dualstack` |
+| `tags` | Map | No | Key-value tags |
+| `deletionPolicy` | String | No | `Delete`, `Retain`, or `Orphan` |
+
+## Status Fields
+
+| Field | Description |
+|-------|-------------|
+| `ready` | Boolean indicating if NLB is active |
+| `loadBalancerARN` | AWS ARN of the load balancer |
+| `dnsName` | DNS name for the NLB |
+| `state` | Current state (active, provisioning, failed) |
+
+## Advanced Examples
+
+### Internal NLB with Static IPs
+
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: NLB
+metadata:
+  name: internal-nlb
+spec:
+  providerRef:
+    name: aws-provider
+  loadBalancerName: internal-api-nlb
+  scheme: internal
+  subnets:
+    - subnet-private-1
+    - subnet-private-2
+  subnetMappings:
+    - subnetId: subnet-private-1
+      allocationId: eipalloc-abc123  # Elastic IP
+    - subnetId: subnet-private-2
+      allocationId: eipalloc-def456
+  enableCrossZoneLoadBalancing: true
+```
+
+### Dual-Stack NLB (IPv4 + IPv6)
+
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: NLB
+metadata:
+  name: dualstack-nlb
+spec:
+  providerRef:
+    name: aws-provider
+  loadBalancerName: dualstack-lb
+  scheme: internet-facing
+  ipAddressType: dualstack
+  subnets:
+    - subnet-abc123
+    - subnet-def456
+  tags:
+    IPv6: enabled
+```
+
+### Multi-AZ with Cross-Zone
+
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: NLB
+metadata:
+  name: multi-az-nlb
+spec:
+  providerRef:
+    name: aws-provider
+  loadBalancerName: multi-az-lb
+  scheme: internet-facing
+  subnets:
+    - subnet-us-east-1a
+    - subnet-us-east-1b
+    - subnet-us-east-1c
+  enableCrossZoneLoadBalancing: true
+  tags:
+    AvailabilityZones: "3"
+    CrossZone: "true"
+```
+
+## NLB vs ALB
+
+| Feature | NLB | ALB |
+|---------|-----|-----|
+| **Layer** | Layer 4 (TCP/UDP) | Layer 7 (HTTP/HTTPS) |
+| **Performance** | Ultra-low latency | Moderate latency |
+| **Throughput** | Millions req/sec | Thousands req/sec |
+| **Static IP** | Yes (Elastic IP) | No |
+| **Path Routing** | No | Yes |
+| **WebSocket** | Yes | Yes |
+| **gRPC** | Yes | Yes (with HTTP/2) |
+
+## Scheme Types
+
+### Internet-Facing
+Publicly accessible from the internet:
+```yaml
+scheme: internet-facing
+```
+
+### Internal
+Only accessible from within VPC:
+```yaml
+scheme: internal
+```
+
+## Cross-Zone Load Balancing
+
+Distribute traffic evenly across all AZs:
+
+```yaml
+enableCrossZoneLoadBalancing: true
+```
+
+**Benefits:**
+- Even distribution across AZs
+- Better fault tolerance
+- No cross-AZ data transfer charges (NLB)
+
+## IP Address Types
+
+### IPv4 Only (Default)
+```yaml
+ipAddressType: ipv4
+```
+
+### Dual Stack (IPv4 + IPv6)
+```yaml
+ipAddressType: dualstack
+```
+
+## Monitoring
+
+Check NLB status:
+
+```bash
+kubectl get nlb my-nlb -o yaml
+```
+
+Example output:
+```yaml
+status:
+  ready: true
+  loadBalancerARN: arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/net/my-nlb/abc123
+  dnsName: my-nlb-abc123.elb.us-east-1.amazonaws.com
+  state: active
+```
+
+## Best Practices
+
+1. **Multi-AZ**: Deploy across multiple AZs for HA
+2. **Cross-Zone**: Enable for even distribution
+3. **Static IPs**: Use Elastic IPs for whitelisting
+4. **Health Checks**: Configure proper health checks
+5. **Connection Draining**: Set appropriate deregistration delay
+
+## Troubleshooting
+
+### NLB Stuck in Provisioning
+
+Check subnet availability and quotas:
+```bash
+kubectl describe nlb my-nlb
+```
+
+### DNS Not Resolving
+
+Wait for DNS propagation (can take 60 seconds):
+```bash
+nslookup <nlb-dns-name>
+```
+
+### No Traffic Reaching Targets
+
+Check:
+- Security groups allow traffic
+- Target group health checks passing
+- Listener rules configured
+
+## Complete Example with Target Groups
+
+```yaml
+---
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: NLB
+metadata:
+  name: production-nlb
+  namespace: production
+spec:
+  providerRef:
+    name: aws-provider
+  loadBalancerName: prod-api-nlb
+  scheme: internet-facing
+  subnets:
+    - subnet-us-east-1a
+    - subnet-us-east-1b
+  subnetMappings:
+    - subnetId: subnet-us-east-1a
+      allocationId: eipalloc-static-ip-1
+    - subnetId: subnet-us-east-1b
+      allocationId: eipalloc-static-ip-2
+  enableCrossZoneLoadBalancing: true
+  tags:
+    Environment: production
+    Team: platform
+    CostCenter: engineering
+  deletionPolicy: Retain
+```
+
+## Related Resources
+
+- [ALB](/services/networking/alb)
+- [Elastic IP](/services/networking/elastic-ip)
+- [Target Groups (Future)](/services/networking/target-group)
+
+## AWS Documentation
+
+- [Network Load Balancers](https://docs.aws.amazon.com/elasticloadbalancing/latest/network/)
+- [NLB Best Practices](https://aws.amazon.com/blogs/networking-and-content-delivery/category/networking-content-delivery/elastic-load-balancing/)

@@ -1,0 +1,374 @@
+---
+title: "Route53 Hosted Zone"
+description: "Gerenciar zonas DNS públicas e privadas no AWS Route53"
+---
+
+# Route53 Hosted Zone
+
+O recurso `Route53HostedZone` permite criar e gerenciar zonas DNS (hosted zones) no AWS Route53 usando recursos nativos do Kubernetes.
+
+## Visão Geral
+
+Route53 Hosted Zones são contêineres para registros DNS que definem como rotear tráfego para um domínio e seus subdomínios. Suporta tanto zonas públicas (para internet) quanto privadas (para VPCs).
+
+**Casos de Uso:**
+- Gerenciar DNS público para aplicações web
+- Configurar DNS privado para comunicação interna em VPCs
+- Migrar gerenciamento de DNS para GitOps
+- Automatizar criação de zonas DNS para ambientes efêmeros
+
+## Exemplo Básico
+
+### Zona Pública
+
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Route53HostedZone
+metadata:
+  name: example-public-zone
+  namespace: default
+spec:
+  providerRef:
+    name: aws-provider
+  name: example.com
+  comment: "Production public DNS zone"
+  privateZone: false
+  tags:
+    Environment: production
+    ManagedBy: infra-operator
+  deletionPolicy: Delete
+```
+
+### Zona Privada (VPC)
+
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Route53HostedZone
+metadata:
+  name: internal-zone
+  namespace: default
+spec:
+  providerRef:
+    name: aws-provider
+  name: internal.example.com
+  comment: "Private DNS for VPC"
+  privateZone: true
+  vpcId: vpc-0123456789abcdef0
+  vpcRegion: us-east-1
+  tags:
+    Environment: production
+    Type: private
+  deletionPolicy: Retain
+```
+
+## Campos do Spec
+
+| Campo | Tipo | Obrigatório | Descrição |
+|-------|------|-------------|-----------|
+| `providerRef` | `ProviderReference` | Sim | Referência ao AWSProvider |
+| `name` | `string` | Sim | Nome do domínio (ex: example.com) |
+| `comment` | `string` | Não | Comentário sobre a zona |
+| `privateZone` | `bool` | Não | Se true, cria zona privada (default: false) |
+| `vpcId` | `string` | Condicional | ID da VPC (obrigatório se privateZone=true) |
+| `vpcRegion` | `string` | Condicional | Região da VPC (obrigatório se privateZone=true) |
+| `tags` | `map[string]string` | Não | Tags AWS para a zona |
+| `deletionPolicy` | `string` | Não | Delete ou Retain (default: Delete) |
+
+## Campos do Status
+
+| Campo | Tipo | Descrição |
+|-------|------|-----------|
+| `ready` | `bool` | Indica se a zona foi criada |
+| `hostedZoneID` | `string` | ID da hosted zone no Route53 |
+| `nameServers` | `[]string` | Name servers autoritativos |
+| `resourceRecordSetCount` | `int64` | Número de record sets na zona |
+| `lastSyncTime` | `*metav1.Time` | Última sincronização |
+
+## Exemplos Avançados
+
+### Multi-VPC Private Zone
+
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Route53HostedZone
+metadata:
+  name: shared-internal-zone
+spec:
+  providerRef:
+    name: aws-provider
+  name: shared.internal
+  comment: "Shared private zone across VPCs"
+  privateZone: true
+  vpcId: vpc-primary123
+  vpcRegion: us-east-1
+  tags:
+    Shared: "true"
+    CostCenter: engineering
+```
+
+### Development Zone with Retain Policy
+
+```yaml
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Route53HostedZone
+metadata:
+  name: dev-zone
+spec:
+  providerRef:
+    name: aws-provider
+  name: dev.example.com
+  comment: "Development environment DNS"
+  deletionPolicy: Retain  # Preserva zona ao deletar CR
+  tags:
+    Environment: development
+    AutoDelete: "false"
+```
+
+## Validações
+
+### Zona Privada
+- Se `privateZone: true`, os campos `vpcId` e `vpcRegion` são **obrigatórios**
+- VPC deve existir na região especificada
+
+### Zona Pública
+- Se `privateZone: false`, não pode especificar `vpcId` ou `vpcRegion`
+
+### Nome do Domínio
+- Deve ser um FQDN válido (Fully Qualified Domain Name)
+- Não pode estar vazio
+
+## Operações
+
+### Criar Zona
+
+```bash
+kubectl apply -f hostedzone.yaml
+```
+
+### Verificar Status
+
+```bash
+# Listar zonas
+kubectl get route53hostedzone
+kubectl get r53hz  # shortname
+
+# Detalhes da zona
+kubectl describe route53hostedzone example-public-zone
+
+# Ver name servers
+kubectl get route53hostedzone example-public-zone -o jsonpath='{.status.nameServers}'
+```
+
+### Atualizar Tags
+
+```yaml
+spec:
+  tags:
+    Environment: production
+    CostCenter: platform
+    Team: sre
+```
+
+```bash
+kubectl apply -f hostedzone.yaml
+```
+
+### Deletar Zona
+
+```bash
+# Com deletionPolicy: Delete (padrão)
+kubectl delete route53hostedzone example-public-zone
+
+# Com deletionPolicy: Retain
+# A zona é preservada no Route53
+kubectl delete route53hostedzone example-public-zone
+```
+
+## Deletion Policies
+
+### Delete (Padrão)
+```yaml
+spec:
+  deletionPolicy: Delete
+```
+- Deleta a hosted zone no Route53 quando o CR é removido
+- **Atenção:** Zona deve estar vazia (sem record sets além de NS e SOA)
+
+### Retain
+```yaml
+spec:
+  deletionPolicy: Retain
+```
+- Preserva a hosted zone no Route53
+- Apenas remove o CR do Kubernetes
+- Útil para ambientes de produção
+
+## Integração com Record Sets
+
+Após criar uma hosted zone, use o `hostedZoneID` do status para criar record sets:
+
+```yaml
+# 1. Criar hosted zone
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Route53HostedZone
+metadata:
+  name: my-zone
+spec:
+  providerRef:
+    name: aws-provider
+  name: example.com
+
+---
+# 2. Obter hostedZoneID do status
+# kubectl get route53hostedzone my-zone -o jsonpath='{.status.hostedZoneID}'
+
+# 3. Criar record set
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Route53RecordSet
+metadata:
+  name: www-record
+spec:
+  providerRef:
+    name: aws-provider
+  hostedZoneID: Z1234567890ABC  # Do status acima
+  name: www.example.com
+  type: A
+  ttl: 300
+  resourceRecords:
+    - 192.0.2.1
+```
+
+## Troubleshooting
+
+### Zona não fica Ready
+
+**Problema:** `status.ready: false`
+
+**Soluções:**
+1. Verificar permissões IAM:
+   ```
+   route53:CreateHostedZone
+   route53:GetHostedZone
+   route53:ListHostedZones
+   route53:ChangeTagsForResource
+   ```
+
+2. Verificar logs do controller:
+   ```bash
+   kubectl logs -n infra-operator-system deployment/infra-operator-controller-manager
+   ```
+
+3. Verificar AWSProvider:
+   ```bash
+   kubectl get awsprovider -n default
+   ```
+
+### Erro ao deletar zona
+
+**Problema:** Erro ao deletar hosted zone
+
+**Causa:** Zona contém record sets além de NS e SOA
+
+**Solução:**
+```bash
+# Deletar todos os record sets primeiro
+kubectl delete route53recordset -l hostedZone=my-zone
+
+# Depois deletar a zona
+kubectl delete route53hostedzone my-zone
+```
+
+### VPC não encontrada
+
+**Problema:** Erro "VPC not found" para zona privada
+
+**Soluções:**
+1. Verificar se VPC existe:
+   ```bash
+   aws ec2 describe-vpcs --vpc-ids vpc-xxxxx --region us-east-1
+   ```
+
+2. Verificar região correta no spec
+
+3. Verificar permissões EC2:
+   ```
+   ec2:DescribeVpcs
+   ec2:DescribeVpcAttribute
+   ```
+
+## Permissões IAM Necessárias
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "route53:CreateHostedZone",
+        "route53:GetHostedZone",
+        "route53:DeleteHostedZone",
+        "route53:ListHostedZones",
+        "route53:UpdateHostedZoneComment",
+        "route53:ChangeTagsForResource",
+        "route53:ListTagsForResource"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeVpcs",
+        "ec2:DescribeVpcAttribute"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": ["us-east-1"]
+        }
+      }
+    }
+  ]
+}
+```
+
+## Melhores Práticas
+
+1. **Use Retain para Produção:**
+   ```yaml
+   spec:
+     deletionPolicy: Retain
+   ```
+
+2. **Tags Consistentes:**
+   ```yaml
+   spec:
+     tags:
+       Environment: production
+       ManagedBy: infra-operator
+       Team: platform
+       CostCenter: engineering
+   ```
+
+3. **Documentação no Comment:**
+   ```yaml
+   spec:
+     comment: "Production DNS - Contact: platform-team@example.com"
+   ```
+
+4. **Zonas Privadas por VPC:**
+   - Uma zona privada por VPC ou grupo de VPCs relacionadas
+   - Evite compartilhar zonas privadas entre ambientes
+
+5. **Naming Convention:**
+   ```
+   Público: example.com
+   Privado: internal.example.com
+   Ambiente: dev.example.com, staging.example.com
+   ```
+
+## Referências
+
+- [AWS Route53 Hosted Zones](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/hosted-zones-working-with.html)
+- [Private Hosted Zones](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/hosted-zones-private.html)
+- [Route53 Pricing](https://aws.amazon.com/route53/pricing/)

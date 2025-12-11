@@ -1,0 +1,243 @@
+---
+title: 'Introdução'
+description: 'Gerencie infraestrutura AWS diretamente do Kubernetes com o Infra Operator'
+---
+
+Gerencie recursos AWS diretamente do Kubernetes usando Custom Resources e GitOps.
+
+## O que é o Infra Operator?
+
+O **Infra Operator** é um operador Kubernetes que permite provisionar e gerenciar recursos AWS usando Custom Resources Definitions (CRDs). Ao invés de usar ferramentas separadas como Terraform ou CloudFormation, você pode gerenciar sua infraestrutura AWS usando `kubectl` e ferramentas GitOps como ArgoCD.
+
+### Principais Benefícios
+
+<CardGroup cols={2}>
+  <Card title="GitOps Nativo" icon="git">
+    Gerencie infraestrutura junto com aplicações usando Git como fonte da verdade
+  </Card>
+  <Card title="Kubernetes Native" icon="dharmachakra">
+    Use kubectl, Helm e ferramentas familiares do ecossistema Kubernetes
+  </Card>
+  <Card title="Clean Architecture" icon="layer-group">
+    Código organizado, testável (100% coverage) e manutenível seguindo padrões de arquitetura
+  </Card>
+  <Card title="26 Serviços AWS" icon="aws">
+    Suporte completo para networking, compute, storage, database, messaging, CDN, security e mais
+  </Card>
+</CardGroup>
+
+## Serviços Suportados (26 Total)
+
+### 📡 Networking (9 serviços)
+
+| Serviço | Descrição |
+|---------|-----------|
+| **VPC** | Virtual Private Cloud |
+| **Subnet** | VPC Subnets |
+| **Internet Gateway** | Internet access para VPC |
+| **NAT Gateway** | Outbound internet para private subnets |
+| **Security Group** | Firewall rules |
+| **Route Table** | Network routing |
+| **ALB** | Application Load Balancer (Layer 7) |
+| **NLB** | Network Load Balancer (Layer 4) |
+| **Elastic IP** | Static public IP addresses |
+
+### ⚙️ Compute (3 serviços)
+
+| Serviço | Descrição |
+|---------|-----------|
+| **EC2 Instance** | Virtual machines |
+| **Lambda** | Serverless functions |
+| **EKS** | Kubernetes clusters |
+
+### 💾 Storage & Database (3 serviços)
+
+| Serviço | Descrição |
+|---------|-----------|
+| **S3 Bucket** | Object storage |
+| **RDS Instance** | Relational databases (PostgreSQL, MySQL, etc.) |
+| **DynamoDB Table** | NoSQL database |
+
+### 📨 Messaging (2 serviços)
+
+| Serviço | Descrição |
+|---------|-----------|
+| **SQS Queue** | Message queues |
+| **SNS Topic** | Pub/Sub notifications |
+
+### 🌐 API & CDN (2 serviços)
+
+| Serviço | Descrição |
+|---------|-----------|
+| **API Gateway** | REST, HTTP, WebSocket APIs |
+| **CloudFront** | Content Delivery Network (CDN) |
+
+### 🔐 Security (4 serviços)
+
+| Serviço | Descrição |
+|---------|-----------|
+| **IAM Role** | Identity and access management |
+| **Secrets Manager** | Secrets storage |
+| **KMS Key** | Encryption keys |
+| **ACM Certificate** | SSL/TLS certificates |
+
+### 🐳 Containers (2 serviços)
+
+| Serviço | Descrição |
+|---------|-----------|
+| **ECR Repository** | Container registry |
+| **ECS Cluster** | Container orchestration |
+
+### ⚡ Caching (1 serviço)
+
+| Serviço | Descrição |
+|---------|-----------|
+| **ElastiCache** | In-memory cache (Redis, Memcached) |
+
+## Exemplo Rápido
+
+```yaml
+---
+# Criar VPC
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: VPC
+metadata:
+  name: production-vpc
+spec:
+  providerRef:
+    name: aws-provider
+  cidrBlock: "10.0.0.0/16"
+  enableDnsSupport: true
+  enableDnsHostnames: true
+
+---
+# Criar Subnet Pública
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: Subnet
+metadata:
+  name: public-subnet
+spec:
+  providerRef:
+    name: aws-provider
+  vpcID: vpc-xxx  # Será preenchido automaticamente
+  cidrBlock: "10.0.1.0/24"
+  mapPublicIpOnLaunch: true
+
+---
+# Criar Bucket S3
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: S3Bucket
+metadata:
+  name: app-data
+spec:
+  providerRef:
+    name: aws-provider
+  bucketName: myapp-production-data
+  versioning:
+    enabled: true
+  encryption:
+    algorithm: AES256
+```
+
+```bash
+kubectl apply -f infrastructure.yaml
+```
+
+## Arquitetura
+
+### Visão Geral do Sistema
+
+O Infra Operator segue uma arquitetura de controller pattern do Kubernetes:
+
+**Fluxo de Funcionamento:**
+
+1. **GitOps / kubectl** → Cria Custom Resources (CRs) no Kubernetes
+2. **Controllers** → Detectam mudanças nos CRs e reconciliam o estado
+3. **AWS SDK** → Controllers usam AWS SDK para provisionar recursos
+4. **Status Update** → Estado do recurso AWS é refletido no CR
+
+**Componentes Principais:**
+
+- **26 Controllers**: Um para cada serviço AWS (VPC, S3, EC2, Lambda, etc.)
+- **26 CRDs**: Custom Resource Definitions para cada tipo de recurso
+- **AWS SDK v2**: Comunicação com APIs AWS
+- **Reconciliation Loop**: Garante que estado desejado = estado real
+
+### Clean Architecture
+
+Implementação seguindo princípios de **Clean Architecture** para código testável (100% coverage), manutenível e desacoplado:
+
+**Camadas da Arquitetura:**
+
+**1. Domain Layer (Core)**
+- Modelos de negócio puros (VPC, S3, EC2, etc.)
+- Regras de validação
+- Sem dependências externas
+- 100% test coverage
+
+**2. Use Cases Layer**
+- Lógica de aplicação
+- Create, Update, Delete, GetStatus
+- Orquestração de domínio
+- Interface com Ports
+
+**3. Ports Layer (Interfaces)**
+- Repository interfaces
+- Cloud Provider interfaces
+- Dependency inversion principle
+- Contratos abstratos
+
+**4. Adapters Layer**
+- AWS SDK implementations
+- Kubernetes client
+- Implementações concretas dos Ports
+- Comunicação com sistemas externos
+
+**5. Controllers Layer**
+- Reconciliation loops
+- Kubernetes API integration
+- Event handling
+- CR ↔ Domain mapping
+
+**Benefícios:**
+- ✅ Testabilidade: 100% coverage no domain
+- ✅ Manutenibilidade: Separação clara de responsabilidades
+- ✅ Flexibilidade: Fácil adicionar novos serviços
+- ✅ Independência: Core desacoplado de frameworks
+
+## Próximos Passos
+
+<CardGroup cols={2}>
+  <Card
+    title="Instalação"
+    icon="download"
+    href="/installation"
+  >
+    Instale o operador no seu cluster Kubernetes
+  </Card>
+
+  <Card
+    title="Início Rápido"
+    icon="rocket"
+    href="/quickstart"
+  >
+    Configure e crie seu primeiro recurso AWS
+  </Card>
+
+  <Card
+    title="Serviços"
+    icon="list"
+    href="/services/networking/vpc"
+  >
+    Explore todos os serviços AWS disponíveis
+  </Card>
+
+  <Card
+    title="Guia Completo"
+    icon="book"
+    href="/SERVICES_GUIDE.md"
+  >
+    Documentação detalhada de todos os serviços
+  </Card>
+</CardGroup>
+

@@ -1,0 +1,282 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: elasticacheclusters.aws-infra-operator.runner.codes
+spec:
+  group: aws-infra-operator.runner.codes
+  names:
+    kind: ElastiCacheCluster
+    listKind: ElastiCacheClusterList
+    plural: elasticacheclusters
+    singular: elasticachecluster
+    shortNames:
+    - elasticache
+    - cache
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            required:
+            - providerRef
+            - clusterID
+            - engine
+            - engineVersion
+            - nodeType
+            properties:
+              providerRef:
+                type: object
+                required:
+                - name
+                properties:
+                  name:
+                    type: string
+                  namespace:
+                    type: string
+              clusterID:
+                type: string
+              engine:
+                type: string
+                enum:
+                - redis
+                - memcached
+              engineVersion:
+                type: string
+              nodeType:
+                type: string
+              numCacheNodes:
+                type: integer
+                minimum: 1
+              replicationGroupDescription:
+                type: string
+              numNodeGroups:
+                type: integer
+                minimum: 1
+              replicasPerNodeGroup:
+                type: integer
+                minimum: 0
+                maximum: 5
+              automaticFailoverEnabled:
+                type: boolean
+              multiAZEnabled:
+                type: boolean
+              subnetGroupName:
+                type: string
+              securityGroupIds:
+                type: array
+                items:
+                  type: string
+              parameterGroupName:
+                type: string
+              snapshotRetentionLimit:
+                type: integer
+                minimum: 0
+                maximum: 35
+              snapshotWindow:
+                type: string
+              preferredMaintenanceWindow:
+                type: string
+              atRestEncryptionEnabled:
+                type: boolean
+              transitEncryptionEnabled:
+                type: boolean
+              authTokenRef:
+                type: object
+                required:
+                - name
+                - key
+                properties:
+                  name:
+                    type: string
+                  namespace:
+                    type: string
+                  key:
+                    type: string
+              kmsKeyId:
+                type: string
+              notificationTopicArn:
+                type: string
+              tags:
+                type: object
+                additionalProperties:
+                  type: string
+              deletionPolicy:
+                type: string
+                enum:
+                - Delete
+                - Retain
+                - Snapshot
+                default: Delete
+              finalSnapshotIdentifier:
+                type: string
+          status:
+            type: object
+            properties:
+              conditions:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    type:
+                      type: string
+                    status:
+                      type: string
+                    reason:
+                      type: string
+                    message:
+                      type: string
+                    lastTransitionTime:
+                      type: string
+                      format: date-time
+                    observedGeneration:
+                      type: integer
+              ready:
+                type: boolean
+              clusterStatus:
+                type: string
+              cacheClusterARN:
+                type: string
+              configurationEndpoint:
+                type: object
+                properties:
+                  address:
+                    type: string
+                  port:
+                    type: integer
+              primaryEndpoint:
+                type: object
+                properties:
+                  address:
+                    type: string
+                  port:
+                    type: integer
+              readerEndpoint:
+                type: object
+                properties:
+                  address:
+                    type: string
+                  port:
+                    type: integer
+              nodeEndpoints:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    address:
+                      type: string
+                    port:
+                      type: integer
+              cacheNodeType:
+                type: string
+              engineVersion:
+                type: string
+              memberClusters:
+                type: array
+                items:
+                  type: string
+              clusterCreateTime:
+                type: string
+                format: date-time
+              lastSyncTime:
+                type: string
+                format: date-time
+    subresources:
+      status: {}
+    additionalPrinterColumns:
+    - name: Cluster
+      type: string
+      jsonPath: .spec.clusterID
+    - name: Engine
+      type: string
+      jsonPath: .spec.engine
+    - name: NodeType
+      type: string
+      jsonPath: .spec.nodeType
+    - name: Status
+      type: string
+      jsonPath: .status.clusterStatus
+    - name: Endpoint
+      type: string
+      jsonPath: .status.primaryEndpoint.address
+    - name: Ready
+      type: boolean
+      jsonPath: .status.ready
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp
+
+---
+# Test ElastiCache 1: Simple Redis cache (single node)
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: ElastiCacheCluster
+metadata:
+  name: e2e-redis-simple
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  clusterID: e2e-redis-simple
+  engine: redis
+  engineVersion: "7.0"
+  nodeType: cache.t3.micro
+  numCacheNodes: 1
+  tags:
+    environment: test
+    managed-by: infra-operator
+    purpose: e2e-testing
+  deletionPolicy: Delete
+
+---
+# Test ElastiCache 2: Memcached cluster
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: ElastiCacheCluster
+metadata:
+  name: e2e-memcached
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  clusterID: e2e-memcached-test
+  engine: memcached
+  engineVersion: "1.6.17"
+  nodeType: cache.t3.micro
+  numCacheNodes: 2
+  tags:
+    environment: test
+    managed-by: infra-operator
+    engine: memcached
+    purpose: e2e-testing
+  deletionPolicy: Delete
+
+---
+# Test ElastiCache 3: Redis cluster mode with replication
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: ElastiCacheCluster
+metadata:
+  name: e2e-redis-cluster
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  clusterID: e2e-redis-cluster
+  engine: redis
+  engineVersion: "7.0"
+  nodeType: cache.t3.small
+  replicationGroupDescription: "E2E Test Redis Cluster"
+  numNodeGroups: 2
+  replicasPerNodeGroup: 1
+  automaticFailoverEnabled: true
+  multiAZEnabled: false
+  tags:
+    environment: test
+    managed-by: infra-operator
+    cluster-mode: enabled
+    purpose: e2e-testing
+  deletionPolicy: Delete

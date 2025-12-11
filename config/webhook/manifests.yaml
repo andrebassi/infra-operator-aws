@@ -1,0 +1,566 @@
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: validating-webhook-configuration
+webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-aws-infra-operator-io-v1alpha1-alb
+  failurePolicy: Fail
+  name: valb.kb.io
+  rules:
+  - apiGroups:
+    - aws-infra-operator.runner.codes
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - albs
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-aws-infra-operator-io-v1alpha1-apigateway
+  failurePolicy: Fail
+  name: vapigateway.kb.io
+  rules:
+  - apiGroups:
+    - aws-infra-operator.runner.codes
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - apigateways
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-aws-infra-operator-io-v1alpha1-certificate
+  failurePolicy: Fail
+  name: vcertificate.kb.io
+  rules:
+  - apiGroups:
+    - aws-infra-operator.runner.codes
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - certificates
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-aws-infra-operator-io-v1alpha1-cloudfront
+  failurePolicy: Fail
+  name: vcloudfront.kb.io
+  rules:
+  - apiGroups:
+    - aws-infra-operator.runner.codes
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - cloudfronts
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-aws-infra-operator-io-v1alpha1-dynamodbtable
+  failurePolicy: Fail
+  name: vdynamodbtable.kb.io
+  rules:
+  - apiGroups:
+    - aws-infra-operator.runner.codes
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - dynamodbtables
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-aws-infra-operator-io-v1alpha1-ec2instance
+  failurePolicy: Fail
+  name: vec2instance.kb.io
+  rules:
+  - apiGroups:
+    - aws-infra-operator.runner.codes
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - ec2instances
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-aws-infra-operator-io-v1alpha1-ecrrepository
+  failurePolicy: Fail
+  name: vecrrepository.kb.io
+  rules:
+  - apiGroups:
+    - aws-infra-operator.runner.codes
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - ecrrepositorys
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-aws-infra-operator-io-v1alpha1-ecscluster
+  failurePolicy: Fail
+  name: vecscluster.kb.io
+  rules:
+  - apiGroups:
+    - aws-infra-operator.runner.codes
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - ecsclusters
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-aws-infra-operator-io-v1alpha1-ekscluster
+  failurePolicy: Fail
+  name: vekscluster.kb.io
+  rules:
+  - apiGroups:
+    - aws-infra-operator.runner.codes
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - eksclusters
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-aws-infra-operator-io-v1alpha1-elasticachecluster
+  failurePolicy: Fail
+  name: velasticachecluster.kb.io
+  rules:
+  - apiGroups:
+    - aws-infra-operator.runner.codes
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - elasticacheclusters
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-aws-infra-operator-io-v1alpha1-elasticip
+  failurePolicy: Fail
+  name: velasticip.kb.io
+  rules:
+  - apiGroups:
+    - aws-infra-operator.runner.codes
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - elasticips
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-aws-infra-operator-io-v1alpha1-iamrole
+  failurePolicy: Fail
+  name: viamrole.kb.io
+  rules:
+  - apiGroups:
+    - aws-infra-operator.runner.codes
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - iamroles
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-aws-infra-operator-io-v1alpha1-internetgateway
+  failurePolicy: Fail
+  name: vinternetgateway.kb.io
+  rules:
+  - apiGroups:
+    - aws-infra-operator.runner.codes
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - internetgateways
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-aws-infra-operator-io-v1alpha1-kmskey
+  failurePolicy: Fail
+  name: vkmskey.kb.io
+  rules:
+  - apiGroups:
+    - aws-infra-operator.runner.codes
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - kmskeys
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-aws-infra-operator-io-v1alpha1-lambdafunction
+  failurePolicy: Fail
+  name: vlambdafunction.kb.io
+  rules:
+  - apiGroups:
+    - aws-infra-operator.runner.codes
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - lambdafunctions
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-aws-infra-operator-io-v1alpha1-natgateway
+  failurePolicy: Fail
+  name: vnatgateway.kb.io
+  rules:
+  - apiGroups:
+    - aws-infra-operator.runner.codes
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - natgateways
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-aws-infra-operator-io-v1alpha1-nlb
+  failurePolicy: Fail
+  name: vnlb.kb.io
+  rules:
+  - apiGroups:
+    - aws-infra-operator.runner.codes
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - nlbs
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-aws-infra-operator-io-v1alpha1-rdsinstance
+  failurePolicy: Fail
+  name: vrdsinstance.kb.io
+  rules:
+  - apiGroups:
+    - aws-infra-operator.runner.codes
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - rdsinstances
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-aws-infra-operator-io-v1alpha1-route53hostedzone
+  failurePolicy: Fail
+  name: vroute53hostedzone.kb.io
+  rules:
+  - apiGroups:
+    - aws-infra-operator.runner.codes
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - route53hostedzones
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-aws-infra-operator-io-v1alpha1-route53recordset
+  failurePolicy: Fail
+  name: vroute53recordset.kb.io
+  rules:
+  - apiGroups:
+    - aws-infra-operator.runner.codes
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - route53recordsets
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-aws-infra-operator-io-v1alpha1-routetable
+  failurePolicy: Fail
+  name: vroutetable.kb.io
+  rules:
+  - apiGroups:
+    - aws-infra-operator.runner.codes
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - routetables
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-aws-infra-operator-io-v1alpha1-s3bucket
+  failurePolicy: Fail
+  name: vs3bucket.kb.io
+  rules:
+  - apiGroups:
+    - aws-infra-operator.runner.codes
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - s3buckets
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-aws-infra-operator-io-v1alpha1-secretsmanagersecret
+  failurePolicy: Fail
+  name: vsecretsmanagersecret.kb.io
+  rules:
+  - apiGroups:
+    - aws-infra-operator.runner.codes
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - secretsmanagersecrets
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-aws-infra-operator-io-v1alpha1-securitygroup
+  failurePolicy: Fail
+  name: vsecuritygroup.kb.io
+  rules:
+  - apiGroups:
+    - aws-infra-operator.runner.codes
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - securitygroups
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-aws-infra-operator-io-v1alpha1-snstopic
+  failurePolicy: Fail
+  name: vsnstopic.kb.io
+  rules:
+  - apiGroups:
+    - aws-infra-operator.runner.codes
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - snstopics
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-aws-infra-operator-io-v1alpha1-sqsqueue
+  failurePolicy: Fail
+  name: vsqsqueue.kb.io
+  rules:
+  - apiGroups:
+    - aws-infra-operator.runner.codes
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - sqsqueues
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-aws-infra-operator-io-v1alpha1-subnet
+  failurePolicy: Fail
+  name: vsubnet.kb.io
+  rules:
+  - apiGroups:
+    - aws-infra-operator.runner.codes
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - subnets
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-aws-infra-operator-io-v1alpha1-vpc
+  failurePolicy: Fail
+  name: vvpc.kb.io
+  rules:
+  - apiGroups:
+    - aws-infra-operator.runner.codes
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - vpcs
+  sideEffects: None

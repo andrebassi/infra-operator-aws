@@ -1,0 +1,61 @@
+version: '3.8'
+
+# Docker Compose file for E2E testing with LocalStack
+# Provides local AWS services emulation for testing infra-operator
+
+services:
+  localstack:
+    container_name: infra-operator-e2e-localstack
+    image: localstack/localstack:latest
+    ports:
+      - "4566:4566"            # LocalStack Gateway
+      - "4510-4559:4510-4559"  # External services port range
+    environment:
+      # Core Configuration
+      - SERVICES=ec2,s3,rds,dynamodb,sqs,sns,lambda,iam,secretsmanager,kms,route53,elasticloadbalancing,acm,ecr,ecs,elasticache,cloudfront,apigateway
+      - DEBUG=1
+      - PERSISTENCE=0
+      - LAMBDA_EXECUTOR=local
+      - DOCKER_HOST=unix:///var/run/docker.sock
+
+      # AWS Configuration
+      - AWS_DEFAULT_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+
+      # LocalStack Pro (optional - comment out if using community edition)
+      # - LOCALSTACK_API_KEY=${LOCALSTACK_API_KEY}
+
+      # Feature Flags
+      - ENABLE_CONFIG_UPDATES=1
+      - DISABLE_CORS_CHECKS=1
+      - DISABLE_CUSTOM_CORS_S3=0
+      - DISABLE_CUSTOM_CORS_APIGATEWAY=0
+
+      # Hostname Configuration
+      - HOSTNAME=localhost
+      - HOSTNAME_EXTERNAL=localhost
+
+    volumes:
+      - "${TMPDIR:-/tmp}/localstack:/var/lib/localstack"
+      - "/var/run/docker.sock:/var/run/docker.sock"
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+    networks:
+      - e2e-test-network
+
+networks:
+  e2e-test-network:
+    driver: bridge
+
+# Usage:
+# Start: docker-compose -f docker-compose.e2e.yaml up -d
+# Stop:  docker-compose -f docker-compose.e2e.yaml down
+# Logs:  docker-compose -f docker-compose.e2e.yaml logs -f localstack
+# Health: curl http://localhost:4566/_localstack/health

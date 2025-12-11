@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 200">
+  <defs>
+    <style>
+      .account-a { fill: #e3f2fd; stroke: #1976d2; stroke-width: 2; }
+      .account-b { fill: #fce4ec; stroke: #c2185b; stroke-width: 2; }
+      .sns-box { fill: #ffccbc; stroke: #ff5722; stroke-width: 2; }
+      .sqs-box { fill: #ffecb3; stroke: #ffc107; stroke-width: 2; }
+      .text-label { font-family: Arial, sans-serif; font-size: 11px; fill: #333; }
+      .text-small { font-family: Arial, sans-serif; font-size: 9px; fill: #666; }
+      .text-title { font-family: Arial, sans-serif; font-size: 12px; font-weight: bold; fill: #333; }
+      .arrow { stroke: #60a5fa; stroke-width: 2; fill: none; marker-end: url(#arrowhead); }
+    </style>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#60a5fa"/>
+    </marker>
+  </defs>
+
+  <!-- Account A -->
+  <rect class="account-a" x="30" y="30" width="280" height="140" rx="10"/>
+  <text class="text-title" x="50" y="55">AWS Account A (Publisher)</text>
+  <text class="text-small" x="50" y="75">111111111111</text>
+
+  <!-- SNS Topic -->
+  <rect class="sns-box" x="80" y="90" width="180" height="60" rx="8"/>
+  <text class="text-label" x="125" y="115">SNS Topic</text>
+  <text class="text-small" x="115" y="135">cross-account-topic</text>
+
+  <!-- Account B -->
+  <rect class="account-b" x="390" y="30" width="280" height="140" rx="10"/>
+  <text class="text-title" x="410" y="55">AWS Account B (Subscriber)</text>
+  <text class="text-small" x="410" y="75">222222222222</text>
+
+  <!-- SQS Queue -->
+  <rect class="sqs-box" x="440" y="90" width="180" height="60" rx="8"/>
+  <text class="text-label" x="490" y="115">SQS Queue</text>
+  <text class="text-small" x="475" y="135">subscriber-queue</text>
+
+  <!-- Arrow -->
+  <line class="arrow" x1="260" y1="120" x2="438" y2="120"/>
+  <text class="text-small" x="320" y="110">Cross-Account</text>
+</svg>

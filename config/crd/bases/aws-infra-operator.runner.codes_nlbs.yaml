@@ -1,0 +1,160 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: nlbs.aws-infra-operator.runner.codes
+spec:
+  group: aws-infra-operator.runner.codes
+  names:
+    kind: NLB
+    listKind: NLBList
+    plural: nlbs
+    shortNames:
+    - nlb
+    - nlbs
+    singular: nlb
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.loadBalancerName
+      name: Load Balancer
+      type: string
+    - jsonPath: .status.dnsName
+      name: DNS Name
+      type: string
+    - jsonPath: .status.state
+      name: State
+      type: string
+    - jsonPath: .status.ready
+      name: Ready
+      type: boolean
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: NLB is the Schema for the nlbs API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: NLBSpec defines the desired state of NLB
+            properties:
+              deletionPolicy:
+                default: Delete
+                description: |-
+                  DeletionPolicy determines what happens to the NLB when the CR is deleted
+                  Valid values: Delete, Retain
+                enum:
+                - Delete
+                - Retain
+                type: string
+              enableCrossZoneLoadBalancing:
+                default: false
+                description: EnableCrossZoneLoadBalancing enables cross-zone load
+                  balancing
+                type: boolean
+              enableDeletionProtection:
+                description: EnableDeletionProtection enables deletion protection
+                type: boolean
+              ipAddressType:
+                default: ipv4
+                description: |-
+                  IPAddressType is the IP address type
+                  Valid values: ipv4, dualstack
+                enum:
+                - ipv4
+                - dualstack
+                type: string
+              loadBalancerName:
+                description: LoadBalancerName is the name of the Network Load Balancer
+                maxLength: 32
+                minLength: 1
+                type: string
+              providerRef:
+                description: ProviderRef references the AWSProvider for authentication
+                properties:
+                  name:
+                    description: Name of the AWSProvider
+                    type: string
+                  namespace:
+                    description: Namespace of the AWSProvider (if different from current
+                      namespace)
+                    type: string
+                required:
+                - name
+                type: object
+              scheme:
+                default: internet-facing
+                description: |-
+                  Scheme is the load balancer scheme
+                  Valid values: internet-facing, internal
+                enum:
+                - internet-facing
+                - internal
+                type: string
+              subnets:
+                description: Subnets is the list of subnet IDs (minimum 1)
+                items:
+                  type: string
+                minItems: 1
+                type: array
+              tags:
+                additionalProperties:
+                  type: string
+                description: Tags to apply to the NLB
+                type: object
+            required:
+            - loadBalancerName
+            - providerRef
+            - subnets
+            type: object
+          status:
+            description: NLBStatus defines the observed state of NLB
+            properties:
+              canonicalHostedZoneID:
+                description: CanonicalHostedZoneID for Route53
+                type: string
+              dnsName:
+                description: DNSName is the DNS name of the NLB
+                type: string
+              lastSyncTime:
+                description: LastSyncTime is the last time the NLB was synced
+                format: date-time
+                type: string
+              loadBalancerARN:
+                description: LoadBalancerARN is the ARN of the NLB
+                type: string
+              ready:
+                description: Ready indicates if the NLB is active
+                type: boolean
+              state:
+                description: State is the state of the NLB
+                type: string
+              vpcID:
+                description: VpcID is the VPC ID
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

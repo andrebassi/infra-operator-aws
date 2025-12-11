@@ -1,0 +1,1821 @@
+---
+title: 'Security Group - Firewall Virtual'
+description: 'Firewall stateful para controle de tráfego de rede em instâncias EC2'
+icon: 'shield'
+---
+
+Crie e gerencie Security Groups da AWS com controle granular de tráfego de entrada (ingress) e saída (egress) para proteger suas instâncias EC2, RDS, Load Balancers e outros recursos.
+
+## Pré-requisito: Configuração do AWSProvider
+
+Antes de criar qualquer recurso AWS, você precisa configurar um **AWSProvider** que gerencia as credenciais e autenticação com a AWS.
+
+<CodeGroup>
+```yaml IRSA
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: AWSProvider
+metadata:
+  name: production-aws
+  namespace: default
+spec:
+  region: us-east-1
+  roleARN: arn:aws:iam::123456789012:role/infra-operator-role
+  defaultTags:
+    managed-by: infra-operator
+    environment: production
+```
+
+```yaml Credenciais Estáticas
+apiVersion: v1
+kind: Secret
+metadata:
+  name: aws-credentials
+  namespace: default
+type: Opaque
+stringData:
+  access-key-id: test
+  secret-access-key: test
+---
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: AWSProvider
+metadata:
+  name: localstack
+  namespace: default
+spec:
+  region: us-east-1
+  accessKeyIDRef:
+    name: aws-credentials
+    key: access-key-id
+  secretAccessKeyRef:
+    name: aws-credentials
+    key: secret-access-key
+  defaultTags:
+    managed-by: infra-operator
+    environment: test
+```
+
+```bash Verificar Status
+kubectl get awsprovider
+kubectl describe awsprovider production-aws
+```
+</CodeGroup>
+
+<Warning>
+  Para produção, sempre use **IRSA** (IAM Roles for Service Accounts) ao invés de credenciais estáticas.
+</Warning>
+
+### Criar IAM Role para IRSA
+
+Para usar IRSA em produção, você precisa criar uma IAM Role com as permissões necessárias:
+
+<CodeGroup>
+```json Trust Policy (trust-policy.json)
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::123456789012:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B71EXAMPLE"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "oidc.eks.us-east-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B71EXAMPLE:sub": "system:serviceaccount:infra-operator-system:infra-operator-controller-manager",
+          "oidc.eks.us-east-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B71EXAMPLE:aud": "sts.amazonaws.com"
+        }
+      }
+    }
+  ]
+}
+```
+
+```json IAM Policy - Security Groups (sg-policy.json)
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateSecurityGroup",
+        "ec2:DeleteSecurityGroup",
+        "ec2:DescribeSecurityGroups",
+        "ec2:DescribeSecurityGroupRules",
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:AuthorizeSecurityGroupEgress",
+        "ec2:RevokeSecurityGroupIngress",
+        "ec2:RevokeSecurityGroupEgress",
+        "ec2:UpdateSecurityGroupRuleDescriptionsIngress",
+        "ec2:UpdateSecurityGroupRuleDescriptionsEgress",
+        "ec2:ModifySecurityGroupRules",
+        "ec2:CreateTags",
+        "ec2:DeleteTags",
+        "ec2:DescribeTags"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+```bash Criar Role com AWS CLI
+# 1. Obter OIDC Provider do cluster EKS
+export CLUSTER_NAME=my-cluster
+export AWS_REGION=us-east-1
+export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+
+OIDC_PROVIDER=$(aws eks describe-cluster \
+  --name $CLUSTER_NAME \
+  --region $AWS_REGION \
+  --query "cluster.identity.oidc.issuer" \
+  --output text | sed -e "s/^https:\/\///")
+
+# 2. Atualizar trust-policy.json com valores corretos
+cat > trust-policy.json <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::${AWS_ACCOUNT_ID}:oidc-provider/${OIDC_PROVIDER}"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "${OIDC_PROVIDER}:sub": "system:serviceaccount:infra-operator-system:infra-operator-controller-manager",
+          "${OIDC_PROVIDER}:aud": "sts.amazonaws.com"
+        }
+      }
+    }
+  ]
+}
+EOF
+
+# 3. Criar IAM Role
+aws iam create-role \
+  --role-name infra-operator-sg-role \
+  --assume-role-policy-document file://trust-policy.json \
+  --description "Role for Infra Operator Security Group management"
+
+# 4. Criar e anexar policy
+aws iam put-role-policy \
+  --role-name infra-operator-sg-role \
+  --policy-name SecurityGroupManagement \
+  --policy-document file://sg-policy.json
+
+# 5. Obter ARN da Role
+aws iam get-role \
+  --role-name infra-operator-sg-role \
+  --query 'Role.Arn' \
+  --output text
+```
+
+```bash Anotar ServiceAccount do Operator
+# Adicionar annotation ao ServiceAccount do operator
+kubectl annotate serviceaccount infra-operator-controller-manager \
+  -n infra-operator-system \
+  eks.amazonaws.com/role-arn=arn:aws:iam::123456789012:role/infra-operator-sg-role
+```
+</CodeGroup>
+
+<Note>
+  Substitua `123456789012` pelo seu AWS Account ID e `EXAMPLED539D4633E53DE1B71EXAMPLE` pelo ID do seu OIDC provider.
+</Note>
+
+## Visão Geral
+
+AWS Security Groups atuam como um firewall virtual stateful que controla tráfego de entrada (ingress) e saída (egress) para recursos AWS como instâncias EC2, RDS databases, Load Balancers, e outros. São fundamentais para a segurança de rede na AWS.
+
+**Características:**
+- **Stateful Firewall**: Respostas a tráfego permitido são automaticamente permitidas
+- **Controle Granular**: Regras por protocolo (TCP/UDP/ICMP), porta, e origem/destino
+- **VPC-Scoped**: Security Groups são criados dentro de uma VPC específica
+- **Múltiplas Regras**: Até 60 regras de ingress e 60 de egress por Security Group
+- **Source/Destination Flexibility**: CIDR blocks, outro Security Group, ou Prefix Lists
+- **Default Deny**: Todo tráfego é bloqueado a menos que explicitamente permitido
+- **No Outbound Restrictions**: Por padrão, todo tráfego de saída é permitido
+- **Real-time Changes**: Alterações em regras são aplicadas imediatamente
+- **Multiple Attachments**: Um Security Group pode ser usado por múltiplos recursos
+- **Chaining**: Referenciar outros Security Groups em regras (não precisa IP)
+- **Auditoria**: Logs de fluxo via VPC Flow Logs
+- **Tagging**: Organizar e gerenciar via tags
+- **No Custo Adicional**: Security Groups são gratuitos
+
+**Status**: ✅ Funciona em AWS Real e LocalStack
+
+## Início Rápido
+
+<CodeGroup>
+```yaml Security Group Básico
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: SecurityGroup
+metadata:
+  name: e2e-web-server-sg
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+
+  vpcId: vpc-0123456789abcdef0
+  groupName: e2e-web-server-sg
+  description: Security group for web servers
+
+  ingressRules:
+  - ipProtocol: tcp
+    fromPort: 80
+    toPort: 80
+    cidrIpv4: 0.0.0.0/0
+    description: Allow HTTP from internet
+
+  - ipProtocol: tcp
+    fromPort: 443
+    toPort: 443
+    cidrIpv4: 0.0.0.0/0
+    description: Allow HTTPS from internet
+
+  egressRules:
+  - ipProtocol: -1
+    cidrIpv4: 0.0.0.0/0
+    description: Allow all outbound traffic
+
+  tags:
+    environment: test
+    managed-by: infra-operator
+    purpose: e2e-testing
+
+  deletionPolicy: Delete
+```
+
+```yaml Security Group com Source SG
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: SecurityGroup
+metadata:
+  name: e2e-database-sg
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+
+  vpcId: vpc-0123456789abcdef0
+  groupName: e2e-database-sg
+  description: Security group for RDS database
+
+  ingressRules:
+  # PostgreSQL access apenas do web server SG
+  - ipProtocol: tcp
+    fromPort: 5432
+    toPort: 5432
+    referencedGroupId: sg-0987654321fedcba0
+    description: Allow PostgreSQL from web servers
+
+  egressRules:
+  # Sem egress explícito = default deny all
+
+  tags:
+    environment: test
+    managed-by: infra-operator
+    purpose: e2e-testing
+
+  deletionPolicy: Delete
+```
+
+```yaml Security Group Completo
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: SecurityGroup
+metadata:
+  name: app-backend-sg
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  # VPC onde o SG será criado
+  vpcId: vpc-0123456789abcdef0
+
+  # Nome do Security Group (deve ser único na VPC)
+  groupName: app-backend-production
+
+  # Descrição (não pode ser alterada depois)
+  description: Security group for backend application servers
+
+  # Regras de Ingress (tráfego entrando)
+  ingressRules:
+  - ipProtocol: tcp
+    fromPort: 8080
+    toPort: 8080
+    referencedGroupId: sg-alb123456
+    description: Allow HTTP from ALB
+
+  - ipProtocol: tcp
+    fromPort: 9090
+    toPort: 9090
+    cidrIpv4: 10.0.0.0/8
+    description: Allow metrics from internal network
+
+  - ipProtocol: tcp
+    fromPort: 22
+    toPort: 22
+    referencedGroupId: sg-bastion123
+    description: SSH from bastion host
+
+  # Regras de Egress (tráfego saindo)
+  egressRules:
+  - ipProtocol: tcp
+    fromPort: 5432
+    toPort: 5432
+    referencedGroupId: sg-database456
+    description: PostgreSQL to database
+
+  - ipProtocol: tcp
+    fromPort: 6379
+    toPort: 6379
+    referencedGroupId: sg-redis789
+    description: Redis to cache cluster
+
+  - ipProtocol: tcp
+    fromPort: 443
+    toPort: 443
+    cidrIpv4: 0.0.0.0/0
+    description: HTTPS to internet for APIs
+
+  # Tags para organização
+  tags:
+    Environment: production
+    Application: backend
+    Team: platform
+    ManagedBy: infra-operator
+
+  # Manter SG se CR for deletado
+  deletionPolicy: Retain
+```
+
+```bash Aplicar
+kubectl apply -f security-group.yaml
+```
+
+```bash Verificar Status
+kubectl get securitygroups
+# ou shortname
+kubectl get sg
+
+kubectl describe securitygroup e2e-web-server-sg
+kubectl get securitygroup e2e-web-server-sg -o yaml
+```
+</CodeGroup>
+
+## Referência de Configuração
+
+### Campos Obrigatórios
+
+<ParamField path="spec.providerRef" type="object" required>
+  Referência ao recurso AWSProvider para autenticação
+
+  <Expandable title="properties">
+    <ParamField path="name" type="string" required>
+      Nome do recurso AWSProvider
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="spec.vpcId" type="string" required>
+  ID da VPC onde o Security Group será criado
+
+  ```yaml
+  vpcId: vpc-0123456789abcdef0
+  ```
+
+  **Observações:**
+  - VPC deve existir antes de criar o Security Group
+  - Security Group não pode ser movido entre VPCs
+  - Use VPC CR criada pelo infra-operator ou VPC existente
+  - Formato: `vpc-` seguido de 17 caracteres hexadecimais
+</ParamField>
+
+<ParamField path="spec.groupName" type="string" required>
+  Nome do Security Group (deve ser único dentro da VPC)
+
+  **Regras:**
+  - 1 a 255 caracteres
+  - Letras, números, espaços, `._-:/()#,@[]+=&;{}!$*`
+  - Não pode começar com `sg-`
+  - Case sensitive
+
+  ```yaml
+  groupName: my-app-backend-sg
+  ```
+</ParamField>
+
+<ParamField path="spec.description" type="string" required>
+  Descrição do Security Group (não pode ser alterada depois)
+
+  ```yaml
+  description: Security group for application backend servers
+  ```
+
+  **Importante:**
+  - Descrição NÃO pode ser modificada após criação
+  - Se precisar mudar, deve deletar e recriar o Security Group
+  - Use descrições claras e detalhadas desde o início
+  - Máximo 255 caracteres
+</ParamField>
+
+### Campos Opcionais - Regras de Ingress
+
+<ParamField path="spec.ingressRules" type="array">
+  Lista de regras de tráfego de entrada (ingress)
+
+  ```yaml
+  ingressRules:
+  - ipProtocol: tcp
+    fromPort: 80
+    toPort: 80
+    cidrIpv4: 0.0.0.0/0
+    description: Allow HTTP from anywhere
+
+  - ipProtocol: tcp
+    fromPort: 443
+    toPort: 443
+    cidrIpv6: ::/0
+    description: Allow HTTPS from anywhere IPv6
+
+  - ipProtocol: tcp
+    fromPort: 5432
+    toPort: 5432
+    referencedGroupId: sg-app123456
+    description: PostgreSQL from app servers
+  ```
+
+  <Expandable title="Campos de cada regra">
+    <ParamField path="ipProtocol" type="string" required>
+      Protocolo IP da regra
+
+      **Opções:**
+      - `tcp`: Transmission Control Protocol
+      - `udp`: User Datagram Protocol
+      - `icmp`: Internet Control Message Protocol (ping)
+      - `icmpv6`: ICMP para IPv6
+      - `58`: ICMPv6 (número do protocolo)
+      - `-1`: Todos os protocolos (any)
+      - Número do protocolo (0-255): [Lista completa](https://www.iana.org/assignments/protocol-numbers/)
+
+      ```yaml
+      ipProtocol: tcp
+      # ou para permitir tudo
+      ipProtocol: -1
+      ```
+    </ParamField>
+
+    <ParamField path="fromPort" type="integer">
+      Porta inicial do range (obrigatório para TCP/UDP)
+
+      ```yaml
+      fromPort: 80
+      ```
+
+      **Detalhes:**
+      - Range: 0-65535
+      - Obrigatório para `tcp` e `udp`
+      - Não usado para `icmp` ou `-1`
+      - Para porta única, `fromPort` = `toPort`
+    </ParamField>
+
+    <ParamField path="toPort" type="integer">
+      Porta final do range (obrigatório para TCP/UDP)
+
+      ```yaml
+      toPort: 80
+      # ou range
+      fromPort: 8000
+      toPort: 8999
+      ```
+    </ParamField>
+
+    <ParamField path="cidrIpv4" type="string">
+      Bloco CIDR IPv4 de origem (mutuamente exclusivo com referencedGroupId)
+
+      ```yaml
+      cidrIpv4: 0.0.0.0/0          # Internet inteira
+      cidrIpv4: 10.0.0.0/8          # Rede privada classe A
+      cidrIpv4: 192.168.1.0/24      # Subnet específica
+      cidrIpv4: 203.0.113.25/32     # IP único
+      ```
+
+      **Formatos comuns:**
+      - `0.0.0.0/0`: Todo tráfego IPv4 (internet)
+      - `10.0.0.0/8`: RFC1918 privado (10.x.x.x)
+      - `172.16.0.0/12`: RFC1918 privado (172.16-31.x.x)
+      - `192.168.0.0/16`: RFC1918 privado (192.168.x.x)
+      - `x.x.x.x/32`: IP único
+    </ParamField>
+
+    <ParamField path="cidrIpv6" type="string">
+      Bloco CIDR IPv6 de origem (mutuamente exclusivo com referencedGroupId)
+
+      ```yaml
+      cidrIpv6: ::/0                          # Internet inteira IPv6
+      cidrIpv6: 2001:db8::/32                 # Subnet IPv6
+      cidrIpv6: 2001:db8::1/128               # IP único IPv6
+      ```
+    </ParamField>
+
+    <ParamField path="referencedGroupId" type="string">
+      ID de outro Security Group como origem (ao invés de CIDR)
+
+      ```yaml
+      referencedGroupId: sg-0123456789abcdef0
+      ```
+
+      **Vantagens:**
+      - Não precisa saber IPs específicos
+      - Regra se ajusta automaticamente quando instâncias mudam
+      - Padrão recomendado para comunicação entre recursos AWS
+      - Pode referenciar SG em outra conta (com peering)
+
+      **Importante:**
+      - Mutuamente exclusivo com `cidrIpv4` e `cidrIpv6`
+      - Security Group referenciado pode estar na mesma VPC ou VPC peered
+    </ParamField>
+
+    <ParamField path="prefixListId" type="string">
+      ID de uma Prefix List gerenciada (para serviços AWS)
+
+      ```yaml
+      prefixListId: pl-12345678
+      ```
+
+      **Uso:**
+      - AWS Managed Prefix Lists (S3, DynamoDB, CloudFront)
+      - Customer Managed Prefix Lists
+      - Exemplo: permitir acesso a S3 endpoints da região
+    </ParamField>
+
+    <ParamField path="description" type="string">
+      Descrição da regra (altamente recomendado)
+
+      ```yaml
+      description: Allow HTTPS from CloudFront distribution
+      ```
+
+      **Boas práticas:**
+      - Sempre adicionar descrição
+      - Explicar QUEM e POR QUE tem acesso
+      - Máximo 255 caracteres
+      - Facilita auditoria e troubleshooting
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Campos Opcionais - Regras de Egress
+
+<ParamField path="spec.egressRules" type="array">
+  Lista de regras de tráfego de saída (egress)
+
+  ```yaml
+  egressRules:
+  # Allow all outbound (padrão AWS)
+  - ipProtocol: -1
+    cidrIpv4: 0.0.0.0/0
+    description: Allow all outbound traffic
+
+  # Ou restrito
+  - ipProtocol: tcp
+    fromPort: 443
+    toPort: 443
+    cidrIpv4: 0.0.0.0/0
+    description: HTTPS to internet
+
+  - ipProtocol: tcp
+    fromPort: 5432
+    toPort: 5432
+    referencedGroupId: sg-database123
+    description: PostgreSQL to database
+  ```
+
+  **Comportamento padrão:**
+  - AWS cria regra de egress `0.0.0.0/0` automaticamente
+  - Se você especificar `egressRules`, a regra padrão é REMOVIDA
+  - Para permitir tudo, adicione explicitamente a regra `ipProtocol: -1`
+
+  **Campos:** Mesmos campos de `ingressRules` (ipProtocol, fromPort, toPort, cidrIpv4, cidrIpv6, referencedGroupId, prefixListId, description)
+</ParamField>
+
+### Campos Opcionais - Tags e Deleção
+
+<ParamField path="spec.tags" type="object">
+  Pares chave-valor para organização e billing
+
+  ```yaml
+  tags:
+    Environment: production
+    Application: backend
+    Team: platform
+    CostCenter: engineering
+    ManagedBy: infra-operator
+    Compliance: pci-dss
+  ```
+</ParamField>
+
+<ParamField path="spec.deletionPolicy" type="string" default="Delete">
+  O que acontece com o Security Group quando o CR é deletado
+
+  **Opções:**
+  - `Delete`: Security Group é deletado da AWS (⚠️ pode falhar se em uso)
+  - `Retain`: Security Group permanece na AWS mas não gerenciado
+  - `Orphan`: Remover apenas gerenciamento
+
+  ```yaml
+  deletionPolicy: Retain
+  ```
+
+  **Importante:**
+  - Não é possível deletar SG que está em uso (attached a ENI)
+  - AWS retorna erro: "resource has a dependent object"
+  - Use `Retain` se SG pode estar em uso por recursos não gerenciados
+</ParamField>
+
+## Campos de Status
+
+Após o Security Group ser criado, os seguintes campos de status são populados:
+
+<ResponseField name="status.ready" type="boolean">
+  `true` quando o Security Group está criado e pronto para uso
+</ResponseField>
+
+<ResponseField name="status.securityGroupId" type="string">
+  ID do Security Group criado na AWS
+
+  ```
+  sg-0123456789abcdef0
+  ```
+</ResponseField>
+
+<ResponseField name="status.groupName" type="string">
+  Nome do Security Group (confirmação)
+</ResponseField>
+
+<ResponseField name="status.vpcId" type="string">
+  VPC onde o Security Group foi criado (confirmação)
+</ResponseField>
+
+<ResponseField name="status.ownerId" type="string">
+  ID da conta AWS dona do Security Group
+</ResponseField>
+
+<ResponseField name="status.ingressRuleCount" type="integer">
+  Número de regras de ingress configuradas
+</ResponseField>
+
+<ResponseField name="status.egressRuleCount" type="integer">
+  Número de regras de egress configuradas
+</ResponseField>
+
+<ResponseField name="status.lastSyncTime" type="string">
+  Timestamp da última sincronização com a AWS (formato ISO 8601)
+</ResponseField>
+
+<ResponseField name="status.message" type="string">
+  Mensagem de status adicional (erros, avisos, etc)
+</ResponseField>
+
+## Exemplos
+
+### Security Group para Web Server (HTTP/HTTPS)
+
+Permite tráfego HTTP e HTTPS da internet:
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: SecurityGroup
+metadata:
+  name: web-server-sg
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  vpcId: vpc-0123456789abcdef0
+  groupName: web-server-public
+  description: Security group for public web servers
+
+  ingressRules:
+  # HTTP from internet
+  - ipProtocol: tcp
+    fromPort: 80
+    toPort: 80
+    cidrIpv4: 0.0.0.0/0
+    description: Allow HTTP from internet
+
+  # HTTPS from internet
+  - ipProtocol: tcp
+    fromPort: 443
+    toPort: 443
+    cidrIpv4: 0.0.0.0/0
+    description: Allow HTTPS from internet
+
+  # HTTPS IPv6
+  - ipProtocol: tcp
+    fromPort: 443
+    toPort: 443
+    cidrIpv6: ::/0
+    description: Allow HTTPS from internet IPv6
+
+  # SSH apenas da VPN corporativa
+  - ipProtocol: tcp
+    fromPort: 22
+    toPort: 22
+    cidrIpv4: 203.0.113.0/24
+    description: SSH from corporate VPN
+
+  egressRules:
+  # Permitir todo tráfego de saída
+  - ipProtocol: -1
+    cidrIpv4: 0.0.0.0/0
+    description: Allow all outbound traffic
+
+  tags:
+    Environment: production
+    Type: web-server
+    Tier: frontend
+
+  deletionPolicy: Delete
+```
+
+### Security Group para Database (PostgreSQL/MySQL)
+
+Permite acesso ao banco apenas de servidores específicos:
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: SecurityGroup
+metadata:
+  name: database-sg
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  vpcId: vpc-0123456789abcdef0
+  groupName: rds-database-private
+  description: Security group for RDS PostgreSQL database
+
+  ingressRules:
+  # PostgreSQL do app backend
+  - ipProtocol: tcp
+    fromPort: 5432
+    toPort: 5432
+    referencedGroupId: sg-backend123456
+    description: PostgreSQL from backend servers
+
+  # PostgreSQL do app worker
+  - ipProtocol: tcp
+    fromPort: 5432
+    toPort: 5432
+    referencedGroupId: sg-worker123456
+    description: PostgreSQL from worker servers
+
+  # PostgreSQL do bastion (para manutenção)
+  - ipProtocol: tcp
+    fromPort: 5432
+    toPort: 5432
+    referencedGroupId: sg-bastion123456
+    description: PostgreSQL from bastion host for maintenance
+
+  egressRules:
+  # Database não precisa de egress
+  # (não especificar egressRules = negar tudo)
+
+  tags:
+    Environment: production
+    Type: database
+    Engine: postgresql
+    Tier: data
+
+  deletionPolicy: Retain
+```
+
+### Security Group para Load Balancer (ALB/NLB)
+
+Load balancer público que encaminha para backend privado:
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: SecurityGroup
+metadata:
+  name: alb-public-sg
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  vpcId: vpc-0123456789abcdef0
+  groupName: alb-public-frontend
+  description: Security group for public Application Load Balancer
+
+  ingressRules:
+  # HTTP da internet
+  - ipProtocol: tcp
+    fromPort: 80
+    toPort: 80
+    cidrIpv4: 0.0.0.0/0
+    description: Allow HTTP from internet
+
+  # HTTPS da internet
+  - ipProtocol: tcp
+    fromPort: 443
+    toPort: 443
+    cidrIpv4: 0.0.0.0/0
+    description: Allow HTTPS from internet
+
+  # HTTPS IPv6
+  - ipProtocol: tcp
+    fromPort: 443
+    toPort: 443
+    cidrIpv6: ::/0
+    description: Allow HTTPS from internet IPv6
+
+  egressRules:
+  # Egress para backend servers na porta 8080
+  - ipProtocol: tcp
+    fromPort: 8080
+    toPort: 8080
+    referencedGroupId: sg-backend123456
+    description: Forward traffic to backend servers
+
+  # Health checks para backend
+  - ipProtocol: tcp
+    fromPort: 8080
+    toPort: 8080
+    cidrIpv4: 10.0.0.0/8
+    description: Health checks to backend in VPC
+
+  tags:
+    Environment: production
+    Type: load-balancer
+    Tier: frontend
+
+  deletionPolicy: Retain
+```
+
+### Security Group para Internal Services (Microservices)
+
+Comunicação interna entre microserviços:
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: SecurityGroup
+metadata:
+  name: internal-services-sg
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  vpcId: vpc-0123456789abcdef0
+  groupName: internal-microservices
+  description: Security group for internal microservices communication
+
+  ingressRules:
+  # gRPC entre serviços
+  - ipProtocol: tcp
+    fromPort: 50051
+    toPort: 50051
+    referencedGroupId: sg-self
+    description: gRPC from other microservices
+
+  # HTTP API interna
+  - ipProtocol: tcp
+    fromPort: 8080
+    toPort: 8099
+    cidrIpv4: 10.0.0.0/8
+    description: HTTP APIs from internal VPC
+
+  # Metrics (Prometheus)
+  - ipProtocol: tcp
+    fromPort: 9090
+    toPort: 9090
+    referencedGroupId: sg-monitoring123
+    description: Prometheus metrics scraping
+
+  egressRules:
+  # Redis cluster
+  - ipProtocol: tcp
+    fromPort: 6379
+    toPort: 6379
+    referencedGroupId: sg-redis123456
+    description: Redis for caching
+
+  # RabbitMQ
+  - ipProtocol: tcp
+    fromPort: 5672
+    toPort: 5672
+    referencedGroupId: sg-rabbitmq123
+    description: RabbitMQ for messaging
+
+  # PostgreSQL
+  - ipProtocol: tcp
+    fromPort: 5432
+    toPort: 5432
+    referencedGroupId: sg-database123
+    description: PostgreSQL database
+
+  # HTTPS para APIs externas
+  - ipProtocol: tcp
+    fromPort: 443
+    toPort: 443
+    cidrIpv4: 0.0.0.0/0
+    description: HTTPS to external APIs
+
+  # DNS
+  - ipProtocol: udp
+    fromPort: 53
+    toPort: 53
+    cidrIpv4: 0.0.0.0/0
+    description: DNS resolution
+
+  tags:
+    Environment: production
+    Type: microservices
+    Tier: application
+
+  deletionPolicy: Retain
+```
+
+### Security Group para Bastion Host (Jump Box)
+
+Servidor de acesso SSH para administração:
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: SecurityGroup
+metadata:
+  name: bastion-sg
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+
+  vpcId: vpc-0123456789abcdef0
+  groupName: bastion-jump-host
+  description: Security group for SSH bastion/jump host
+
+  ingressRules:
+  # SSH apenas de IPs corporativos
+  - ipProtocol: tcp
+    fromPort: 22
+    toPort: 22
+    cidrIpv4: 203.0.113.0/24
+    description: SSH from corporate office
+
+  - ipProtocol: tcp
+    fromPort: 22
+    toPort: 22
+    cidrIpv4: 198.51.100.0/24
+    description: SSH from VPN gateway
+
+  egressRules:
+  # SSH para qualquer servidor na VPC
+  - ipProtocol: tcp
+    fromPort: 22
+    toPort: 22
+    cidrIpv4: 10.0.0.0/8
+    description: SSH to servers in VPC
+
+  # PostgreSQL para databases (troubleshooting)
+  - ipProtocol: tcp
+    fromPort: 5432
+    toPort: 5432
+    referencedGroupId: sg-database123
+    description: PostgreSQL for database maintenance
+
+  # HTTPS para package downloads
+  - ipProtocol: tcp
+    fromPort: 443
+    toPort: 443
+    cidrIpv4: 0.0.0.0/0
+    description: HTTPS for package updates
+
+  # DNS
+  - ipProtocol: udp
+    fromPort: 53
+    toPort: 53
+    cidrIpv4: 0.0.0.0/0
+    description: DNS resolution
+
+  tags:
+    Environment: production
+    Type: bastion
+    Purpose: administration
+
+  deletionPolicy: Retain
+```
+
+## Verificação
+
+### Verificar Status via kubectl
+
+```bash
+# Listar todos os Security Groups
+kubectl get securitygroups
+# ou shortname
+kubectl get sg
+
+# Obter informações detalhadas
+kubectl get securitygroup web-server-sg -o yaml
+
+# Acompanhar criação em tempo real
+kubectl get securitygroup web-server-sg -w
+
+# Ver eventos e status
+kubectl describe securitygroup web-server-sg
+
+# Ver apenas o ID do SG criado
+kubectl get securitygroup web-server-sg -o jsonpath='{.status.securityGroupId}'
+
+# Ver contagem de regras
+kubectl get securitygroup web-server-sg -o jsonpath='{.status.ingressRuleCount}'
+```
+
+### Verificar na AWS
+
+<Tabs>
+  <Tab title="AWS CLI">
+    ```bash
+    # Listar todos os Security Groups
+    aws ec2 describe-security-groups
+
+    # Obter SG específico por ID
+    aws ec2 describe-security-groups \
+      --group-ids sg-0123456789abcdef0
+
+    # Obter SG por nome
+    aws ec2 describe-security-groups \
+      --filters "Name=group-name,Values=web-server-public"
+
+    # Obter SGs de uma VPC
+    aws ec2 describe-security-groups \
+      --filters "Name=vpc-id,Values=vpc-0123456789abcdef0"
+
+    # Ver regras de ingress
+    aws ec2 describe-security-groups \
+      --group-ids sg-0123456789abcdef0 \
+      --query 'SecurityGroups[0].IpPermissions'
+
+    # Ver regras de egress
+    aws ec2 describe-security-groups \
+      --group-ids sg-0123456789abcdef0 \
+      --query 'SecurityGroups[0].IpPermissionsEgress'
+
+    # Listar recursos usando o SG
+    aws ec2 describe-network-interfaces \
+      --filters "Name=group-id,Values=sg-0123456789abcdef0"
+
+    # Ver regras de forma amigável (tabela)
+    aws ec2 describe-security-groups \
+      --group-ids sg-0123456789abcdef0 \
+      --output table
+
+    # Verificar tags
+    aws ec2 describe-security-groups \
+      --group-ids sg-0123456789abcdef0 \
+      --query 'SecurityGroups[0].Tags'
+    ```
+  </Tab>
+
+  <Tab title="kubectl">
+    ```bash
+    # Ver todas as regras de ingress em formato legível
+    kubectl get securitygroup web-server-sg -o json | \
+      jq '.spec.ingressRules[] | "Port: \(.fromPort)-\(.toPort) Protocol: \(.ipProtocol) From: \(.cidrIpv4 // .referencedGroupId)"'
+
+    # Exportar como YAML para backup
+    kubectl get securitygroup web-server-sg -o yaml > backup-sg.yaml
+
+    # Ver todas as SGs com seus IDs
+    kubectl get sg -o custom-columns=NAME:.metadata.name,SG-ID:.status.securityGroupId,VPC:.spec.vpcId
+
+    # Verificar se SG está ready
+    kubectl get sg -o custom-columns=NAME:.metadata.name,READY:.status.ready
+    ```
+  </Tab>
+
+  <Tab title="LocalStack">
+    ```bash
+    # Para testes com LocalStack
+    export AWS_ENDPOINT_URL=http://localhost:4566
+
+    aws ec2 describe-security-groups
+
+    # Criar regra de teste
+    aws ec2 authorize-security-group-ingress \
+      --group-id sg-test123 \
+      --protocol tcp \
+      --port 8080 \
+      --cidr 0.0.0.0/0
+
+    # Ver regras criadas
+    aws ec2 describe-security-groups \
+      --group-ids sg-test123
+    ```
+  </Tab>
+</Tabs>
+
+### Saída Esperada
+
+```yaml
+status:
+  securityGroupId: sg-0123456789abcdef0
+  groupName: web-server-public
+  vpcId: vpc-0123456789abcdef0
+  ownerId: "123456789012"
+  ingressRuleCount: 4
+  egressRuleCount: 1
+  ready: true
+  lastSyncTime: "2025-11-22T20:30:45Z"
+```
+
+## Resolução de Problemas
+
+<AccordionGroup>
+  <Accordion title="Security Group não é criado - 'vpc not found'">
+    **Sintomas:** Erro ao criar SG, mensagem "VPC vpc-xxx not found"
+
+    **Causas comuns:**
+    1. VPC ID incorreto ou não existe
+    2. VPC em região diferente
+    3. Credenciais AWS sem permissão para DescribeVpcs
+
+    **Soluções:**
+    ```bash
+    # Verificar se VPC existe
+    aws ec2 describe-vpcs --vpc-ids vpc-0123456789abcdef0
+
+    # Listar todas as VPCs da região
+    aws ec2 describe-vpcs --query 'Vpcs[*].[VpcId,Tags[?Key==`Name`].Value|[0]]' --output table
+
+    # Verificar região no AWSProvider
+    kubectl get awsprovider production-aws -o yaml | grep region
+
+    # Verificar se VPC está na região correta
+    aws ec2 describe-vpcs --region us-east-1
+
+    # Se VPC foi criada via CR, verificar se está ready
+    kubectl get vpc my-vpc -o yaml
+
+    # Corrigir spec.vpcId
+    kubectl patch securitygroup web-server-sg \
+      --type merge \
+      -p '{"spec":{"vpcId":"vpc-CORRECT-ID"}}'
+
+    # Verificar criação novamente
+    kubectl describe securitygroup web-server-sg
+    ```
+  </Accordion>
+
+  <Accordion title="Não consigo deletar Security Group - 'has dependent object'">
+    **Sintomas:** Deletar SG falha com "resource has a dependent object"
+
+    **Causa:** Security Group está em uso por EC2, RDS, ENI, Load Balancer, etc
+
+    **Soluções:**
+    ```bash
+    # Ver quais recursos estão usando o SG
+    aws ec2 describe-network-interfaces \
+      --filters "Name=group-id,Values=sg-0123456789abcdef0"
+
+    # Ver instâncias EC2 usando o SG
+    aws ec2 describe-instances \
+      --filters "Name=instance.group-id,Values=sg-0123456789abcdef0" \
+      --query 'Reservations[*].Instances[*].[InstanceId,State.Name,Tags[?Key==`Name`].Value|[0]]' \
+      --output table
+
+    # Ver Load Balancers usando o SG
+    aws elbv2 describe-load-balancers \
+      --query 'LoadBalancers[?SecurityGroups[?contains(@, `sg-0123456789abcdef0`)]].[LoadBalancerName,LoadBalancerArn]' \
+      --output table
+
+    # Ver RDS instances usando o SG
+    aws rds describe-db-instances \
+      --query 'DBInstances[*].[DBInstanceIdentifier,VpcSecurityGroups[?VpcSecurityGroupId==`sg-0123456789abcdef0`]]'
+
+    # Opções de resolução:
+    # 1. Trocar SG dos recursos dependentes primeiro
+    aws ec2 modify-instance-attribute \
+      --instance-id i-1234567890abcdef0 \
+      --groups sg-other-id
+
+    # 2. Usar deletionPolicy: Retain
+    kubectl patch securitygroup web-server-sg \
+      --type merge \
+      -p '{"spec":{"deletionPolicy":"Retain"}}'
+
+    # 3. Deletar recursos dependentes antes do SG
+    kubectl delete ec2instance my-instance
+    # aguardar completar
+    kubectl delete securitygroup web-server-sg
+
+    # 4. Se tudo falhar, orphan o CR
+    kubectl patch securitygroup web-server-sg \
+      -p '{"metadata":{"finalizers":[]}}' --type=merge
+    ```
+  </Accordion>
+
+  <Accordion title="Regras de ingress/egress não são aplicadas">
+    **Sintomas:** Tráfego não funciona apesar de regras configuradas
+
+    **Causas:**
+    1. Regras não foram sincronizadas
+    2. Port range errado
+    3. CIDR incorreto
+    4. Referenced SG não existe
+    5. Network ACLs bloqueando
+
+    **Soluções:**
+    ```bash
+    # Verificar se regras foram aplicadas na AWS
+    aws ec2 describe-security-groups \
+      --group-ids sg-0123456789abcdef0 \
+      --query 'SecurityGroups[0].IpPermissions'
+
+    # Ver logs do operator
+    kubectl logs -n infra-operator-system \
+      deploy/infra-operator-controller-manager \
+      --tail=100 | grep -i security
+
+    # Forçar reconciliação
+    kubectl annotate securitygroup web-server-sg \
+      force-sync="$(date +%s)" --overwrite
+
+    # Verificar se referenced SG existe
+    aws ec2 describe-security-groups \
+      --group-ids sg-referenced123
+
+    # Testar conectividade (de dentro da instância)
+    # SSH para instância
+    aws ssm start-session --target i-instance123
+
+    # Testar porta
+    nc -zv target-host 8080
+    curl -v http://target-host:8080
+
+    # Verificar NACLs (podem bloquear independente de SG)
+    aws ec2 describe-network-acls \
+      --filters "Name=vpc-id,Values=vpc-0123456789abcdef0"
+
+    # Ver Flow Logs para debug
+    aws ec2 describe-flow-logs
+
+    # Recriar regras específicas
+    kubectl patch securitygroup web-server-sg \
+      --type json \
+      -p '[{
+        "op": "replace",
+        "path": "/spec/ingressRules/0/fromPort",
+        "value": 80
+      }]'
+    ```
+  </Accordion>
+
+  <Accordion title="Referenced Security Group não funciona">
+    **Sintomas:** Tráfego bloqueado mesmo usando referencedGroupId
+
+    **Causas:**
+    1. SG referenciado não existe
+    2. SG em VPC diferente (sem peering)
+    3. Typo no ID do SG
+    4. Instâncias de origem não têm o SG correto
+
+    **Soluções:**
+    ```bash
+    # Verificar se SG referenciado existe
+    aws ec2 describe-security-groups \
+      --group-ids sg-backend123456
+
+    # Verificar se está na mesma VPC (ou peered)
+    aws ec2 describe-security-groups \
+      --group-ids sg-backend123456 \
+      --query 'SecurityGroups[0].VpcId'
+
+    # Ver quais instâncias TEM o SG de origem
+    aws ec2 describe-instances \
+      --filters "Name=instance.group-id,Values=sg-backend123456" \
+      --query 'Reservations[*].Instances[*].[InstanceId,PrivateIpAddress]' \
+      --output table
+
+    # Se não houver instâncias, tráfego nunca virá!
+    # Verificar se SG foi aplicado à instância
+    aws ec2 describe-instances \
+      --instance-ids i-instance123 \
+      --query 'Reservations[0].Instances[0].SecurityGroups'
+
+    # Corrigir SG referenciado
+    kubectl patch securitygroup database-sg \
+      --type json \
+      -p '[{
+        "op": "replace",
+        "path": "/spec/ingressRules/0/referencedGroupId",
+        "value": "sg-CORRECT-ID"
+      }]'
+
+    # Adicionar SG à instância de origem
+    aws ec2 modify-instance-attribute \
+      --instance-id i-backend123 \
+      --groups sg-backend123456 sg-other-needed
+
+    # Verificar regra foi criada
+    aws ec2 describe-security-group-rules \
+      --filters "Name=group-id,Values=sg-database123"
+    ```
+  </Accordion>
+
+  <Accordion title="Atingi o limite de regras (60 por direção)">
+    **Sintomas:** Erro ao adicionar regra: "Rules limit exceeded"
+
+    **Causa:** Security Groups têm limite de 60 regras de ingress e 60 de egress
+
+    **Soluções:**
+    ```bash
+    # Ver contagem atual de regras
+    kubectl get securitygroup web-server-sg -o jsonpath='{.status.ingressRuleCount}'
+    kubectl get securitygroup web-server-sg -o jsonpath='{.status.egressRuleCount}'
+
+    # Listar todas as regras
+    aws ec2 describe-security-groups \
+      --group-ids sg-0123456789abcdef0 \
+      --query 'SecurityGroups[0].IpPermissions[*].[IpProtocol,FromPort,ToPort,IpRanges[*].CidrIp]' \
+      --output table
+
+    # Opções de resolução:
+    # 1. Consolidar regras com port ranges
+    # Ao invés de:
+    #   fromPort: 8080, toPort: 8080
+    #   fromPort: 8081, toPort: 8081
+    #   fromPort: 8082, toPort: 8082
+    # Usar:
+    #   fromPort: 8080, toPort: 8082
+
+    # 2. Usar Prefix Lists para agrupar CIDRs
+    aws ec2 create-managed-prefix-list \
+      --prefix-list-name corporate-offices \
+      --entries Cidr=203.0.113.0/24 Cidr=198.51.100.0/24 \
+      --address-family IPv4 \
+      --max-entries 50
+
+    # Usar prefix list na regra
+    ingressRules:
+    - ipProtocol: tcp
+      fromPort: 443
+      toPort: 443
+      prefixListId: pl-12345678
+      description: HTTPS from corporate offices
+
+    # 3. Dividir em múltiplos Security Groups
+    # Criar SG adicional e associar ambos ao recurso
+    aws ec2 modify-instance-attribute \
+      --instance-id i-123 \
+      --groups sg-main sg-additional
+
+    # 4. Reavaliar se todas as regras são necessárias
+    # Remover regras não utilizadas
+    ```
+  </Accordion>
+
+  <Accordion title="Security Group travado em NotReady">
+    **Sintomas:** SG permanece em NotReady após criação
+
+    **Causas:**
+    1. Permissões IAM insuficientes
+    2. VPC não existe
+    3. Problema de conectividade com AWS
+    4. GroupName duplicado na VPC
+
+    **Soluções:**
+    ```bash
+    # Ver eventos detalhados
+    kubectl describe securitygroup web-server-sg
+
+    # Ver logs do operator
+    kubectl logs -n infra-operator-system \
+      deploy/infra-operator-controller-manager \
+      --tail=100 | grep -i security
+
+    # Verificar AWSProvider está ready
+    kubectl get awsprovider
+    kubectl describe awsprovider production-aws
+
+    # Testar permissões IAM manualmente
+    aws ec2 describe-security-groups --max-results 1
+
+    # Verificar se já existe SG com mesmo nome na VPC
+    aws ec2 describe-security-groups \
+      --filters \
+        "Name=vpc-id,Values=vpc-0123456789abcdef0" \
+        "Name=group-name,Values=web-server-public"
+
+    # Se SG já existe, importar ou trocar nome
+    # Opção 1: Trocar nome
+    kubectl patch securitygroup web-server-sg \
+      --type merge \
+      -p '{"spec":{"groupName":"web-server-public-v2"}}'
+
+    # Opção 2: Deletar SG duplicado na AWS
+    aws ec2 delete-security-group \
+      --group-id sg-duplicate123
+
+    # Forçar sincronização
+    kubectl annotate securitygroup web-server-sg \
+      force-sync="$(date +%s)" --overwrite
+
+    # Último recurso: deletar e recriar
+    kubectl patch securitygroup web-server-sg \
+      --type merge \
+      -p '{"spec":{"deletionPolicy":"Orphan"}}'
+
+    kubectl delete securitygroup web-server-sg
+    kubectl apply -f security-group.yaml
+    ```
+  </Accordion>
+
+  <Accordion title="Mudanças nas regras não são refletidas">
+    **Sintomas:** Alterar spec.ingressRules/egressRules não atualiza AWS
+
+    **Causa:** Operator não reconciliou ou não detectou mudança
+
+    **Soluções:**
+    ```bash
+    # Verificar se spec foi atualizado
+    kubectl get securitygroup web-server-sg -o yaml | grep -A 20 ingressRules
+
+    # Ver generation e observedGeneration
+    kubectl get securitygroup web-server-sg -o yaml | grep -E 'generation|observedGeneration'
+
+    # Se generation != observedGeneration, operator não reconciliou
+    # Forçar reconciliação
+    kubectl annotate securitygroup web-server-sg \
+      force-sync="$(date +%s)" --overwrite
+
+    # Ver logs do operator durante atualização
+    kubectl logs -n infra-operator-system \
+      deploy/infra-operator-controller-manager \
+      -f | grep web-server-sg
+
+    # Verificar se regras mudaram na AWS
+    aws ec2 describe-security-groups \
+      --group-ids sg-0123456789abcdef0 \
+      --query 'SecurityGroups[0].IpPermissions'
+
+    # Se operator não está rodando
+    kubectl get pods -n infra-operator-system
+
+    # Restart operator se necessário
+    kubectl rollout restart deployment/infra-operator-controller-manager \
+      -n infra-operator-system
+
+    # Último recurso: atualizar via AWS CLI e forçar sync reverso
+    aws ec2 authorize-security-group-ingress \
+      --group-id sg-0123456789abcdef0 \
+      --protocol tcp \
+      --port 8080 \
+      --cidr 0.0.0.0/0
+
+    # Forçar operator detectar drift
+    kubectl annotate securitygroup web-server-sg \
+      force-sync="$(date +%s)" --overwrite
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Melhores Práticas
+
+<CardGroup cols={2}>
+  <Card title="Princípio do Menor Privilégio" icon="shield">
+    - Apenas portas necessárias devem estar abertas
+    - Restringir CIDR ao mínimo possível
+    - Evitar 0.0.0.0/0 em regras de ingress (exceto serviços públicos)
+    - Usar Security Groups referenciados ao invés de CIDRs quando possível
+    - Revisar regras periodicamente e remover não utilizadas
+  </Card>
+
+  <Card title="Usar Referenced Security Groups" icon="link">
+    - Preferir referencedGroupId ao invés de cidrIpv4
+    - Não precisa conhecer IPs específicos
+    - Regras se ajustam automaticamente quando recursos mudam
+    - Facilita gerenciamento em ambientes dinâmicos
+    - Padrão recomendado para comunicação interna
+  </Card>
+
+  <Card title="Descrições Obrigatórias" icon="file-lines">
+    - Sempre adicionar descrição em TODAS as regras
+    - Explicar QUEM tem acesso e POR QUÊ
+    - Facilita auditoria e troubleshooting
+    - Ajuda outros engenheiros a entender a infraestrutura
+    - Exemplo: "PostgreSQL from backend servers for API calls"
+  </Card>
+
+  <Card title="Naming Conventions" icon="heading">
+    - Padrão: `<application>-<tier>-<purpose>-sg`
+    - Exemplo: `app-backend-api-sg`, `app-database-postgres-sg`
+    - Usar sufixo `-sg` para fácil identificação
+    - Nomes descritivos, não genéricos
+    - Incluir ambiente se necessário: `app-backend-prod-sg`
+  </Card>
+
+  <Card title="Egress Explícito" icon="arrow-right-from-bracket">
+    - Sempre especificar egressRules explicitamente
+    - Não confiar no default (0.0.0.0/0)
+    - Aplicar princípio do menor privilégio também em egress
+    - Databases geralmente não precisam egress
+    - Microservices: apenas portas específicas necessárias
+  </Card>
+
+  <Card title="Separação por Tier" icon="layer-group">
+    - Security Group separado para cada tier (frontend, backend, data)
+    - Frontend SG: permite internet, encaminha para backend
+    - Backend SG: apenas de frontend, conecta a data tier
+    - Data SG: apenas de backend, sem egress
+    - Facilita aplicar "defense in depth"
+  </Card>
+
+  <Card title="Bastion Hosts Separados" icon="tower-observation">
+    - SG dedicado para bastion/jump hosts
+    - SSH apenas de IPs corporativos conhecidos
+    - Bastion pode SSH para servers internos
+    - Logs de acesso via CloudTrail/CloudWatch
+    - Considerar AWS Systems Manager Session Manager (sem SSH)
+  </Card>
+
+  <Card title="Tagging Consistente" icon="tags">
+    - Environment: dev/staging/prod
+    - Application ou projeto
+    - Team ou owner responsável
+    - Tier: frontend/backend/data
+    - ManagedBy: infra-operator
+    - Compliance tags se necessário
+  </Card>
+
+  <Card title="Monitoramento e Alertas" icon="bell">
+    - Habilitar VPC Flow Logs para audit trail
+    - Alertar sobre mudanças não autorizadas (CloudTrail)
+    - Monitorar regras com 0.0.0.0/0
+    - Dashboard com métricas de tráfego
+    - Revisar logs regularmente para atividade suspeita
+  </Card>
+
+  <Card title="Automação Completa" icon="robot">
+    - NUNCA criar Security Groups manualmente no console
+    - Sempre usar CRs gerenciados pelo operator
+    - Versionamento via Git (GitOps)
+    - Code review obrigatório antes de aplicar
+    - CI/CD valida regras antes de merge
+  </Card>
+
+  <Card title="Port Ranges ao Invés de Múltiplas Regras" icon="arrows-left-right">
+    - Consolidar portas consecutivas em ranges
+    - Economiza no limite de 60 regras
+    - Exemplo: fromPort: 8000, toPort: 8099
+    - Apenas se portas realmente precisam estar abertas
+    - Não abrir ranges muito amplos por conveniência
+  </Card>
+
+  <Card title="Deletion Policy Retain em Produção" icon="archive">
+    - Use deletionPolicy: Retain em produção
+    - Evita deleção acidental de SGs críticos
+    - SG deletado remove proteção de recursos
+    - Manual cleanup de SGs retidos periodicamente
+    - Delete policy apenas para dev/test
+  </Card>
+
+  <Card title="Prefix Lists para CIDRs Repetidos" icon="list">
+    - Criar Managed Prefix Lists para IPs corporativos
+    - Atualizar prefix list ao invés de múltiplos SGs
+    - Reduz número de regras
+    - Centraliza gestão de ranges IP
+    - Exemplo: Corporate VPN IPs, CloudFront ranges
+  </Card>
+
+  <Card title="Security Group Chaining" icon="link-horizontal">
+    - ALB SG → Backend SG → Database SG
+    - Cada camada referencia a anterior
+    - Cria "firewall defense in depth"
+    - Fácil troubleshooting (um hop por vez)
+    - Claramente documenta arquitetura
+  </Card>
+
+  <Card title="Auditoria Regular" icon="clipboard-check">
+    - Revisar regras trimestralmente
+    - Remover regras não utilizadas
+    - Verificar se CIDRs ainda são válidos
+    - Checar se referenced SGs ainda existem
+    - Documentar mudanças e justificativas
+  </Card>
+
+  <Card title="Testing em Dev Primeiro" icon="flask">
+    - Sempre testar mudanças em dev/staging
+    - Validar conectividade antes de aplicar em prod
+    - Usar ferramentas como netcat, curl para testes
+    - Monitorar application logs durante mudanças
+    - Rollback rápido se problemas ocorrerem
+  </Card>
+</CardGroup>
+
+## Patterns Comuns de Arquitetura
+
+### Three-Tier Architecture (Web/App/Database)
+
+```yaml
+# Tier 1: Public Load Balancer
+---
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: SecurityGroup
+metadata:
+  name: alb-public-sg
+spec:
+  providerRef:
+    name: production-aws
+  vpcId: vpc-prod123
+  groupName: tier1-alb-public
+  description: Public ALB for internet traffic
+
+  ingressRules:
+  - ipProtocol: tcp
+    fromPort: 443
+    toPort: 443
+    cidrIpv4: 0.0.0.0/0
+    description: HTTPS from internet
+
+  egressRules:
+  - ipProtocol: tcp
+    fromPort: 8080
+    toPort: 8080
+    referencedGroupId: sg-backend
+    description: Forward to backend tier
+
+---
+# Tier 2: Application Servers
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: SecurityGroup
+metadata:
+  name: backend-app-sg
+spec:
+  providerRef:
+    name: production-aws
+  vpcId: vpc-prod123
+  groupName: tier2-backend-app
+  description: Backend application servers
+
+  ingressRules:
+  - ipProtocol: tcp
+    fromPort: 8080
+    toPort: 8080
+    referencedGroupId: sg-alb
+    description: HTTP from ALB
+
+  egressRules:
+  - ipProtocol: tcp
+    fromPort: 5432
+    toPort: 5432
+    referencedGroupId: sg-database
+    description: PostgreSQL to database tier
+  - ipProtocol: tcp
+    fromPort: 443
+    toPort: 443
+    cidrIpv4: 0.0.0.0/0
+    description: HTTPS for external APIs
+
+---
+# Tier 3: Database
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: SecurityGroup
+metadata:
+  name: database-sg
+spec:
+  providerRef:
+    name: production-aws
+  vpcId: vpc-prod123
+  groupName: tier3-database
+  description: PostgreSQL database
+
+  ingressRules:
+  - ipProtocol: tcp
+    fromPort: 5432
+    toPort: 5432
+    referencedGroupId: sg-backend
+    description: PostgreSQL from backend tier
+
+  # No egress = deny all
+```
+
+### Microservices with Service Mesh
+
+```yaml
+---
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: SecurityGroup
+metadata:
+  name: service-mesh-sg
+spec:
+  providerRef:
+    name: production-aws
+  vpcId: vpc-prod123
+  groupName: microservices-mesh
+  description: Security group for service mesh communication
+
+  ingressRules:
+  # Service mesh data plane (Envoy)
+  - ipProtocol: tcp
+    fromPort: 15001
+    toPort: 15001
+    referencedGroupId: sg-self
+    description: Envoy proxy mesh traffic
+
+  # Application ports
+  - ipProtocol: tcp
+    fromPort: 8080
+    toPort: 8099
+    referencedGroupId: sg-self
+    description: Inter-service HTTP APIs
+
+  # gRPC
+  - ipProtocol: tcp
+    fromPort: 50051
+    toPort: 50051
+    referencedGroupId: sg-self
+    description: gRPC between services
+
+  egressRules:
+  # Self-reference para mesh
+  - ipProtocol: tcp
+    fromPort: 15001
+    toPort: 15001
+    referencedGroupId: sg-self
+    description: Envoy mesh egress
+
+  # Database
+  - ipProtocol: tcp
+    fromPort: 5432
+    toPort: 5432
+    referencedGroupId: sg-database
+    description: PostgreSQL
+
+  # Redis
+  - ipProtocol: tcp
+    fromPort: 6379
+    toPort: 6379
+    referencedGroupId: sg-redis
+    description: Redis cache
+```
+
+## Recursos Relacionados
+
+<CardGroup cols={2}>
+  <Card
+    title="VPC - Virtual Private Cloud"
+    icon="cloud"
+    href="/services/networking/vpc"
+  >
+    Rede isolada onde Security Groups operam
+  </Card>
+
+  <Card
+    title="Subnet - Sub-redes"
+    icon="network-wired"
+    href="/services/networking/subnet"
+  >
+    Segmentos de rede dentro da VPC
+  </Card>
+
+  <Card
+    title="EC2 Instance"
+    icon="server"
+    href="/services/compute/ec2"
+  >
+    Instâncias que usam Security Groups
+  </Card>
+
+  <Card
+    title="RDS Instance"
+    icon="database"
+    href="/services/database/rds"
+  >
+    Bancos de dados protegidos por Security Groups
+  </Card>
+
+  <Card
+    title="Load Balancer (ALB/NLB)"
+    icon="scale-balanced"
+    href="/services/networking/load-balancer"
+  >
+    Load balancers com Security Groups
+  </Card>
+
+  <Card
+    title="NAT Gateway"
+    icon="right-left"
+    href="/services/networking/nat-gateway"
+  >
+    Gateway para tráfego privado para internet
+  </Card>
+
+</CardGroup>
+
+---

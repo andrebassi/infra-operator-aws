@@ -1,0 +1,1034 @@
+---
+title: 'EKS - Elastic Kubernetes Service'
+description: 'Gerencie clusters Kubernetes gerenciados na AWS'
+icon: 'dharmachakra'
+---
+
+Crie e gerencie clusters Kubernetes totalmente gerenciados na AWS com Amazon EKS.
+
+## Pré-requisito: Configuração do AWSProvider
+
+Antes de criar qualquer recurso AWS, você precisa configurar um **AWSProvider** que gerencia as credenciais e autenticação com a AWS.
+
+<CodeGroup>
+```yaml IRSA
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: AWSProvider
+metadata:
+  name: production-aws
+  namespace: default
+spec:
+  region: us-east-1
+  roleARN: arn:aws:iam::123456789012:role/infra-operator-role
+  defaultTags:
+    managed-by: infra-operator
+    environment: production
+```
+
+```yaml Credenciais Estáticas
+apiVersion: v1
+kind: Secret
+metadata:
+  name: aws-credentials
+  namespace: default
+type: Opaque
+stringData:
+  access-key-id: test
+  secret-access-key: test
+---
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: AWSProvider
+metadata:
+  name: localstack
+  namespace: default
+spec:
+  region: us-east-1
+  accessKeyIDRef:
+    name: aws-credentials
+    key: access-key-id
+  secretAccessKeyRef:
+    name: aws-credentials
+    key: secret-access-key
+  defaultTags:
+    managed-by: infra-operator
+    environment: test
+```
+
+```bash Verificar Status
+kubectl get awsprovider
+kubectl describe awsprovider production-aws
+```
+</CodeGroup>
+
+<Warning>
+  Para produção, sempre use **IRSA** (IAM Roles for Service Accounts) ao invés de credenciais estáticas.
+</Warning>
+
+### Permissões IAM Necessárias
+
+<CodeGroup>
+```json IAM Policy - EKS (eks-policy.json)
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "eks:CreateCluster",
+        "eks:DeleteCluster",
+        "eks:DescribeCluster",
+        "eks:UpdateClusterConfig",
+        "eks:UpdateClusterVersion",
+        "eks:TagResource",
+        "eks:UntagResource",
+        "eks:ListClusters"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "iam:PassRole"
+      ],
+      "Resource": "arn:aws:iam::*:role/eks-cluster-role"
+    }
+  ]
+}
+```
+</CodeGroup>
+
+## Visão Geral
+
+Amazon EKS (Elastic Kubernetes Service) é um serviço gerenciado que facilita a execução do Kubernetes na AWS sem precisar instalar, operar e manter seu próprio plano de controle do Kubernetes.
+
+**Principais Benefícios:**
+- 🚀 Plano de controle totalmente gerenciado
+- 🔒 Segurança integrada com IAM
+- 📊 Integração nativa com serviços AWS
+- 🔄 Atualizações automáticas de versão
+- 💰 Pague apenas pelos recursos que usar
+
+## Início Rápido
+
+<CodeGroup>
+```yaml Cluster Básico
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: EKSCluster
+metadata:
+  name: my-eks-cluster
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+  clusterName: my-eks-cluster
+  version: "1.28"
+  roleARN: arn:aws:iam::123456789012:role/eks-cluster-role
+  vpcConfig:
+    subnetIDs:
+      - subnet-abc123
+      - subnet-def456
+      - subnet-ghi789
+    endpointPublicAccess: true
+    endpointPrivateAccess: true
+  tags:
+    Environment: production
+    Team: platform
+  deletionPolicy: Delete
+```
+
+```yaml Cluster com Logging
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: EKSCluster
+metadata:
+  name: production-eks
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+  clusterName: production-eks
+  version: "1.29"
+  roleARN: arn:aws:iam::123456789012:role/eks-cluster-role
+  vpcConfig:
+    subnetIDs:
+      - subnet-abc123
+      - subnet-def456
+      - subnet-ghi789
+    securityGroupIDs:
+      - sg-12345678
+    endpointPublicAccess: false
+    endpointPrivateAccess: true
+  logging:
+    enabledTypes:
+      - api
+      - audit
+      - authenticator
+      - controllerManager
+      - scheduler
+  tags:
+    Environment: production
+    Team: platform
+  deletionPolicy: Retain
+```
+
+```yaml Cluster com Criptografia
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: EKSCluster
+metadata:
+  name: secure-eks
+  namespace: default
+spec:
+  providerRef:
+    name: production-aws
+  clusterName: secure-eks
+  version: "1.29"
+  roleARN: arn:aws:iam::123456789012:role/eks-cluster-role
+  vpcConfig:
+    subnetIDs:
+      - subnet-abc123
+      - subnet-def456
+      - subnet-ghi789
+    endpointPublicAccess: false
+    endpointPrivateAccess: true
+  encryption:
+    resources:
+      - secrets
+    providerKeyArn: arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012
+  logging:
+    enabledTypes:
+      - api
+      - audit
+  tags:
+    Environment: production
+    Compliance: pci-dss
+  deletionPolicy: Retain
+```
+
+```bash Aplicar
+kubectl apply -f eks-cluster.yaml
+```
+
+```bash Verificar Status
+kubectl get ekscluster
+kubectl describe ekscluster my-eks-cluster
+```
+</CodeGroup>
+
+## Referência de Configuração
+
+### Campos Obrigatórios
+
+<ParamField path="spec.providerRef" type="object" required>
+  Referência ao recurso AWSProvider
+
+  <Expandable title="properties">
+    <ParamField path="name" type="string" required>
+      Nome do recurso AWSProvider
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="spec.clusterName" type="string" required>
+  Nome único do cluster EKS
+
+  <Warning>
+    O nome deve ser único na região AWS
+  </Warning>
+</ParamField>
+
+<ParamField path="spec.version" type="string" required>
+  Versão do Kubernetes (ex: "1.28", "1.29")
+
+  **Versões suportadas:** 1.24 até 1.30+
+</ParamField>
+
+<ParamField path="spec.roleARN" type="string" required>
+  ARN da IAM Role para o cluster EKS
+
+  Esta role precisa ter a trust policy `eks.amazonaws.com` e permissões para gerenciar recursos
+</ParamField>
+
+<ParamField path="spec.vpcConfig" type="object" required>
+  Configuração de rede VPC
+
+  <Expandable title="properties">
+    <ParamField path="subnetIDs" type="array" required>
+      Lista de subnet IDs (mínimo 2)
+
+      **Importante:** Devem estar em diferentes Availability Zones para alta disponibilidade
+    </ParamField>
+
+    <ParamField path="securityGroupIDs" type="array">
+      Security groups adicionais para o cluster
+    </ParamField>
+
+    <ParamField path="endpointPublicAccess" type="boolean" default="true">
+      Habilitar acesso público ao endpoint da API
+    </ParamField>
+
+    <ParamField path="endpointPrivateAccess" type="boolean" default="false">
+      Habilitar acesso privado ao endpoint da API
+    </ParamField>
+
+    <ParamField path="publicAccessCidrs" type="array" default='["0.0.0.0/0"]'>
+      CIDRs permitidos para acesso público
+
+      Exemplo: `["203.0.113.0/24", "198.51.100.0/24"]`
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Campos Opcionais
+
+<ParamField path="spec.logging" type="object">
+  Configuração de logs do cluster
+
+  <Expandable title="properties">
+    <ParamField path="enabledTypes" type="array">
+      Tipos de logs a habilitar
+
+      Valores possíveis:
+      - `api` - Logs da API server
+      - `audit` - Logs de auditoria
+      - `authenticator` - Logs de autenticação
+      - `controllerManager` - Logs do controller manager
+      - `scheduler` - Logs do scheduler
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="spec.encryption" type="object">
+  Configuração de criptografia de secrets
+
+  <Expandable title="properties">
+    <ParamField path="resources" type="array">
+      Recursos a criptografar (normalmente `["secrets"]`)
+    </ParamField>
+
+    <ParamField path="providerKeyArn" type="string">
+      ARN da chave KMS para criptografia
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="spec.tags" type="object">
+  Tags personalizadas para o cluster
+
+  Exemplo:
+  ```yaml
+  tags:
+    Environment: production
+    Team: platform
+    CostCenter: engineering
+  ```
+</ParamField>
+
+<ParamField path="spec.deletionPolicy" type="string" default="Delete">
+  Política de deleção do recurso
+
+  **Valores possíveis:**
+  - `Delete` - Deletar cluster ao remover CR
+  - `Retain` - Manter cluster ao remover CR
+</ParamField>
+
+## Status
+
+O status do cluster é atualizado automaticamente pelo operator:
+
+```yaml
+status:
+  ready: true
+  arn: arn:aws:eks:us-east-1:123456789012:cluster/my-eks-cluster
+  endpoint: https://ABC123.gr7.us-east-1.eks.amazonaws.com
+  status: ACTIVE
+  version: "1.28"
+  platformVersion: eks.3
+  certificateAuthority: LS0tLS1CRUdJTi...
+  lastSyncTime: "2025-01-23T10:30:00Z"
+```
+
+### Campos de Status
+
+<ResponseField name="ready" type="boolean">
+  Indica se o cluster está pronto (ACTIVE)
+</ResponseField>
+
+<ResponseField name="arn" type="string">
+  ARN do cluster EKS
+</ResponseField>
+
+<ResponseField name="endpoint" type="string">
+  URL do endpoint da API Kubernetes
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  Status do cluster: CREATING, ACTIVE, UPDATING, DELETING, FAILED
+</ResponseField>
+
+<ResponseField name="certificateAuthority" type="string">
+  Certificate authority data (base64) para kubeconfig
+</ResponseField>
+
+## Casos de Uso
+
+### 1. Cluster de Desenvolvimento
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: EKSCluster
+metadata:
+  name: dev-cluster
+  namespace: development
+spec:
+  providerRef:
+    name: dev-aws
+  clusterName: dev-cluster
+  version: "1.29"
+  roleARN: arn:aws:iam::123456789012:role/eks-cluster-role
+  vpcConfig:
+    subnetIDs:
+      - subnet-dev-1
+      - subnet-dev-2
+    endpointPublicAccess: true
+    endpointPrivateAccess: false
+  tags:
+    Environment: development
+    AutoShutdown: "true"
+  deletionPolicy: Delete
+```
+
+### 2. Cluster de Produção com Alta Segurança
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: EKSCluster
+metadata:
+  name: prod-cluster
+  namespace: production
+spec:
+  providerRef:
+    name: prod-aws
+  clusterName: prod-cluster
+  version: "1.29"
+  roleARN: arn:aws:iam::123456789012:role/eks-cluster-role
+  vpcConfig:
+    subnetIDs:
+      - subnet-prod-private-1a
+      - subnet-prod-private-1b
+      - subnet-prod-private-1c
+    securityGroupIDs:
+      - sg-cluster-control-plane
+    endpointPublicAccess: false
+    endpointPrivateAccess: true
+  encryption:
+    resources:
+      - secrets
+    providerKeyArn: arn:aws:kms:us-east-1:123456789012:key/prod-key
+  logging:
+    enabledTypes:
+      - api
+      - audit
+      - authenticator
+  tags:
+    Environment: production
+    Compliance: hipaa
+    BackupPolicy: daily
+  deletionPolicy: Retain
+```
+
+### 3. Cluster Multi-AZ para Alta Disponibilidade
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: EKSCluster
+metadata:
+  name: ha-cluster
+  namespace: production
+spec:
+  providerRef:
+    name: prod-aws
+  clusterName: ha-cluster
+  version: "1.29"
+  roleARN: arn:aws:iam::123456789012:role/eks-cluster-role
+  vpcConfig:
+    subnetIDs:
+      - subnet-us-east-1a
+      - subnet-us-east-1b
+      - subnet-us-east-1c
+      - subnet-us-east-1d
+    endpointPublicAccess: true
+    endpointPrivateAccess: true
+    publicAccessCidrs:
+      - "203.0.113.0/24"  # Office IP
+  logging:
+    enabledTypes:
+      - api
+      - audit
+  tags:
+    Environment: production
+    HighAvailability: "true"
+  deletionPolicy: Retain
+```
+
+## Operações Comuns
+
+### Verificar Status do Cluster
+
+```bash
+# Listar todos os clusters
+kubectl get ekscluster
+
+# Ver detalhes do cluster
+kubectl describe ekscluster my-eks-cluster
+
+# Ver apenas o status
+kubectl get ekscluster my-eks-cluster -o jsonpath='{.status.status}'
+```
+
+### Atualizar Versão do Kubernetes
+
+```bash
+# Editar o CR e mudar o campo spec.version
+kubectl edit ekscluster my-eks-cluster
+
+# Ou aplicar um patch
+kubectl patch ekscluster my-eks-cluster \
+  --type merge \
+  -p '{"spec":{"version":"1.29"}}'
+```
+
+<Warning>
+  Atualizações de versão só podem ser feitas uma versão minor por vez (ex: 1.27 → 1.28)
+</Warning>
+
+### Configurar Kubeconfig Local
+
+```bash
+# Obter dados do cluster
+CLUSTER_ENDPOINT=$(kubectl get ekscluster my-eks-cluster -o jsonpath='{.status.endpoint}')
+CA_DATA=$(kubectl get ekscluster my-eks-cluster -o jsonpath='{.status.certificateAuthority}')
+
+# Configurar AWS CLI
+aws eks update-kubeconfig \
+  --name my-eks-cluster \
+  --region us-east-1
+```
+
+### Habilitar Logs de Auditoria
+
+```yaml
+apiVersion: infra.operator.aws.io/v1alpha1
+kind: EKSCluster
+metadata:
+  name: my-eks-cluster
+spec:
+  # ... outros campos
+  logging:
+    enabledTypes:
+      - audit
+```
+
+## Troubleshooting
+
+### Cluster stuck em CREATING
+
+<AccordionGroup>
+  <Accordion title="Verificar IAM Role">
+    ```bash
+    # Verificar se a role existe e tem permissões corretas
+    aws iam get-role --role-name eks-cluster-role
+
+    # Verificar trust policy
+    aws iam get-role --role-name eks-cluster-role \
+      --query 'Role.AssumeRolePolicyDocument'
+    ```
+  </Accordion>
+
+  <Accordion title="Verificar Subnets">
+    ```bash
+    # Verificar se as subnets existem
+    aws ec2 describe-subnets --subnet-ids subnet-abc123 subnet-def456
+
+    # Verificar se estão em AZs diferentes
+    aws ec2 describe-subnets \
+      --subnet-ids subnet-abc123 subnet-def456 \
+      --query 'Subnets[*].[SubnetId, AvailabilityZone]'
+    ```
+  </Accordion>
+
+  <Accordion title="Ver Logs do Operator">
+    ```bash
+    kubectl logs -n infra-operator-system \
+      -l control-plane=controller-manager \
+      --tail=100
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Cluster FAILED
+
+```bash
+# Ver eventos do Kubernetes
+kubectl describe ekscluster my-eks-cluster
+
+# Ver logs detalhados
+kubectl logs -n infra-operator-system \
+  -l control-plane=controller-manager \
+  | grep my-eks-cluster
+```
+
+### Não consigo deletar o cluster
+
+Se o cluster não deleta, pode ser devido a recursos dependentes:
+
+```bash
+# Forçar remoção do finalizer (use com cuidado!)
+kubectl patch ekscluster my-eks-cluster \
+  -p '{"metadata":{"finalizers":[]}}' \
+  --type=merge
+```
+
+## Boas Práticas
+
+<CardGroup cols={2}>
+  <Card title="Use Versões Recentes" icon="arrow-up">
+    Mantenha o cluster sempre nas versões mais recentes do Kubernetes para segurança e novos recursos
+  </Card>
+
+  <Card title="Endpoint Privado em Produção" icon="lock">
+    Para produção, use `endpointPrivateAccess: true` e `endpointPublicAccess: false`
+  </Card>
+
+  <Card title="Habilite Logging" icon="file-lines">
+    Sempre habilite logs de auditoria e API para compliance e troubleshooting
+  </Card>
+
+  <Card title="Use Encryption" icon="shield">
+    Habilite criptografia de secrets com KMS para dados sensíveis
+  </Card>
+
+  <Card title="Multi-AZ" icon="network-wired">
+    Distribua subnets em pelo menos 3 Availability Zones para alta disponibilidade
+  </Card>
+
+  <Card title="Deletion Policy Retain" icon="database">
+    Use `deletionPolicy: Retain` em produção para evitar deleções acidentais
+  </Card>
+</CardGroup>
+
+## Recursos Relacionados
+
+<CardGroup cols={2}>
+  <Card title="VPC" icon="network-wired" href="/services/networking/vpc">
+    Crie a rede para hospedar o cluster EKS
+  </Card>
+
+  <Card title="Subnet" icon="diagram-project" href="/services/networking/subnet">
+    Configure subnets para o cluster
+  </Card>
+
+  <Card title="Security Group" icon="shield" href="/services/networking/security-group">
+    Configure regras de firewall
+  </Card>
+
+  <Card title="IAM Role" icon="user-lock" href="/services/security/iam">
+    Gerencie permissões IAM
+  </Card>
+</CardGroup>
+
+---
+
+## SetupEKS - Infraestrutura Completa em Um Único Recurso
+
+O **SetupEKS** é um CRD de alto nível que cria toda a infraestrutura AWS necessária para um cluster EKS funcional com um único manifesto YAML. Ele automatiza a criação de:
+
+- VPC com CIDR configurável
+- Subnets públicas e privadas em múltiplas AZs
+- Internet Gateway e Route Tables
+- NAT Gateway (Single ou HighAvailability)
+- Security Groups para cluster e nodes
+- IAM Roles para cluster e nodes
+- Cluster EKS com add-ons
+- Node Groups configuráveis
+
+### Por que usar SetupEKS?
+
+<CardGroup cols={2}>
+  <Card title="Simplicidade" icon="wand-magic-sparkles">
+    Crie um cluster EKS completo com menos de 20 linhas de YAML
+  </Card>
+
+  <Card title="Boas Práticas" icon="check-double">
+    Segue automaticamente as melhores práticas da AWS para EKS
+  </Card>
+
+  <Card title="Cleanup Inteligente" icon="broom">
+    Deleta automaticamente LoadBalancers criados pelo Kubernetes antes de remover subnets
+  </Card>
+
+  <Card title="Flexibilidade" icon="sliders">
+    Use VPC existente ou deixe o operator criar tudo automaticamente
+  </Card>
+</CardGroup>
+
+### Início Rápido - SetupEKS
+
+<CodeGroup>
+```yaml Cluster Mínimo
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: SetupEKS
+metadata:
+  name: my-cluster
+  namespace: infra-operator
+spec:
+  providerRef:
+    name: aws-production
+  vpcCIDR: "10.100.0.0/16"
+  kubernetesVersion: "1.29"
+  nodePools:
+    - name: general
+      instanceTypes:
+        - t3.medium
+      scalingConfig:
+        minSize: 1
+        maxSize: 3
+        desiredSize: 2
+```
+
+```yaml Cluster com NAT Gateway
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: SetupEKS
+metadata:
+  name: eks-production
+  namespace: infra-operator
+spec:
+  providerRef:
+    name: aws-production
+  clusterName: my-production-cluster
+  kubernetesVersion: "1.30"
+  vpcCIDR: "10.200.0.0/16"
+  natGatewayMode: Single  # ou HighAvailability
+  nodePools:
+    - name: apps
+      instanceTypes:
+        - m5.large
+        - m5a.large
+      capacityType: ON_DEMAND
+      scalingConfig:
+        minSize: 2
+        maxSize: 10
+        desiredSize: 3
+      labels:
+        workload-type: apps
+      subnetSelector: private
+  tags:
+    Environment: production
+```
+
+```yaml Cluster com SPOT e ON_DEMAND
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: SetupEKS
+metadata:
+  name: eks-mixed
+  namespace: infra-operator
+spec:
+  providerRef:
+    name: aws-develop
+  vpcCIDR: "10.150.0.0/16"
+  kubernetesVersion: "1.29"
+  natGatewayMode: Single
+  nodePools:
+    # Pool ON_DEMAND para workloads críticos
+    - name: on-demand
+      instanceTypes:
+        - t3.medium
+      capacityType: ON_DEMAND
+      scalingConfig:
+        minSize: 1
+        maxSize: 3
+        desiredSize: 2
+      labels:
+        capacity-type: on-demand
+    # Pool SPOT para workloads tolerantes
+    - name: spot
+      instanceTypes:
+        - t3.large
+        - t3.xlarge
+        - m5.large
+      capacityType: SPOT
+      scalingConfig:
+        minSize: 0
+        maxSize: 10
+        desiredSize: 3
+      labels:
+        capacity-type: spot
+      taints:
+        - key: spot
+          value: "true"
+          effect: PREFER_NO_SCHEDULE
+```
+
+```bash Aplicar e Verificar
+kubectl apply -f setupeks.yaml
+kubectl get setupeks -n infra-operator -w
+```
+
+```yaml Exemplo 4: VPC Existente
+# Use sua VPC/Subnets existentes
+# O SetupEKS NÃO cria infraestrutura de rede
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: SetupEKS
+metadata:
+  name: eks-existing-vpc
+  namespace: infra-operator
+spec:
+  providerRef:
+    name: aws-develop
+  clusterName: my-cluster
+  kubernetesVersion: "1.31"
+
+  # VPC existente - NÃO cria VPC, Subnets, IGW, NAT
+  existingVpcID: vpc-0123456789abcdef0
+  existingSubnetIDs:
+    - subnet-aaaa1111  # AZ us-east-1a (privada ou publica)
+    - subnet-bbbb2222  # AZ us-east-1b (privada ou publica)
+
+  # vpcCIDR e natGatewayMode sao IGNORADOS
+  # quando existingVpcID esta presente
+
+  nodePools:
+    - name: workers
+      instanceTypes:
+        - t3.medium
+      capacityType: ON_DEMAND
+      scalingConfig:
+        minSize: 1
+        maxSize: 5
+        desiredSize: 2
+```
+</CodeGroup>
+
+<Info>
+**Usando VPC Existente**: Quando `existingVpcID` e `existingSubnetIDs` são fornecidos:
+- O operador **NÃO cria** VPC, Subnets, Internet Gateway, NAT Gateway ou Route Tables
+- Cria **apenas** o cluster EKS e Node Groups usando sua infraestrutura existente
+- Na deleção, **NÃO remove** a VPC/Subnets existentes (remove apenas EKS + Node Groups)
+- O cleanup de LoadBalancers ainda funciona (deleta ALB/NLB criados pelo Kubernetes)
+- Requer **mínimo 2 subnets** em AZs diferentes (requisito do EKS)
+</Info>
+
+### Referência de Configuração - SetupEKS
+
+#### Campos Obrigatórios
+
+<ParamField path="spec.providerRef" type="object" required>
+  Referência ao AWSProvider para autenticação
+</ParamField>
+
+<ParamField path="spec.vpcCIDR" type="string" required>
+  Bloco CIDR da VPC (ex: "10.0.0.0/16")
+</ParamField>
+
+<ParamField path="spec.nodePools" type="array" required>
+  Lista de node pools (mínimo 1)
+</ParamField>
+
+#### Campos Opcionais
+
+<ParamField path="spec.clusterName" type="string">
+  Nome do cluster EKS (usa metadata.name se não especificado)
+</ParamField>
+
+<ParamField path="spec.kubernetesVersion" type="string" default="1.29">
+  Versão do Kubernetes (1.28, 1.29, 1.30)
+</ParamField>
+
+<ParamField path="spec.natGatewayMode" type="string" default="Single">
+  Modo do NAT Gateway:
+  - `Single` - Um NAT Gateway (economia)
+  - `HighAvailability` - NAT Gateway por AZ (produção)
+  - `None` - Sem NAT Gateway (nodes em subnets públicas)
+</ParamField>
+
+<ParamField path="spec.availabilityZones" type="array">
+  Lista de AZs (mínimo 2). Auto-detecta se não especificado.
+</ParamField>
+
+<ParamField path="spec.existingVpcID" type="string">
+  ID de VPC existente para usar ao invés de criar nova
+</ParamField>
+
+<ParamField path="spec.existingSubnetIDs" type="array">
+  IDs de subnets existentes (requer existingVpcID)
+</ParamField>
+
+<ParamField path="spec.endpointAccess" type="object">
+  Configuração de acesso ao endpoint:
+  - `publicAccess` (default: true)
+  - `privateAccess` (default: true)
+  - `publicAccessCIDRs` (default: ["0.0.0.0/0"])
+</ParamField>
+
+<ParamField path="spec.clusterLogging" type="object">
+  Habilitar logs no CloudWatch:
+  - `apiServer`, `audit`, `authenticator`, `controllerManager`, `scheduler`
+</ParamField>
+
+<ParamField path="spec.encryptionConfig" type="object">
+  Criptografia de secrets com KMS:
+  - `enabled` (default: false)
+  - `kmsKeyARN` (cria nova chave se não especificado)
+</ParamField>
+
+<ParamField path="spec.enableIRSA" type="boolean" default="true">
+  Habilitar IAM Roles for Service Accounts
+</ParamField>
+
+<ParamField path="spec.installDefaultAddons" type="boolean" default="true">
+  Instalar add-ons essenciais (vpc-cni, coredns, kube-proxy)
+</ParamField>
+
+### Configuração de Node Pool
+
+<ParamField path="nodePools[].name" type="string" required>
+  Nome único do node pool
+</ParamField>
+
+<ParamField path="nodePools[].instanceTypes" type="array" required>
+  Tipos de instância EC2 (ex: ["t3.medium", "t3.large"])
+</ParamField>
+
+<ParamField path="nodePools[].scalingConfig" type="object">
+  Configuração de auto-scaling:
+  - `minSize` (default: 1)
+  - `maxSize` (default: 3)
+  - `desiredSize` (default: 2)
+</ParamField>
+
+<ParamField path="nodePools[].capacityType" type="string" default="ON_DEMAND">
+  Tipo de capacidade: `ON_DEMAND` ou `SPOT`
+</ParamField>
+
+<ParamField path="nodePools[].amiType" type="string" default="AL2_x86_64">
+  Tipo de AMI:
+  - `AL2_x86_64` - Amazon Linux 2 (x86)
+  - `AL2_ARM_64` - Amazon Linux 2 (Graviton)
+  - `AL2_x86_64_GPU` - Amazon Linux 2 com GPU
+  - `BOTTLEROCKET_x86_64` - Bottlerocket
+  - `BOTTLEROCKET_ARM_64` - Bottlerocket (Graviton)
+</ParamField>
+
+<ParamField path="nodePools[].diskSize" type="integer" default="50">
+  Tamanho do disco em GB (20-16384)
+</ParamField>
+
+<ParamField path="nodePools[].subnetSelector" type="string" default="private">
+  Seletor de subnet: `private`, `public`, ou `all`
+</ParamField>
+
+<ParamField path="nodePools[].labels" type="object">
+  Labels Kubernetes aplicados aos nodes
+</ParamField>
+
+<ParamField path="nodePools[].taints" type="array">
+  Taints aplicados aos nodes:
+  - `key`, `value`, `effect` (NO_SCHEDULE, NO_EXECUTE, PREFER_NO_SCHEDULE)
+</ParamField>
+
+### Cleanup Automático de LoadBalancers
+
+<Warning>
+  O SetupEKS deleta automaticamente todos os LoadBalancers (ALB, NLB) e Target Groups criados dentro da VPC antes de deletar as subnets.
+</Warning>
+
+Quando você instala serviços como NGINX Ingress Controller ou AWS Load Balancer Controller no cluster, eles criam LoadBalancers na AWS que não são gerenciados pelo operator. Durante a deleção do SetupEKS, esses LoadBalancers bloqueiam a remoção das subnets devido a ENIs (Elastic Network Interfaces) em uso.
+
+O operator resolve isso automaticamente:
+
+1. Lista todos os LoadBalancers na VPC
+2. Deleta listeners de cada LoadBalancer
+3. Deleta os LoadBalancers
+4. Aguarda a deleção completa
+5. Deleta Target Groups órfãos
+6. Prossegue com a deleção das subnets
+
+```bash
+# Exemplo de log durante deleção:
+# Found LoadBalancer in VPC, deleting... {"name": "k8s-...", "type": "network"}
+# Deleting listener {"arn": "arn:aws:elasticloadbalancing:..."}
+# LoadBalancer deletion initiated
+```
+
+### Status do SetupEKS
+
+```yaml
+status:
+  ready: true
+  phase: Ready
+  message: "All resources created successfully"
+  vpc:
+    id: vpc-0123456789abcdef0
+    cidr: "10.100.0.0/16"
+    state: available
+  cluster:
+    name: my-cluster
+    arn: arn:aws:eks:us-east-1:123456789012:cluster/my-cluster
+    endpoint: https://ABC123.gr7.us-east-1.eks.amazonaws.com
+    status: ACTIVE
+    version: "1.29"
+  nodePools:
+    - name: general
+      status: ACTIVE
+      desiredSize: 2
+      minSize: 1
+      maxSize: 3
+  kubeconfigCommand: "aws eks update-kubeconfig --name my-cluster --region us-east-1"
+```
+
+### Verificar Status
+
+```bash
+# Listar SetupEKS
+kubectl get setupeks -n infra-operator
+
+# Ver detalhes
+kubectl describe setupeks my-cluster -n infra-operator
+
+# Ver status em YAML
+kubectl get setupeks my-cluster -n infra-operator -o yaml
+
+# Monitorar criação
+kubectl get setupeks -n infra-operator -w
+```
+
+### Obter Kubeconfig
+
+```bash
+# Obter comando do status
+kubectl get setupeks my-cluster -n infra-operator \
+  -o jsonpath='{.status.kubeconfigCommand}'
+
+# Executar para configurar kubectl local
+aws eks update-kubeconfig --name my-cluster --region us-east-1
+```
+
+### Deletar SetupEKS
+
+```bash
+# Deletar (cleanup automático de LoadBalancers)
+kubectl delete setupeks my-cluster -n infra-operator
+
+# Monitorar deleção
+kubectl get setupeks my-cluster -n infra-operator -w
+```
+
+<Note>
+  A deleção pode levar 15-20 minutos pois precisa deletar Node Groups, Cluster EKS, NAT Gateways e VPC na ordem correta.
+</Note>
+
+---
+
+## Referências
+
+- [Documentação Oficial do Amazon EKS](https://docs.aws.amazon.com/eks/)
+- [Melhores Práticas do EKS](https://aws.github.io/aws-eks-best-practices/)
+- [AWS EKS API Reference](https://docs.aws.amazon.com/eks/latest/APIReference/)

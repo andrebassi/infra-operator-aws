@@ -1,0 +1,15 @@
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: RDSInstance
+metadata:
+  name: test-rds
+  namespace: default
+spec:
+  providerRef:
+    name: localstack
+  dbInstanceIdentifier: helm-test-db
+  dbInstanceClass: db.t3.micro
+  engine: postgres
+  engineVersion: "14.5"
+  masterUsername: admin
+  masterUserPassword: secret123
+  allocatedStorage: 20

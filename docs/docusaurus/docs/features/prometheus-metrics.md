@@ -1,0 +1,657 @@
+---
+title: "Prometheus Metrics"
+description: "Comprehensive observability metrics exposed by Infra Operator for monitoring and alerting"
+sidebar_position: 5
+---
+
+## Overview
+
+The Infra Operator exposes comprehensive Prometheus metrics for complete observability of your infrastructure management. These metrics provide insights into reconciliation performance, AWS API usage, drift detection, resource status, and more.
+
+## Metrics Categories
+
+### 1. Reconciliation Metrics
+
+Track the performance and reliability of Kubernetes reconciliation loops.
+
+#### `infra_operator_reconcile_total`
+**Type:** Counter
+**Labels:** `resource_type`, `result`
+**Description:** Total number of reconciliations per resource type and result (success, error, requeue)
+
+```promql
+# Reconciliation rate per resource type
+rate(infra_operator_reconcile_total[5m])
+
+# Success rate
+sum(rate(infra_operator_reconcile_total{result="success"}[5m])) by (resource_type)
+```
+
+#### `infra_operator_reconcile_duration_seconds`
+**Type:** Histogram
+**Labels:** `resource_type`
+**Description:** Duration of reconciliation operations in seconds
+
+```promql
+# p95 reconciliation duration
+histogram_quantile(0.95, rate(infra_operator_reconcile_duration_seconds_bucket[5m]))
+
+# Average duration per resource type
+rate(infra_operator_reconcile_duration_seconds_sum[5m]) / rate(infra_operator_reconcile_duration_seconds_count[5m])
+```
+
+#### `infra_operator_reconcile_errors_total`
+**Type:** Counter
+**Labels:** `resource_type`, `error_type`
+**Description:** Total number of reconciliation errors by type
+
+**Error Types:**
+- `get_failed` - Failed to get resource from Kubernetes
+- `sync_failed` - Failed to sync with AWS
+- `status_update_failed` - Failed to update status
+- `provider_failed` - Failed to get AWS provider
+- `finalizer_failed` - Failed during cleanup
+
+```promql
+# Error rate per resource type
+rate(infra_operator_reconcile_errors_total[5m])
+
+# Error rate percentage
+sum(rate(infra_operator_reconcile_errors_total[5m])) / sum(rate(infra_operator_reconcile_total[5m]))
+```
+
+---
+
+### 2. Resource Metrics
+
+Track the current state of managed resources.
+
+#### `infra_operator_resources_total`
+**Type:** Gauge
+**Labels:** `resource_type`, `status`
+**Description:** Current number of managed resources by type and status
+
+**Status Values:**
+- `ready` - Resource is ready and synced
+- `notready` - Resource is not ready
+- `pending` - Resource is being created
+- `deleting` - Resource is being deleted
+- `error` - Resource is in error state
+
+```promql
+# Total resources by type
+sum(infra_operator_resources_total) by (resource_type)
+
+# Resources not ready
+infra_operator_resources_total{status="notready"}
+
+# Percentage ready
+sum(infra_operator_resources_total{status="ready"}) / sum(infra_operator_resources_total)
+```
+
+#### `infra_operator_resource_creation_timestamp_seconds`
+**Type:** Gauge
+**Labels:** `resource_type`, `resource_name`
+**Description:** Unix timestamp when the resource was created
+
+```promql
+# Age of resources in hours
+(time() - infra_operator_resource_creation_timestamp_seconds) / 3600
+```
+
+---
+
+### 3. AWS API Metrics
+
+Monitor AWS API performance, errors, and throttling.
+
+#### `infra_operator_aws_api_calls_total`
+**Type:** Counter
+**Labels:** `service`, `operation`, `result`
+**Description:** Total number of AWS API calls
+
+**Services:** EC2, S3, RDS, ELBv2, IAM, SecretsManager, KMS, Lambda, APIGateway, CloudFront, Route53, ACM, DynamoDB, SQS, SNS, ECR, ECS, EKS, ElastiCache
+
+```promql
+# API call rate by service
+sum(rate(infra_operator_aws_api_calls_total[5m])) by (service)
+
+# Top 10 most called operations
+topk(10, sum(rate(infra_operator_aws_api_calls_total[5m])) by (service, operation))
+```
+
+#### `infra_operator_aws_api_call_duration_seconds`
+**Type:** Histogram
+**Labels:** `service`, `operation`
+**Description:** Duration of AWS API calls in seconds
+
+```promql
+# p95 latency per service
+histogram_quantile(0.95, sum(rate(infra_operator_aws_api_call_duration_seconds_bucket[5m])) by (le, service))
+
+# Slowest operations
+topk(10, histogram_quantile(0.95, sum(rate(infra_operator_aws_api_call_duration_seconds_bucket[5m])) by (le, service, operation)))
+```
+
+#### `infra_operator_aws_api_errors_total`
+**Type:** Counter
+**Labels:** `service`, `operation`, `error_code`
+**Description:** Total number of AWS API errors
+
+**Common Error Codes:**
+- `InvalidParameterValue`
+- `ResourceNotFoundException`
+- `UnauthorizedOperation`
+- `DependencyViolation`
+- `ResourceAlreadyExists`
+
+```promql
+# Error rate per service
+sum(rate(infra_operator_aws_api_errors_total[5m])) by (service)
+
+# Most common error codes
+topk(10, sum(rate(infra_operator_aws_api_errors_total[5m])) by (error_code))
+```
+
+#### `infra_operator_aws_api_throttles_total`
+**Type:** Counter
+**Labels:** `service`, `operation`
+**Description:** Total number of AWS API throttling events (rate limit exceeded)
+
+```promql
+# Throttling rate per service
+sum(rate(infra_operator_aws_api_throttles_total[5m])) by (service)
+
+# Operations being throttled
+infra_operator_aws_api_throttles_total > 0
+```
+
+---
+
+### 4. Drift Detection Metrics
+
+Monitor configuration drift and automatic healing.
+
+#### `infra_operator_drift_detected_total`
+**Type:** Counter
+**Labels:** `resource_type`, `severity`
+**Description:** Total number of configuration drifts detected
+
+**Severity Levels:**
+- `critical` - High severity drift
+- `warning` - Medium severity drift
+- `info` - Low severity drift
+
+```promql
+# Drift detection rate
+sum(rate(infra_operator_drift_detected_total[5m])) by (resource_type, severity)
+
+# Critical drifts in last hour
+increase(infra_operator_drift_detected_total{severity="critical"}[1h])
+```
+
+#### `infra_operator_drift_healed_total`
+**Type:** Counter
+**Labels:** `resource_type`
+**Description:** Total number of drifts automatically healed
+
+```promql
+# Healing rate
+rate(infra_operator_drift_healed_total[5m])
+
+# Healing success percentage
+sum(rate(infra_operator_drift_healed_total[5m])) / sum(rate(infra_operator_drift_detected_total[5m]))
+```
+
+#### `infra_operator_drift_healing_failures_total`
+**Type:** Counter
+**Labels:** `resource_type`, `error_type`
+**Description:** Total number of failed drift healing attempts
+
+```promql
+# Healing failure rate
+rate(infra_operator_drift_healing_failures_total[5m])
+```
+
+#### `infra_operator_drift_detection_duration_seconds`
+**Type:** Histogram
+**Labels:** `resource_type`
+**Description:** Duration of drift detection operations
+
+```promql
+# p95 drift detection duration
+histogram_quantile(0.95, rate(infra_operator_drift_detection_duration_seconds_bucket[5m]))
+```
+
+---
+
+### 5. Finalizer Metrics
+
+Track cleanup and deletion performance.
+
+#### `infra_operator_finalizer_duration_seconds`
+**Type:** Histogram
+**Labels:** `resource_type`
+**Description:** Duration of finalizer execution (resource cleanup)
+
+```promql
+# p95 finalizer duration
+histogram_quantile(0.95, rate(infra_operator_finalizer_duration_seconds_bucket[5m]))
+
+# Slowest finalizers
+topk(5, histogram_quantile(0.95, sum(rate(infra_operator_finalizer_duration_seconds_bucket[5m])) by (le, resource_type)))
+```
+
+#### `infra_operator_finalizer_errors_total`
+**Type:** Counter
+**Labels:** `resource_type`, `error_type`
+**Description:** Total number of finalizer execution errors
+
+```promql
+# Finalizer error rate
+rate(infra_operator_finalizer_errors_total[5m])
+```
+
+---
+
+### 6. Provider Metrics
+
+Monitor AWS Provider status and credentials.
+
+#### `infra_operator_provider_ready`
+**Type:** Gauge
+**Labels:** `provider_name`, `region`
+**Description:** Indicates if an AWS Provider is ready (1) or not (0)
+
+```promql
+# Providers not ready
+infra_operator_provider_ready == 0
+
+# Ready percentage
+avg(infra_operator_provider_ready)
+```
+
+#### `infra_operator_provider_credential_rotations_total`
+**Type:** Counter
+**Labels:** `provider_name`
+**Description:** Total number of AWS credential rotations
+
+```promql
+# Credential rotation rate
+rate(infra_operator_provider_credential_rotations_total[24h])
+```
+
+---
+
+### 7. Workqueue Metrics
+
+Monitor controller work queue depth and throughput.
+
+#### `infra_operator_workqueue_depth`
+**Type:** Gauge
+**Labels:** `resource_type`
+**Description:** Current depth of the work queue for each resource type
+
+```promql
+# Queue depth per resource type
+infra_operator_workqueue_depth
+
+# Deep queues (potential backlog)
+infra_operator_workqueue_depth > 100
+```
+
+#### `infra_operator_workqueue_adds_total`
+**Type:** Counter
+**Labels:** `resource_type`
+**Description:** Total number of items added to work queue
+
+```promql
+# Queue add rate
+rate(infra_operator_workqueue_adds_total[5m])
+```
+
+---
+
+### 8. Cache Metrics
+
+Monitor caching effectiveness (future feature).
+
+#### `infra_operator_cache_hits_total`
+**Type:** Counter
+**Labels:** `resource_type`
+**Description:** Total number of successful cache lookups
+
+#### `infra_operator_cache_misses_total`
+**Type:** Counter
+**Labels:** `resource_type`
+**Description:** Total number of failed cache lookups
+
+```promql
+# Cache hit rate
+sum(rate(infra_operator_cache_hits_total[5m])) / (sum(rate(infra_operator_cache_hits_total[5m])) + sum(rate(infra_operator_cache_misses_total[5m])))
+```
+
+---
+
+## Common Query Examples
+
+### Health & Performance
+
+```promql
+# Overall health - no errors in last 5 minutes
+sum(rate(infra_operator_reconcile_errors_total[5m])) == 0
+
+# Reconciliation throughput
+sum(rate(infra_operator_reconcile_total[5m]))
+
+# Average reconciliation duration
+rate(infra_operator_reconcile_duration_seconds_sum[5m]) / rate(infra_operator_reconcile_duration_seconds_count[5m])
+
+# Error budget (99.9% SLO)
+1 - (sum(rate(infra_operator_reconcile_errors_total[30d])) / sum(rate(infra_operator_reconcile_total[30d])))
+```
+
+### Resource Management
+
+```promql
+# Total managed resources
+sum(infra_operator_resources_total)
+
+# Resources in error state
+sum(infra_operator_resources_total{status="error"})
+
+# Oldest resources
+topk(10, time() - infra_operator_resource_creation_timestamp_seconds)
+```
+
+### AWS API Monitoring
+
+```promql
+# AWS API error rate percentage
+sum(rate(infra_operator_aws_api_errors_total[5m])) / sum(rate(infra_operator_aws_api_calls_total[5m]))
+
+# Services with highest error rates
+topk(5, sum(rate(infra_operator_aws_api_errors_total[5m])) by (service))
+
+# Throttled operations
+sum(rate(infra_operator_aws_api_throttles_total[5m])) by (service, operation) > 0
+```
+
+### Drift Monitoring
+
+```promql
+# Critical drifts detected
+sum(increase(infra_operator_drift_detected_total{severity="critical"}[1h]))
+
+# Drift healing success rate
+sum(rate(infra_operator_drift_healed_total[5m])) / sum(rate(infra_operator_drift_detected_total[5m]))
+
+# Resources with most drift
+topk(5, sum(increase(infra_operator_drift_detected_total[24h])) by (resource_type))
+```
+
+---
+
+## Installation
+
+### Deploy ServiceMonitor
+
+**Command:**
+
+```bash
+kubectl apply -f config/prometheus/servicemonitor.yaml
+```
+
+This creates:
+- **ServiceMonitor**: Tells Prometheus to scrape the operator
+- **PodMonitor**: Alternative direct pod scraping
+- **PrometheusRule**: Pre-configured alerts
+
+### Import Grafana Dashboard
+
+1. Open Grafana UI
+2. Go to **Dashboards** → **Import**
+3. Upload `config/grafana/dashboard.json`
+4. Select your Prometheus datasource
+5. Click **Import**
+
+---
+
+## Alerting Rules
+
+The operator includes pre-configured Prometheus alerts in `config/prometheus/servicemonitor.yaml`:
+
+### Critical Alerts
+
+- **InfraOperatorNoReconciliations**: No reconciliations in 10 minutes (operator may be down)
+- **InfraOperatorProviderNotReady**: AWS Provider not ready for >5 minutes
+- **InfraOperatorDriftDetected**: Critical drift detected
+
+### Warning Alerts
+
+- **InfraOperatorHighErrorRate**: Reconciliation error rate >10%
+- **InfraOperatorSlowReconciliation**: p95 reconciliation duration >30s
+- **InfraOperatorAWSAPIErrors**: AWS API error rate >1 error/sec
+- **InfraOperatorAWSAPIThrottled**: AWS API throttling detected
+- **InfraOperatorDriftHealingFailed**: Drift healing failures
+- **InfraOperatorResourcesNotReady**: >5 resources not ready for >15 minutes
+- **InfraOperatorSlowFinalizer**: p95 finalizer duration >60s
+
+### Customize Alerts
+
+Edit `config/prometheus/servicemonitor.yaml` to adjust:
+- Thresholds
+- Duration (for)
+- Severity levels
+- Alert labels and annotations
+
+---
+
+## Integration with Existing Monitoring
+
+### Prometheus Operator
+
+If you have Prometheus Operator installed:
+
+```bash
+kubectl apply -f config/prometheus/servicemonitor.yaml
+```
+
+The ServiceMonitor will be automatically discovered.
+
+### Manual Prometheus Configuration
+
+Add to your `prometheus.yml`:
+
+```yaml
+scrape_configs:
+  - job_name: 'infra-operator'
+kubernetes_sd_configs:
+      - role: endpoints
+relabel_configs:
+      - source_labels: [__meta_kubernetes_service_label_control_plane]
+        regex: controller-manager
+        action: keep
+      - source_labels: [__meta_kubernetes_endpoint_port_name]
+        regex: metrics
+        action: keep
+```
+
+### Datadog Integration
+
+Use Datadog's Prometheus integration:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: datadog-checks
+data:
+  prometheus.yaml: |
+instances:
+      - prometheus_url: http://infra-operator-controller-manager-metrics-service.infra-operator-system:8443/metrics
+        namespace: infra_operator
+        metrics:
+          - infra_operator_*
+```
+
+### New Relic Integration
+
+Use New Relic's Prometheus exporter:
+
+```bash
+helm repo add newrelic https://helm-charts.newrelic.com
+helm install newrelic-prometheus newrelic/nri-prometheus \
+  --set cluster=infra-operator-cluster \
+  --set config.scrape_enabled_label=prometheus.io/scrape
+```
+
+---
+
+## Dashboard Panels
+
+The included Grafana dashboard provides:
+
+1. **Reconciliation Rate** - Real-time reconciliation throughput
+2. **Error Rate** - Percentage of failed reconciliations
+3. **Reconciliation Duration** - p95 and p50 latencies
+4. **Resources by Status** - Pie chart of resource states
+5. **AWS API Call Rate** - API usage by service
+6. **AWS API Duration** - p95 API latencies
+7. **AWS API Errors** - Error breakdown by service/operation
+8. **AWS Throttling** - Rate limiting events
+9. **Drift Detected** - Drift events by severity
+10. **Drift Healing** - Success and failure rates
+11. **Provider Status** - AWS Provider health
+12. **Workqueue Depth** - Queue backlogs
+
+---
+
+## Metric Retention
+
+### Recommended Retention Periods
+
+- **Short-term (15 days)**: All metrics at 30s resolution
+- **Medium-term (90 days)**: Downsampled to 5m resolution
+- **Long-term (1 year)**: Downsampled to 1h resolution (for trends)
+
+### Prometheus Configuration
+
+**Example:**
+
+```yaml
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+
+storage:
+  tsdb:
+retention.time: 15d
+```
+
+### Thanos/Cortex for Long-term
+
+Use Thanos or Cortex for:
+- Long-term storage (>15 days)
+- Global view across clusters
+- Downsampling
+- High availability
+
+---
+
+## Troubleshooting
+
+### Metrics Not Appearing
+
+1. **Check ServiceMonitor is created:**
+   ```bash
+   kubectl get servicemonitor -n infra-operator-system
+   ```
+
+2. **Verify Prometheus is scraping:**
+   ```promql
+   up{job="infra-operator"}
+   ```
+
+3. **Check operator logs:**
+   ```bash
+   kubectl logs -n infra-operator-system deployment/infra-operator-controller-manager
+   ```
+
+### High Cardinality
+
+If you have too many resources causing high cardinality:
+
+1. **Limit resource metrics:**
+   ```go
+   // Only track essential statuses
+   ResourcesTotal.WithLabelValues(resourceType, "ready").Inc()
+   ResourcesTotal.WithLabelValues(resourceType, "notready").Inc()
+   ```
+
+2. **Use recording rules:**
+   ```yaml
+   - record: infra_operator:reconcile_total:rate5m
+     expr: sum(rate(infra_operator_reconcile_total[5m])) by (resource_type)
+   ```
+
+### Missing Historical Data
+
+If you need historical data:
+
+1. **Enable long-term storage** (Thanos/Cortex)
+2. **Increase retention period**
+3. **Use recording rules** for pre-aggregated data
+
+---
+
+## Best Practices
+
+:::note Best Practices
+
+- **Enable ServiceMonitor for Prometheus Operator** — Automatic metric discovery and scraping configuration
+- **Set appropriate alert thresholds** — Configure alerts for error rates >5%, p95 latency >30s, drift detection
+- **Use Grafana dashboards** — Import pre-built dashboards for operator monitoring and AWS API metrics
+- **Monitor AWS API throttling** — Set alerts on infra_operator_aws_api_throttled_total to detect rate limiting
+- **Track reconciliation duration** — Monitor p95 reconciliation times to identify performance bottlenecks
+
+:::
+
+## Reference
+
+### Metric Naming Convention
+
+All metrics follow the format:
+```
+infra_operator_<component>_<metric>_<unit>
+```
+
+Examples:
+- `infra_operator_reconcile_total` (counter, no unit)
+- `infra_operator_reconcile_duration_seconds` (histogram, seconds)
+- `infra_operator_resources_total` (gauge, count)
+
+### Labels
+
+Standard labels used:
+- `resource_type` - Type of AWS resource (VPC, Subnet, etc.)
+- `service` - AWS service name (EC2, S3, RDS, etc.)
+- `operation` - AWS API operation name
+- `result` - Operation result (success, error, requeue)
+- `status` - Resource status (ready, notready, pending, deleting)
+- `severity` - Drift severity (critical, warning, info)
+- `error_type` - Type of error encountered
+- `error_code` - AWS API error code
+- `provider_name` - Name of AWS Provider
+- `region` - AWS region
+
+---
+
+## Support
+
+For questions or issues with metrics:
+
+1. Check the [documentation](https://infra-operator.runner.codes)
+2. Review [example queries](https://github.com/infra-operator/examples)
+3. Join our [Slack community](https://infra-operator.slack.com)
+4. Open an [issue](https://github.com/infra-operator/infra-operator/issues)

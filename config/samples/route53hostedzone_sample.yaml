@@ -1,0 +1,39 @@
+---
+# Public Hosted Zone Example
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Route53HostedZone
+metadata:
+  name: example-public-zone
+  namespace: default
+spec:
+  providerRef:
+    name: aws-provider
+  name: example.com
+  comment: "Example public hosted zone managed by infra-operator"
+  privateZone: false
+  tags:
+    Environment: production
+    ManagedBy: infra-operator
+    Application: web
+  deletionPolicy: Delete
+
+---
+# Private Hosted Zone Example
+apiVersion: aws-infra-operator.runner.codes/v1alpha1
+kind: Route53HostedZone
+metadata:
+  name: example-private-zone
+  namespace: default
+spec:
+  providerRef:
+    name: aws-provider
+  name: internal.example.com
+  comment: "Example private hosted zone for VPC"
+  privateZone: true
+  vpcId: vpc-0123456789abcdef0
+  vpcRegion: us-east-1
+  tags:
+    Environment: production
+    ManagedBy: infra-operator
+    Type: private
+  deletionPolicy: Delete

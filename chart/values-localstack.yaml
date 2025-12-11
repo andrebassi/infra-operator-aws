@@ -1,0 +1,193 @@
+# LocalStack values for infra-operator
+# Override default values for local development with LocalStack
+
+#==============================================================================
+# LOCAL DEVELOPMENT WITH LOCALSTACK
+#==============================================================================
+
+# Single replica
+replicaCount: 1
+
+image:
+  pullPolicy: Never  # Use local image
+  tag: "latest-local"
+
+#==============================================================================
+# RECURSOS (Minimal for local)
+#==============================================================================
+
+resources:
+  limits:
+    cpu: 200m
+    memory: 256Mi
+  requests:
+    cpu: 50m
+    memory: 64Mi
+
+#==============================================================================
+# LOGGING (Debug everything locally)
+#==============================================================================
+
+logging:
+  level: debug
+  development: true
+  encoder: console
+  stacktraceLevel: debug
+
+#==============================================================================
+# CONFIGURAÇÃO AWS (LocalStack)
+#==============================================================================
+
+aws:
+  defaultRegion: "us-east-1"
+
+  # Disable IRSA for local
+  irsa:
+    enabled: false
+
+  # Use static credentials for LocalStack
+  staticCredentials:
+    enabled: true
+    secretName: localstack-credentials
+    create: true
+    accessKeyID: "test"
+    secretAccessKey: "test"
+    sessionToken: ""
+
+  # Enable LocalStack endpoint
+  localstack:
+    enabled: true
+    endpoint: "http://localstack.default.svc.cluster.local:4566"
+    s3ForcePathStyle: true
+
+#==============================================================================
+# DRIFT DETECTION (Fast checks for local testing)
+#==============================================================================
+
+driftDetection:
+  enabled: true
+  defaultCheckInterval: "1m"
+  defaultAutoHeal: true
+  jitter: 10
+
+#==============================================================================
+# Configurações do operador
+#==============================================================================
+
+operator:
+  leaderElection:
+    enabled: false  # No leader election needed locally
+
+  reconciliation:
+    maxConcurrentReconciles: 3
+    requeueAfter: "1m"
+    timeout: "2m"
+
+#==============================================================================
+# MONITORAMENTO (Disabled for local)
+#==============================================================================
+
+prometheus:
+  serviceMonitor:
+    enabled: false
+
+#==============================================================================
+# WEBHOOKS (Disabled for simpler local setup)
+#==============================================================================
+
+webhooks:
+  enabled: false
+
+#==============================================================================
+# CRDS
+#==============================================================================
+
+crds:
+  install: true
+  keep: false  # Allow cleanup in local
+
+#==============================================================================
+# ORÇAMENTO DE INTERRUPÇÃO DE POD (Disabled)
+#==============================================================================
+
+podDisruptionBudget:
+  enabled: false
+
+#==============================================================================
+# POLÍTICA DE REDE (Disabled)
+#==============================================================================
+
+networkPolicy:
+  enabled: false
+
+#==============================================================================
+# CONTEXTOS DE SEGURANÇA (Relaxed for local)
+#==============================================================================
+
+podSecurityContext:
+  runAsNonRoot: false
+  runAsUser: 0
+  fsGroup: 0
+  seccompProfile:
+    type: Unconfined
+
+securityContext:
+  allowPrivilegeEscalation: true
+  capabilities:
+    drop: []
+  readOnlyRootFilesystem: false
+  runAsNonRoot: false
+  runAsUser: 0
+
+#==============================================================================
+# PROBES (Faster for local)
+#==============================================================================
+
+livenessProbe:
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+readinessProbe:
+  initialDelaySeconds: 3
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+startupProbe:
+  initialDelaySeconds: 0
+  periodSeconds: 2
+  timeoutSeconds: 3
+  failureThreshold: 15
+
+#==============================================================================
+# ANNOTATIONS
+#==============================================================================
+
+podAnnotations:
+  environment: localstack
+  localstack: "true"
+
+#==============================================================================
+# ENVIRONMENT VARIABLES
+#==============================================================================
+
+env:
+- name: AWS_ENDPOINT_URL
+  value: "http://localstack.default.svc.cluster.local:4566"
+- name: AWS_ACCESS_KEY_ID
+  value: "test"
+- name: AWS_SECRET_ACCESS_KEY
+  value: "test"
+- name: AWS_DEFAULT_REGION
+  value: "us-east-1"
+
+#==============================================================================
+# GLOBAL TAGS
+#==============================================================================
+
+globalTags:
+  managed-by: infra-operator
+  environment: localstack
+  localstack: "true"

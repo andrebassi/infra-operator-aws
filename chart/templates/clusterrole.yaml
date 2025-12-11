@@ -1,0 +1,133 @@
+{{- if .Values.rbac.create -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "infra-operator.fullname" . }}-manager-role
+  labels:
+    {{- include "infra-operator.labels" . | nindent 4 }}
+rules:
+# Access to Secrets for AWS credentials
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - get
+  - list
+  - watch
+# Access to Events for recording
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+# Full access to all aws-infra-operator.runner.codes CRDs
+- apiGroups:
+  - aws-infra-operator.runner.codes
+  resources:
+  - awsproviders
+  - vpcs
+  - subnets
+  - internetgateways
+  - natgateways
+  - securitygroups
+  - routetables
+  - s3buckets
+  - rdsinstances
+  - dynamodbtables
+  - ec2instances
+  - sqsqueues
+  - snstopics
+  - lambdafunctions
+  - iamroles
+  - secretsmanagersecrets
+  - kmskeys
+  - ecrrepositories
+  - elasticacheclusters
+  - albs
+  - nlbs
+  - elasticips
+  - certificates
+  - apigateways
+  - cloudfronts
+  - eksclusters
+  - ecsclusters
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+# Access to finalizers for all CRDs
+- apiGroups:
+  - aws-infra-operator.runner.codes
+  resources:
+  - awsproviders/finalizers
+  - vpcs/finalizers
+  - subnets/finalizers
+  - internetgateways/finalizers
+  - natgateways/finalizers
+  - securitygroups/finalizers
+  - routetables/finalizers
+  - s3buckets/finalizers
+  - rdsinstances/finalizers
+  - dynamodbtables/finalizers
+  - ec2instances/finalizers
+  - sqsqueues/finalizers
+  - snstopics/finalizers
+  - lambdafunctions/finalizers
+  - iamroles/finalizers
+  - secretsmanagersecrets/finalizers
+  - kmskeys/finalizers
+  - ecrrepositories/finalizers
+  - elasticacheclusters/finalizers
+  - albs/finalizers
+  - nlbs/finalizers
+  - elasticips/finalizers
+  - certificates/finalizers
+  - apigateways/finalizers
+  - cloudfronts/finalizers
+  - eksclusters/finalizers
+  - ecsclusters/finalizers
+  verbs:
+  - update
+# Access to status subRECURSOS for all CRDs
+- apiGroups:
+  - aws-infra-operator.runner.codes
+  resources:
+  - awsproviders/status
+  - vpcs/status
+  - subnets/status
+  - internetgateways/status
+  - natgateways/status
+  - securitygroups/status
+  - routetables/status
+  - s3buckets/status
+  - rdsinstances/status
+  - dynamodbtables/status
+  - ec2instances/status
+  - sqsqueues/status
+  - snstopics/status
+  - lambdafunctions/status
+  - iamroles/status
+  - secretsmanagersecrets/status
+  - kmskeys/status
+  - ecrrepositories/status
+  - elasticacheclusters/status
+  - albs/status
+  - nlbs/status
+  - elasticips/status
+  - certificates/status
+  - apigateways/status
+  - cloudfronts/status
+  - eksclusters/status
+  - ecsclusters/status
+  verbs:
+  - get
+  - patch
+  - update
+{{- end }}
