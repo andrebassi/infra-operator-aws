@@ -120,10 +120,22 @@
     <span class="keyword">name:</span> <span class="string">aws-production</span>
   <span class="keyword">cidrBlock:</span> <span class="string">"10.0.0.0/16"</span>
   <span class="keyword">enableDnsSupport:</span> <span class="boolean">true</span>
-  <span class="keyword">enableDnsHostnames:</span> <span class="boolean">true</span>
-  <span class="keyword">tags:</span>
-    <span class="keyword">Environment:</span> <span class="string">production</span>
-    <span class="keyword">ManagedBy:</span> <span class="string">infra-operator</span></code></pre>
+  <span class="keyword">enableDnsHostnames:</span> <span class="boolean">true</span></code></pre>
+            </div>
+            <div class="code-window" style="margin-top: 1rem;">
+                <div class="code-header">
+                    <div class="code-dots">
+                        <span class="dot red"></span>
+                        <span class="dot yellow"></span>
+                        <span class="dot green"></span>
+                    </div>
+                    <span class="code-title">terminal</span>
+                </div>
+                <pre class="code-content"><code><span class="comment"># Kubernetes</span>
+<span class="command">$</span> kubectl apply -f vpc.yaml
+
+<span class="comment"># CLI (sem Kubernetes)</span>
+<span class="command">$</span> ./infra.operator apply -f vpc.yaml</code></pre>
             </div>
         </div>
     </section>

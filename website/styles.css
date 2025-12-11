@@ -406,6 +406,7 @@ h1, h2, h3, h4, h5, h6 {
 .code-content .type { color: #8be9fd; }
 .code-content .boolean { color: #bd93f9; }
 .code-content .comment { color: #6272a4; }
+.code-content .command { color: #50fa7b; font-weight: bold; }
 
 /* Features Section */
 .features {
