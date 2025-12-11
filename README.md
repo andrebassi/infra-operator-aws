@@ -223,27 +223,9 @@ spec:
 
 Infra Operator follows **Clean Architecture** principles:
 
-```
-┌─────────────────────────────────────────┐
-│   Controllers (Kubernetes Reconcilers)  │
-│   - VPCReconciler, EC2Reconciler, etc.  │
-└─────────────────┬───────────────────────┘
-                  │
-┌─────────────────▼───────────────────────┐
-│   Use Cases (Business Logic)            │
-│   - CreateVPC, UpdateEC2, DeleteS3      │
-└─────────────────┬───────────────────────┘
-                  │
-┌─────────────────▼───────────────────────┐
-│   Ports (Interfaces)                    │
-│   - VPCPort, EC2Port, S3Port            │
-└─────────────────┬───────────────────────┘
-                  │
-┌─────────────────▼───────────────────────┐
-│   Adapters (AWS SDK v2)                 │
-│   - VPCAdapter, EC2Adapter, S3Adapter   │
-└─────────────────────────────────────────┘
-```
+<p align="center">
+  <img src="assets/architecture.svg" alt="Clean Architecture" width="600">
+</p>
 
 ## Project Structure
 
