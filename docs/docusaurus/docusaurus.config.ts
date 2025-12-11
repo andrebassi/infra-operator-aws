@@ -4,7 +4,7 @@ import type * as Preset from '@docusaurus/preset-classic';
 
 const config: Config = {
   title: 'Infra Operator',
-  tagline: 'Kubernetes Operator for AWS Infrastructure Management',
+  tagline: 'Manage AWS Infrastructure with Kubernetes or CLI using YAML',
   favicon: 'img/favicon.svg',
 
   future: {
@@ -48,7 +48,7 @@ const config: Config = {
         docs: {
           routeBasePath: '/',
           sidebarPath: './sidebars.ts',
-          editUrl: 'https://github.com/andrebassi/infra-operator/tree/main/docs/docusaurus/',
+          editUrl: 'https://github.com/andrebassi/aws-infra-operator/tree/main/docs/docusaurus/',
         },
         blog: false,
         theme: {
@@ -94,7 +94,7 @@ const config: Config = {
           position: 'right',
         },
         {
-          href: 'https://github.com/andrebassi/infra-operator',
+          href: 'https://github.com/andrebassi/aws-infra-operator',
           label: 'GitHub',
           position: 'right',
         },
